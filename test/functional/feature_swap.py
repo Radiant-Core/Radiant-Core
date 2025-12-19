@@ -179,7 +179,16 @@ class SwapTest(BitcoinTestFramework):
         history = node.getswaphistory(token_txid)
         assert_equal(len(history), 1)
         
-        # Basic swap index test complete
+        # Verify history entry has block_height field
+        assert 'block_height' in history[0], "History entry should have block_height"
+        assert history[0]['block_height'] > 0, "block_height should be positive"
+        
+        # 6. Test getswapcount RPC
+        self.log.info("Testing getswapcount...")
+        counts = node.getswapcount(token_txid)
+        assert_equal(counts['open'], 0)
+        assert_equal(counts['history'], 1)
+        
         self.log.info("Swap index test passed!")
 
 if __name__ == '__main__':

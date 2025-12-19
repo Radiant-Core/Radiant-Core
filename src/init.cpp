@@ -609,6 +609,14 @@ void SetupServerArgs() {
                            "getopenorders and getswaphistory rpc calls (default: %d)",
                            DEFAULT_SWAPINDEX),
                  ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-swapcache=<n>",
+                 strprintf("Set swap index cache size in MiB (default: %d)",
+                           DEFAULT_SWAP_CACHE_SIZE >> 20),
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-swaphistoryblocks=<n>",
+                 strprintf("Number of blocks of swap history to retain. Set to 0 to keep all history (default: %d)",
+                           DEFAULT_SWAP_HISTORY_BLOCKS),
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-addnode=<ip>",
                  "Add a node to connect to and attempt to keep the connection "
                  "open (see the `addnode` RPC command help for more info)",
@@ -2740,9 +2748,11 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     }
 
     if (gArgs.GetBoolArg("-swapindex", DEFAULT_SWAPINDEX)) {
-        // Use a smaller cache for swap index as it's much smaller than txindex
-        size_t nSwapIndexCache = std::min(static_cast<size_t>(nTxIndexCache / 4), size_t(10 << 20)); // Max 10MB or 1/4 of txindex cache
-        g_swapindex = std::make_unique<SwapIndex>(nSwapIndexCache, false, fReindex);
+        // Get configurable cache size (in MiB), default to 10MB
+        size_t nSwapIndexCache = gArgs.GetArg("-swapcache", DEFAULT_SWAP_CACHE_SIZE >> 20) << 20;
+        // Get configurable history retention (in blocks), 0 = keep all
+        int64_t nSwapHistoryBlocks = gArgs.GetArg("-swaphistoryblocks", DEFAULT_SWAP_HISTORY_BLOCKS);
+        g_swapindex = std::make_unique<SwapIndex>(nSwapIndexCache, nSwapHistoryBlocks, false, fReindex);
         g_swapindex->Start();
     }
 
