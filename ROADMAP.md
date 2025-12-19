@@ -1,45 +1,19 @@
-# Phase 1: Stability & Foundation (Immediate)
+# Radiant Core Roadmap
 
-## 1. Finalize CI/CD Pipeline
-- [x] **Verify CI Build**: Local CI build (`./contrib/run-ci-local.sh`) passes successfully.
-- [x] **Integrate with GitLab/GitHub**: Updated `.gitlab-ci.yml` with ASan/UBSan jobs and uses `radiant-node-ci` Docker image.
-- [x] **Release Automation**: Created `contrib/release/build-release.sh` to build Docker images, extract binaries, generate checksums, and sign releases.
+This document tracks planned future work for Radiant Core. For completed features, see `doc/release-notes.md`.
 
-## 2. DNS Seeder Infrastructure
+---
+
+# Phase 1: Infrastructure (Immediate)
+
+## 1. DNS Seeder Infrastructure
 - [ ] **Deploy Seeder**: Set up a `radiant-seeder` instance on a high-availability VPS.
 - [ ] **Update Code**: Add the new seeder's domain to `src/chainparams.cpp` (Mainnet & Testnet).
 - [ ] **Verify Crawling**: Ensure the seeder is correctly crawling the network and serving valid peers.
 
-## 3. Configuration Tuning
-- [x] **Review Defaults**: Audit `src/init.cpp` and `src/config.cpp` for outdated default values.
-- [x] **Optimize `dbcache`**: Increase default database cache size (dynamic based on RAM or higher static value).
-- [x] **RPC Threads**: Increase default `rpcworkqueue` and `rpcthreads` to handle modern indexer loads.
-
-## 4. Protocol Limits & Validation
-- [x] **Network Message Limits (Security Enhancement)**:
-  - Set `MAX_PROTOCOL_MESSAGE_LENGTH` to **2 MB** for most protocol messages (INV, PING, ADDR, etc.) to prevent DoS attacks.
-  - Added `MAX_TX_MESSAGE_LENGTH` of **16 MB** specifically for TX messages.
-  - Block-like messages remain unlimited (scale with block size).
-- [x] **Transaction Size Limit**: Set `MAX_TX_SIZE` to **12 MB** (~81,000 P2PKH inputs per transaction).
-- [x] **Oversized Transaction Handling**: Add `REJECT_OVERSIZED` and improved `"bad-txns-oversize"` messaging in `AcceptToMemoryPoolWorker`, covered by `tx_mempool_reject_oversized` in `txvalidation_tests.cpp`.
-- [x] **Regtest Mining for Functional Tests**: Added regtest-only bypass for fee clamping in `src/miner.cpp` to allow functional tests to run with configurable `blockmintxfee`.
-
-## 5. Security & Observability
-- [x] **Fuzz Testing**: Added `fuzz-radiant_opcodes` target for Radiant-specific consensus (unique references, introspection opcodes, `SCRIPT_PUSH_TX_STATE`).
-- [x] **Sanitizers**: Added ASan/UBSan CI jobs (`build-ubuntu-asan`, `test-ubuntu-asan-unittests`) to `.gitlab-ci.yml` for memory safety and undefined behavior detection.
-- [x] **Prometheus Metrics**: Integrated native **Prometheus** metrics export (`/metrics` endpoint) for block height, peer count, mempool size, and version info.
-
 # Phase 2: Performance & Modernization (1-3 Months)
 
-## 1. C++20 Migration
-- [x] **Compiler Support**: Verify all build targets (including cross-compilation) support C++20.
-- [x] **Update CMake**: Bump `CMAKE_CXX_STANDARD` to `20` in `src/CMakeLists.txt`.
-- [x] **Refactor**: Begin replacing boost headers with `std::` equivalents (e.g., `std::span`, `std::filesystem`).
-
-## 2. Codebase Refactoring
-- [x] **Code Cleanup**: Completed as part of C++20 migration (unused variables, thread safety, etc.).
-
-## 3. Asynchronous RPC & Network
+## 1. Asynchronous RPC & Network
 - [ ] **Async JSON-RPC**: Refactor the JSON-RPC server to be fully asynchronous (using `libevent` or C++20 coroutines).
 - [ ] **Block Propagation**: Implement **Graphene** or **Xthinner** to reduce bandwidth usage.
 - [ ] **Neutrino Support**: Enhance **BIP157/158** support for private light client syncing.
@@ -55,6 +29,32 @@
 - [ ] **VM Research**: Evaluate EVM/WASM integration paths (Sidechain vs. Native Extension).
 - [ ] **Storage Engine**: Investigate migrating from LevelDB to **RocksDB** for NVMe optimization.
 - [ ] **Quantum Resistance**: Research quantum-safe signature schemes (e.g., Lamport, STARKs).
+
+## 3. Covenant & Scripting Enhancements
+- [ ] **BIP119 CTV (CheckTemplateVerify)**: Implement `OP_CHECKTEMPLATEVERIFY` for trustless transaction covenants.
+  - Enables congestion control, vaults, and batched payments.
+  - Allows pre-committed transaction trees without requiring signatures.
+  - Research activation mechanism (soft fork vs. Radiant-specific deployment).
+
+# Phase 4: Cross-Chain & Advanced Security (6-12 Months)
+
+## 1. Gravity Protocol Integration
+- [ ] **Cross-Chain Vaults**: Implement Gravity protocol for trustless cross-chain asset custody.
+  - Research Gravity's proof-of-work verification for external chain state.
+  - Design vault contracts leveraging Radiant's unique reference model.
+  - Implement SPV proof validation for supported chains (BTC, ETH L1).
+- [ ] **Bridge Infrastructure**: Build secure bridge architecture for cross-chain transfers.
+  - Federated signer coordination with threshold signatures.
+  - Fraud proof mechanisms for vault security.
+  - Emergency recovery procedures and timelock protections.
+- [ ] **Interoperability Standards**: Define cross-chain messaging and asset representation standards.
+  - Wrapped asset minting/burning protocols.
+  - Cross-chain transaction finality guarantees.
+
+## 2. Advanced Vault Security
+- [ ] **Time-Locked Vaults**: Implement native timelock primitives for cold storage.
+- [ ] **Multi-Signature Enhancements**: Improve CHECKMULTISIG performance and add Schnorr-based MuSig2.
+- [ ] **Watchtower Infrastructure**: Design watchtower protocol for vault monitoring and automated response.
 
 # Optional / Future Considerations
 

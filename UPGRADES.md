@@ -9,6 +9,10 @@ This document tracks the modernization and upgrade efforts for the Radiant Node 
 - **Runtime**: Upgraded Node.js from v12 to **Node.js 20 LTS**.
 - **Build System**: Upgraded minimum CMake requirement from 3.13 to **3.22** to support modern build features.
 - **CI/CD**: Implemented a standardized build environment using `Dockerfile.ci` and `contrib/run-ci-local.sh` to ensure reproducible builds across platforms.
+- **CI/CD Pipeline Enhancements**:
+  - Updated `.gitlab-ci.yml` with ASan/UBSan jobs using `radiant-node-ci` Docker image.
+  - Added `build-ubuntu-asan` and `test-ubuntu-asan-unittests` CI jobs for memory safety and undefined behavior detection.
+  - Created `contrib/release/build-release.sh` to build Docker images, extract binaries, generate checksums, and sign releases.
 
 ### 2. Critical Dependencies
 - **OpenSSL**: Upgraded from `1.1.1n` (EOL) to **`3.0.18` (LTS)**.
@@ -71,8 +75,9 @@ This document tracks the modernization and upgrade efforts for the Radiant Node 
 ### 8. Modernization & Developer Experience
 - **Modern C++ Migration (C++20)**:
   - Migrated codebase from C++17 to **C++20**.
-  - Replaced Boost dependencies with `std::` equivalents (e.g., `std::filesystem`).
+  - Replaced Boost dependencies with `std::` equivalents (e.g., `std::filesystem`, `std::span`).
   - Improved type safety and build times.
+  - Bumped `CMAKE_CXX_STANDARD` to `20` in `src/CMakeLists.txt`.
 - **Build System Cleanup**:
   - Fixed duplicate library linker warnings by consolidating circular dependency handling between `server` and `wallet` libraries.
   - Removed redundant transitive library links in `src/wallet/CMakeLists.txt` and `src/CMakeLists.txt`.
@@ -82,6 +87,15 @@ This document tracks the modernization and upgrade efforts for the Radiant Node 
   - **`archive`** (default): Full history, txindex enabled.
   - **`agent`**: Pruned (~550MB), txindex disabled.
   - **`mining`**: Balanced (~4GB), txindex disabled.
+
+### 9. Configuration Tuning
+- **Default Configuration Review**: Audited `src/init.cpp` and `src/config.cpp` for outdated default values.
+- **Database Cache Optimization**: Increased default `dbcache` size (dynamic based on available RAM or higher static value).
+- **RPC Performance**: Increased default `rpcworkqueue` and `rpcthreads` to handle modern indexer loads.
+
+### 10. Security & Observability
+- **Fuzz Testing**: Added `fuzz-radiant_opcodes` target for Radiant-specific consensus (unique references, introspection opcodes, `SCRIPT_PUSH_TX_STATE`).
+- **Prometheus Metrics**: Integrated native **Prometheus** metrics export (`/metrics` endpoint) for block height, peer count, mempool size, and version info.
 
 ## 🔮 Future Development
 For the active development roadmap and upcoming features, please refer to [ROADMAP.md](ROADMAP.md).

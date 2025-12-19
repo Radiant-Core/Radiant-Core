@@ -175,23 +175,9 @@ public:
         assert(genesis.hashMerkleRoot ==
                uint256S("027c3f6ae3858a75e2c287a915b3d82a50c48ee7021b715eedae9497f8ba2c37"));
 
-        vSeeds.emplace_back("node.radiantblockchain.org");
-        vSeeds.emplace_back("node.radiantone.org");
-        vSeeds.emplace_back("node.radiantlayerone.com");
-        vSeeds.emplace_back("radiant.bit90.io");
-        vSeeds.emplace_back("radiant.relayx.com");
-        vSeeds.emplace_back("us-chi1-rad.terraflow.info");
-        vSeeds.emplace_back("uk-lon1-rad.terraflow.info");
-        vSeeds.emplace_back("node.terraflow.info");
-        vSeeds.emplace_back("radchad.ddns.net");
-        vSeeds.emplace_back("node.radiantmideast.org");
-        vSeeds.emplace_back("node6.radiant.ovh");
-        vSeeds.emplace_back("node.radiant.ovh");
-        vSeeds.emplace_back("node.radiantlayerone.com");
-        vSeeds.emplace_back("node.radiantnode.org");
-        vSeeds.emplace_back("node.radiantminer.com");
-        vSeeds.emplace_back("node.radiantchain.org");
-        vSeeds.emplace_back("node.radiantone.org");
+        // DNS seeds disabled - most resolve to Cloudflare proxy IPs
+        // Using fixed seeds in chainparamsseeds.h instead
+        vSeeds.clear();
         
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);

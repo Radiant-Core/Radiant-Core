@@ -187,7 +187,7 @@ bool CMessageHeader::IsOversized(const Config &config) const {
         return false;
     }
 
-    // Block-like messages scale with block size (existing behavior)
+    // Block-like messages scale with block size
     if (NetMsgType::IsBlockLike(GetCommand())) {
         if (nMessageSize > 2 * config.GetExcessiveBlockSize()) {
             return true;

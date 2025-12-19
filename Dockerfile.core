@@ -44,10 +44,10 @@ RUN rm -rf build \
  && mkdir -p build \
  && cd build \
  && cmake -GNinja .. -DBUILD_RADIANT_WALLET=ON -DBUILD_RADIANT_DAEMON=ON -DBUILD_RADIANT_QT=OFF \
- && ninja -j 2 radiantd
+ && ninja -j 2 radiantd bitcoin-cli
 
 WORKDIR /opt/radiant-core/build/src
 
 EXPOSE 7332 7333
 
-ENTRYPOINT ["./radiantd", "-rpcworkqueue=32", "-rpcthreads=16", "-rest", "-server", "-rpcallowip=0.0.0.0/0", "-txindex=1", "-rpcuser=dockeruser", "-rpcpassword=dockerpass"]
+ENTRYPOINT ["./radiantd", "-printtoconsole", "-debug=net", "-rpcworkqueue=32", "-rpcthreads=16", "-rest", "-server", "-rpcallowip=0.0.0.0/0", "-txindex=1", "-rpcuser=dockeruser", "-rpcpassword=dockerpass"]
