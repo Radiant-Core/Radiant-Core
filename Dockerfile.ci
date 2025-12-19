@@ -1,0 +1,74 @@
+# Dockerfile for Radiant Node CI/CD Build Environment
+# Base: Ubuntu 24.04 LTS
+# Contains all dependencies required to build radiant-node from source
+# covering both native Linux builds and cross-compilation prerequisites.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 1. Install Base Build Tools & Dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    curl \
+    wget \
+    pkg-config \
+    python3 \
+    python3-pip \
+    ccache \
+    bsdmainutils \
+    ca-certificates \
+    gnupg \
+    automake \
+    autoconf \
+    libtool \
+    # Network & System Libraries
+    libssl-dev \
+    libevent-dev \
+    libzmq3-dev \
+    libminiupnpc-dev \
+    libgmp-dev \
+    libdb++-dev \
+    # Boost Libraries (Ubuntu 24.04 provides Boost 1.83)
+    libboost-all-dev \
+    # Documentation Tools
+    doxygen \
+    graphviz \
+    help2man \
+    # Cross-compilation tools (Commonly used in Radiant CI)
+    g++-mingw-w64-x86-64 \
+    g++-aarch64-linux-gnu \
+    g++-arm-linux-gnueabihf \
+    qemu-user-static \
+    # QT5 Dependencies (for GUI builds)
+    qtbase5-dev \
+    qttools5-dev-tools \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2. Python Dependencies for Tests/Linting
+RUN pip3 install --break-system-packages \
+    lief \
+    jinja2 \
+    mkdocs \
+    mkdocs-material
+
+# 3. Setup Build Environment Variables
+ENV CCACHE_DIR=/ccache
+ENV PATH="/usr/lib/ccache:$PATH"
+
+# 4. Create working directory
+WORKDIR /build

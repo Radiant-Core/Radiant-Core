@@ -1,0 +1,53 @@
+# Build and run the Radiant Core node from the local source tree
+# Usage (from macOS, in /Users/main/Desktop/radiant-core):
+#   docker build -f Dockerfile.core -t radiant-core-local .
+#   docker run --rm -it -p 7332:7332 -p 7333:7333 radiant-core-local
+
+FROM ubuntu:24.04
+
+LABEL maintainer="local-dev"
+LABEL description="Radiant Core built from local source tree"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libtool \
+    autoconf \
+    automake \
+    libevent-dev \
+    libboost-chrono-dev \
+    libboost-filesystem-dev \
+    libboost-test-dev \
+    libboost-thread-dev \
+    libminiupnpc-dev \
+    libssl-dev \
+    libzmq3-dev \
+    libdb++-dev \
+    python3 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/radiant-core
+
+# Copy the local source tree into the image
+COPY . .
+
+# Configure and build: wallet disabled to avoid Berkeley DB version issues,
+# explicitly enable daemon, and only build the node binary.
+# Remove any pre-existing host build directory/CMake cache that may have been
+# copied into the image, then configure from scratch.
+RUN rm -rf build \
+ && mkdir -p build \
+ && cd build \
+ && cmake -GNinja .. -DBUILD_RADIANT_WALLET=ON -DBUILD_RADIANT_DAEMON=ON -DBUILD_RADIANT_QT=OFF \
+ && ninja -j 2 radiantd
+
+WORKDIR /opt/radiant-core/build/src
+
+EXPOSE 7332 7333
+
+ENTRYPOINT ["./radiantd", "-rpcworkqueue=32", "-rpcthreads=16", "-rest", "-server", "-rpcallowip=0.0.0.0/0", "-txindex=1", "-rpcuser=dockeruser", "-rpcpassword=dockerpass"]

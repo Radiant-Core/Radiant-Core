@@ -1,0 +1,57 @@
+# Build and run the Radiant Seeder from the local source tree
+# Usage:
+#   docker build -f Dockerfile.seeder -t radiant-seeder-local .
+#   docker run --rm -it -p 5353:53/udp radiant-seeder-local -host=dnsseed.example.com -ns=vps.example.com
+
+FROM ubuntu:24.04
+
+LABEL maintainer="local-dev"
+LABEL description="Radiant Seeder built from local source tree"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    ninja-build \
+    pkg-config \
+    libtool \
+    autoconf \
+    automake \
+    libevent-dev \
+    libboost-chrono-dev \
+    libboost-filesystem-dev \
+    libboost-test-dev \
+    libboost-thread-dev \
+    libminiupnpc-dev \
+    libssl-dev \
+    libzmq3-dev \
+    libdb++-dev \
+    python3 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/radiant-seeder
+
+# Copy the local source tree into the image
+COPY . .
+
+# Configure and build: Enable Seeder, Disable everything else
+RUN rm -rf build \
+ && mkdir -p build \
+ && cd build \
+ && cmake -GNinja .. \
+    -DBUILD_RADIANT_SEEDER=ON \
+    -DBUILD_RADIANT_DAEMON=OFF \
+    -DBUILD_RADIANT_WALLET=OFF \
+    -DBUILD_RADIANT_QT=OFF \
+    -DBUILD_RADIANT_CLI=OFF \
+    -DBUILD_RADIANT_TX=OFF \
+    -DBUILD_RADIANT_ZMQ=OFF \
+ && ninja -j 2 radiant-seeder
+
+WORKDIR /opt/radiant-seeder/build/src/seeder
+
+EXPOSE 53/udp
+
+ENTRYPOINT ["./radiant-seeder"]

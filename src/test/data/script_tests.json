@@ -1,0 +1,21 @@
+[
+    ["Format is: [[wit..., amount]?, scriptSig, scriptPubKey, flags, expected_scripterror, ... comments]"],
+    ["It is evaluated as if there was a crediting coinbase transaction with two 0"],
+    ["pushes as scriptSig, and one output of 0 satoshi and given scriptPubKey,"],
+    ["followed by a spending transaction which spends this output as only input (and"],
+    ["correct prevout hash), using the given scriptSig. All nLockTimes are 0, all"],
+    ["nSequences are max."],
+    
+    ["", "DEPTH 0 EQUAL", "STRICTENC", "OK", "Test the test: we should have an empty stack after scriptSig evaluation"],
+    ["  ", "DEPTH 0 EQUAL", "STRICTENC", "OK", "and multiple spaces should not change that."],
+    ["   ", "DEPTH 0 EQUAL", "STRICTENC", "OK"],
+    ["    ", "DEPTH 0 EQUAL", "STRICTENC", "OK"],
+    ["1 2", "2 EQUALVERIFY 1 EQUAL", "STRICTENC", "OK", "Similarly whitespace around and between symbols"],
+    ["1  2", "2 EQUALVERIFY 1 EQUAL", "STRICTENC", "OK"],
+    ["  1  2", "2 EQUALVERIFY 1 EQUAL", "STRICTENC", "OK"],
+    ["1  2  ", "2 EQUALVERIFY 1 EQUAL", "STRICTENC", "OK"],
+    ["  1  2  ", "2 EQUALVERIFY 1 EQUAL", "STRICTENC", "OK"],
+     
+    ["The End"]
+    ]
+    

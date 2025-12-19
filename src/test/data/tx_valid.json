@@ -1,0 +1,21 @@
+[
+["The following are deserialized transactions which are valid."],
+["They are in the form"],
+["[[[prevout hash, prevout index, prevout scriptPubKey, amount?], [input 2], ...],"],
+["serializedTransaction, verifyFlags]"],
+["Objects that are only a single string (like this one) are ignored"],
+ 
+["FindAndDelete tests"],
+["This is a test of FindAndDelete. The first tx is a spend of normal P2SH and the second tx is a spend of bare P2WSH."],
+["The redeemScript/witnessScript is CHECKSIGVERIFY <0x30450220487fb382c4974de3f7d834c1b617fe15860828c7f96454490edd6d891556dcc9022100baf95feb48f845d5bfc9882eb6aeefa1bc3790e39f59eaa46ff7f15ae626c53e01>."],
+["The signature is <0x30450220487fb382c4974de3f7d834c1b617fe15860828c7f96454490edd6d891556dcc9022100baf95feb48f845d5bfc9882eb6aeefa1bc3790e39f59eaa46ff7f15ae626c53e01> <pubkey>,"],
+["where the pubkey is obtained through key recovery with sig and correct sighash."],
+["This is to show that FindAndDelete is applied only to non-segwit scripts"],
+["Non-segwit: correct sighash (with FindAndDelete) = 1ba1fe3bc90c5d1265460e684ce6774e324f0fabdf67619eda729e64e8b6bc08"],
+["This is multisig version of the FindAndDelete tests"],
+["Script is 2 CHECKMULTISIGVERIFY <sig1> <sig2> DROP"],
+["52af4830450220487fb382c4974de3f7d834c1b617fe15860828c7f96454490edd6d891556dcc9022100baf95feb48f845d5bfc9882eb6aeefa1bc3790e39f59eaa46ff7f15ae626c53e0148304502205286f726690b2e9b0207f0345711e63fa7012045b9eb0f19c2458ce1db90cf43022100e89f17f86abc5b149eba4115d4f128bcf45d77fb3ecdd34f594091340c0395960175"],
+["Signature is 0 <sig1> <sig2> 2 <key1> <key2>"],
+["Non-segwit: correct sighash (with FindAndDelete) = 1d50f00ba4db2917b903b0ec5002e017343bb38876398c9510570f5dce099295"],
+["Make diffs cleaner by leaving a comment here without comma at the end"]
+]
