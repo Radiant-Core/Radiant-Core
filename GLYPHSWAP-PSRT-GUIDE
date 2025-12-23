@@ -26,7 +26,7 @@ Swap advertisements must be **standard** and relayable.
 
 Radiant Core enforces a max total size of all `OP_RETURN` output scripts per transaction:
 - Config: `-datacarriersize=<n>`
-- Default: `MAX_OP_RETURN_RELAY = 223` bytes
+- Default: `1024` bytes
 
 This limit counts the **entire output script length**, not just your payload bytes.
 
@@ -82,7 +82,12 @@ Photonic Wallet’s “swap broadcast” is **broadcasting the final spend trans
 Radiant Core’s `SwapIndex` parses swap advertisements from an `OP_RETURN` script that contains **multiple pushes**.
 
 ### Script structure
-The expected structure is:
+Two formats exist:
+- **Legacy v1** (kept for compatibility with existing indexers)
+- **Recommended v2** (required for full-featured swaps: want token indexing + multi-push multi-output terms)
+
+#### Legacy v1 (version = 1)
+The legacy structure is:
 
 1. `OP_RETURN`
 2. push bytes: ASCII `RSWP` (4 bytes)
@@ -94,15 +99,96 @@ The expected structure is:
 8. push bytes: `priceTerms` (arbitrary bytes)
 9. push bytes: `signature` (arbitrary bytes)
 
-### Field meanings (as implemented today)
-- `version`: protocol version (currently indexed as-is)
-- `type`: swap type (RPC help text uses `1=Sell, 2=Buy`)
-- `tokenID`: identifier used to group offers for RPC queries
-- `offeredUTXOHash` / `offeredUTXOIndex`: identifies the offered UTXO; offer is considered active until this outpoint is spent
-- `priceTerms`: **opaque bytes** to the node; returned as hex in RPC
-- `signature`: **opaque bytes** to the node; returned as hex in RPC
+#### Recommended v2 (version = 2)
+The v2 structure is:
+
+1. `OP_RETURN`
+2. push bytes: ASCII `RSWP` (4 bytes)
+3. push bytes: `version` (1 byte, value `0x02`)
+4. push bytes: `flags` (1 byte)
+5. push bytes: `offered_type` (1 byte)
+6. push bytes: `terms_type` (1 byte)
+7. push bytes: `tokenID` (32 bytes)
+8. push bytes: `wantTokenID` (32 bytes) **only if** `flags & 0x01` is set
+9. push bytes: `offeredUTXOHash` (32 bytes)
+10. push bytes: `offeredUTXOIndex` (ScriptNum; minimally-encoded integer, up to 4 bytes, OR OP_N for 0..16)
+11+. push bytes: one or more `terms_part` pushes
+last push: `signature`
+
+Notes:
+- `terms_part` pushes are **concatenated** by the node into `price_terms`.
+- There MUST be at least **2 pushes** after `offeredUTXOIndex` (at least one `terms_part` plus the final `signature`).
+
+### Field meanings
+#### v2 header fields
+- `version`: protocol version.
+- `flags`:
+  - bit `0` (`0x01`): `wantTokenID` is present.
+- `offered_type`: offered asset class (recommended values):
+  - `0`: unknown/unspecified
+  - `1`: RXD
+  - `2`: Fungible token (FT)
+  - `3`: Non-fungible token (NFT)
+- `terms_type`: the encoding of `priceTerms` (recommended values):
+  - `1`: `MultiTxOutV1` (defined below)
+
+#### Identifiers
+- `tokenID`: identifier used to group offers by **what is being offered**.
+- `wantTokenID`: identifier used to group offers by **what the maker wants to receive**.
+
+#### UTXO
+- `offeredUTXOHash` / `offeredUTXOIndex`: identifies the offered UTXO; offer is considered active until this outpoint is spent.
+
+#### Opaque blobs (node stores/returns but does not interpret)
+- `priceTerms`: concatenation of `terms_part` pushes.
+- `signature`: final push bytes.
 
 Important: Radiant Core **does not interpret** `priceTerms` or `signature` beyond storing them. Any semantics and validation happen at the application/protocol layer.
+
+## Canonical encoding for self-contained swaps (recommended)
+
+### tokenID / wantTokenID mapping
+To align with Photonic’s semantics:
+
+- For a token identified by an outpoint-like `ref` (36 bytes = `txid(32) || vout(4)` in display-hex byte order), define:
+  - `tokenID = sha256(ref_bytes)`.
+
+This matches Photonic’s `Outpoint.refHash()` behavior.
+
+For RXD (no token ref), you need a stable convention. Recommended simple conventions:
+- **RXD-as-null**: use `000...000` (32 bytes of zero).
+- Or define an explicit constant (SDK-level) like `sha256("RXD")` and document it.
+
+### terms_type = MultiTxOutV1 (recommended)
+`priceTerms` encodes the exact outputs that the maker signature commits to.
+
+Encoding:
+- `nOutputs`: CompactSize/varint
+- Repeat `nOutputs` times:
+  - `value`: 8 bytes little-endian (satoshis)
+  - `scriptPubKey`: CompactSize/varbytes
+
+Wallet rule for Photonic-style PSRT:
+- Maker uses `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY | SIGHASH_FORKID` and MUST ensure that the output at index `i` is the output committed by the signature for input `i`.
+- In the simple “one maker input” case, maker commits to output index `0`.
+
+Multi-output terms in v2 allow future variants where a maker can commit to multiple outputs (e.g. fees, royalties, multiple recipients) while still being self-contained.
+
+### signature encoding (recommended)
+For self-contained fulfillment, `signature` SHOULD be the full unlocking script bytes required to spend the offered UTXO input.
+
+Example for P2PKH:
+- `signature = scriptSigBytes = PUSH(<DER_sig || sighashType>) PUSH(<pubkey>)`
+
+Clients MUST use the sighash flags:
+- `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY | SIGHASH_FORKID`
+
+## New RPCs for want-token discovery
+When v2 offers include `wantTokenID`, Radiant Core provides secondary indexing so takers can discover by what they want to pay:
+
+- `getopenordersbywant <want_token_ref> [limit] [offset]`
+- `getswaphistorybywant <want_token_ref> [limit] [offset]`
+- `getswapcountbywant <want_token_ref>`
 
 ### Multi-push requirement
 Many wallet/RPC helpers can only create `OP_RETURN <single-push>` outputs (for example `createrawtransaction` “data” output creates one push).
@@ -195,30 +281,250 @@ Returns:
    - `getswaphistory` may show it immediately (mempool-aware)
 5. After confirmation, the offer is moved to history in the index.
 
+## Canonical on-chain swap protocol (recommended)
+This section specifies a **canonical** interpretation of the `RSWP` advertisement so that swaps can be:
+- **fully self-contained** (taker can fill purely from chain data), and
+- directly aligned with Photonic Wallet’s PSRT semantics.
+
+The node still treats `priceTerms` and `signature` as opaque bytes, but this guide defines what clients SHOULD encode.
+
 ## Operational notes / best practices
-- Keep the `OP_RETURN` script small (default relay limit is 223 bytes).
+- Keep the `OP_RETURN` script small (default relay limit is 1024 bytes).
 - Use paging (`limit`/`offset`) for large token orderbooks.
 - Use `getswapcount` before paginating through large datasets.
 - For long-running indexers, configure `-swaphistoryblocks` based on your storage and analytics needs.
 
-## Open Questions (to finalize a “canonical” spec)
-Radiant Core currently treats `priceTerms` and `signature` as opaque bytes.
+## Complete v2 advertisement example (hex)
 
-Photonic Wallet strongly suggests a workable “canonical” interpretation if you want to use `SwapIndex` advertisements to represent Photonic-style PSRT swaps:
-- **`priceTerms`** could be the serialized “maker requested output” (at minimum: output script + amount). In Photonic, this is literally output 0 of the partially-signed tx.
-- **`signature`** could be the maker’s signature material for spending the offered UTXO using `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY | SIGHASH_FORKID`.
+This section provides a complete, annotated example of a v2 `RSWP` advertisement `OP_RETURN` script in hex format.
 
-However, Radiant Core does not currently specify the binary format of these fields. To lock this down, please confirm:
-1. **Advertisement vs out-of-band**: do you want swaps to be discoverable via on-chain `RSWP` advertisements + `getopenorders`, or is out-of-band PSRT sharing sufficient?
-2. **`priceTerms` exact bytes**: should it be:
-   - full serialized `CTxOut` (amount + scriptPubKey), or
-   - scriptPubKey only (amount implied elsewhere), or
-   - the full partially-signed tx (Photonic’s “PSRT”) as bytes?
-3. **`signature` exact bytes**: should it be:
-   - DER signature only,
-   - signature + sighash byte,
-   - full scriptSig (signature+sighash + pubkey), or
-   - something else (e.g. signature over a fixed message)?
-4. **Swap types**: Photonic doesn’t appear to use the `type` (1=Sell/2=Buy) field explicitly. Do we want `type` to reflect “offered asset vs requested asset” direction in a standardized way?
+### Example scenario
+- **Token ID** (what is being offered): `a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2` (32 bytes)
+- **Want Token ID** (what maker wants): `f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2` (32 bytes)
+- **Offered UTXO**: `deadbeef...` txid at vout 0
+- **Price terms**: `0108e0930400000000001976a914...` (MultiTxOutV1 encoding)
+- **Signature**: Full scriptSig for offered input
 
-Once you answer these, I can update this guide with a precise, byte-level “Maker builds X / Taker builds Y” spec and example encodings.
+### Hex breakdown
+
+```
+6a                              # OP_RETURN
+04 52535750                     # PUSH 4 bytes: "RSWP" (protocol ID)
+01 02                           # PUSH 1 byte: version = 2
+01 01                           # PUSH 1 byte: flags = 0x01 (has wantTokenID)
+01 00                           # PUSH 1 byte: offered_type = 0 (unspecified)
+01 01                           # PUSH 1 byte: terms_type = 1 (MultiTxOutV1)
+20 a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+                                # PUSH 32 bytes: tokenID (little-endian)
+20 f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2
+                                # PUSH 32 bytes: wantTokenID (little-endian)
+20 efbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeadde
+                                # PUSH 32 bytes: offeredUTXOHash (little-endian)
+00                              # OP_0: offeredUTXOIndex = 0
+1a 0108e09304000000001976a914aabbccdd...
+                                # PUSH 26 bytes: priceTerms (MultiTxOutV1)
+47 3044022012345678...          # PUSH 71 bytes: signature (DER sig + pubkey)
+```
+
+### Full hex (concatenated)
+```
+6a0452535750010201010100012020a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b220f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e2d3c4b5a6f1e220efbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeaddeefbeadde001a0108e09304000000001976a914aabbccdd...473044022012345678...
+```
+
+### Python construction example
+```python
+from test_framework.script import CScript, OP_RETURN
+
+def build_rswp_v2_script(token_id_bytes, want_token_id_bytes, 
+                         utxo_hash_bytes, utxo_index, 
+                         price_terms, signature):
+    """
+    Build a v2 RSWP advertisement OP_RETURN script.
+    
+    All ID/hash bytes should be in little-endian (reversed from display hex).
+    """
+    return CScript([
+        OP_RETURN,
+        b"RSWP",                    # Protocol ID
+        b'\x02',                    # Version = 2
+        b'\x01',                    # Flags = 0x01 (has wantTokenID)
+        b'\x00',                    # Offered type
+        b'\x01',                    # Terms type (MultiTxOutV1)
+        token_id_bytes,             # 32 bytes
+        want_token_id_bytes,        # 32 bytes
+        utxo_hash_bytes,            # 32 bytes
+        bytes([utxo_index]) if utxo_index < 256 else encode_scriptnum(utxo_index),
+        price_terms,                # Variable length
+        signature                   # Variable length
+    ])
+
+# Example usage:
+token_id = bytes.fromhex("a1b2c3d4...")[::-1]  # Reverse for little-endian
+script = build_rswp_v2_script(token_id, want_token_id, utxo_hash, 0, terms, sig)
+```
+
+## RPC error codes reference
+
+This section documents common RPC error codes and their meanings when interacting with swap RPCs.
+
+### Error codes table
+
+| Code | Constant | Description | Common Cause |
+|------|----------|-------------|--------------|
+| -1 | `RPC_MISC_ERROR` | Swap index not enabled | Node not started with `-swapindex=1` |
+| -5 | `RPC_INVALID_ADDRESS_OR_KEY` | Invalid token reference | Malformed hex string for `token_ref` |
+| -8 | `RPC_INVALID_PARAMETER` | Invalid parameter value | Negative `limit` or `offset` value |
+| -32600 | `RPC_INTERNAL_ERROR` | Internal index error | Database read failure |
+
+### Common error messages
+
+#### "Swap index not enabled"
+```json
+{
+  "error": {
+    "code": -1,
+    "message": "Swap index not enabled. Use -swapindex=1 to enable."
+  }
+}
+```
+**Solution**: Restart the node with `-swapindex=1` flag.
+
+#### "limit must be non-negative"
+```json
+{
+  "error": {
+    "code": -8,
+    "message": "limit must be non-negative"
+  }
+}
+```
+**Solution**: Provide a non-negative integer for the `limit` parameter.
+
+#### "offset must be non-negative"
+```json
+{
+  "error": {
+    "code": -8,
+    "message": "offset must be non-negative"
+  }
+}
+```
+**Solution**: Provide a non-negative integer for the `offset` parameter.
+
+#### Invalid token_ref format
+```json
+{
+  "error": {
+    "code": -5,
+    "message": "token_ref must be hexadecimal string (not '...')"
+  }
+}
+```
+**Solution**: Provide a valid 64-character hex string for the token reference.
+
+## Troubleshooting
+
+### oversize-op-return rejection
+
+**Symptom**: Transaction rejected with error:
+```
+error code: -26
+error message: 64: oversize-op-return
+```
+
+**Cause**: The total size of all `OP_RETURN` output scripts in the transaction exceeds the `-datacarriersize` limit (default: 1024 bytes).
+
+**Solutions**:
+
+1. **Reduce payload size**
+   - Use shorter `priceTerms` encoding
+   - Minimize signature size (use compressed pubkeys)
+   - Avoid unnecessary padding
+
+2. **Increase node limit** (if you control the node)
+   ```bash
+   radiantd -datacarriersize=2048
+   ```
+   Note: This only affects your node's relay policy. Other nodes with default settings will still reject the transaction.
+
+3. **Check script size before broadcast**
+   ```python
+   script = build_rswp_v2_script(...)
+   if len(script) > 1024:
+       print(f"Warning: Script is {len(script)} bytes, exceeds default limit")
+   ```
+
+### Typical v2 advertisement sizes
+
+| Component | Size (bytes) |
+|-----------|-------------|
+| OP_RETURN | 1 |
+| "RSWP" push | 5 (1 + 4) |
+| Version | 2 (1 + 1) |
+| Flags | 2 (1 + 1) |
+| Offered type | 2 (1 + 1) |
+| Terms type | 2 (1 + 1) |
+| TokenID | 33 (1 + 32) |
+| WantTokenID | 33 (1 + 32) |
+| UTXO hash | 33 (1 + 32) |
+| UTXO index | 1-5 |
+| **Header total** | **~114 bytes** |
+
+Remaining budget for `priceTerms` + `signature`: **~910 bytes**
+
+A typical P2PKH signature is ~107 bytes, leaving **~800 bytes** for `priceTerms`.
+
+### Order not appearing in getopenorders
+
+**Possible causes**:
+
+1. **Transaction not confirmed**: Orders are indexed when the block is connected. Check that the advertisement transaction has confirmations.
+
+2. **Wrong byte order for token_ref**: Ensure you're querying with the display-hex format of the token ID, not the internal little-endian bytes.
+
+3. **UTXO already spent**: The offer's UTXO may have been spent (filled or cancelled). Check `getswaphistory` instead.
+
+4. **Parsing failure**: The `OP_RETURN` script may not match the expected format. Verify:
+   - Protocol ID is exactly "RSWP" (4 bytes)
+   - Version byte is present and valid (1 or 2)
+   - All required fields have correct sizes
+
+5. **Index not synced**: The swap index may still be syncing. Check node logs for "Syncing swapindex" messages.
+
+### Order stuck in open after being filled
+
+**Possible causes**:
+
+1. **Spend transaction not confirmed**: The order moves to history only when the spend is confirmed in a block.
+
+2. **Reorg occurred**: If the block containing the spend was orphaned, the order returns to open status.
+
+**Debugging steps**:
+```bash
+# Check if UTXO is spent
+radiant-cli gettxout <utxo_txid> <utxo_vout>
+# Returns null if spent
+
+# Check mempool for pending spend
+radiant-cli getmempoolentry <spend_txid>
+```
+
+### History entries missing
+
+**Possible causes**:
+
+1. **Pruning**: History entries are pruned after `-swaphistoryblocks` blocks (default: 10000). For longer retention, increase this value or set to 0 for unlimited.
+
+2. **Recent spend**: The spend may still be in mempool. `getswaphistory` includes mempool-spent offers, but with a slight delay.
+
+### Reorg handling
+
+The swap index handles chain reorganizations automatically:
+- When a block is disconnected, orders that were moved to history are restored to open status
+- Advertisements indexed in disconnected blocks are removed
+- No manual intervention is required
+
+To verify reorg handling is working, check debug.log for:
+```
+SwapIndex: Processed disconnected block, restored N orders, removed M ads
+```

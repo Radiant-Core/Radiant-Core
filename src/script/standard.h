@@ -32,6 +32,8 @@ public:
  */
 static constexpr uint32_t MAX_OP_RETURN_RELAY = 223;
 
+static constexpr uint32_t DEFAULT_DATACARRIER_BYTES = 1024;
+
 /**
  * A data carrying output is an unspendable output containing data. The script type is designated as TX_NULL_DATA.
  */

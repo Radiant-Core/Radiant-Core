@@ -16,18 +16,22 @@ static constexpr size_t DEFAULT_SWAP_CACHE_SIZE = 10 << 20; // 10MB
 static constexpr int64_t DEFAULT_SWAP_HISTORY_BLOCKS = 10000; // ~35 days at 5 min blocks
 static constexpr size_t DEFAULT_SWAP_QUERY_LIMIT = 100;
 static constexpr size_t MAX_SWAP_QUERY_LIMIT = 1000;
+static constexpr size_t MAX_SWAP_COUNT_ITERATIONS = 100000; // Max iterations for count queries
 static constexpr int64_t SWAP_PRUNE_INTERVAL = 60; // seconds between prune cycles
 
 // Index version for migration support
-static constexpr uint8_t SWAP_INDEX_VERSION = 1;
+static constexpr uint8_t SWAP_INDEX_VERSION = 2;
 
 /**
  * SwapOffer represents a parsed swap advertisement.
  */
 struct SwapOffer {
     uint8_t version;
-    uint8_t type;
+    uint8_t flags{0};
+    uint8_t offeredType{0};
+    uint8_t termsType{0};
     uint256 tokenID;
+    uint256 wantTokenID;
     uint256 offeredUTXOHash;
     uint32_t offeredUTXOIndex;
     std::vector<uint8_t> priceTerms;
@@ -36,8 +40,8 @@ struct SwapOffer {
 
     // Helper to serialize the offer for storage
     SERIALIZE_METHODS(SwapOffer, obj) {
-        READWRITE(obj.version, obj.type, obj.tokenID, obj.offeredUTXOHash, 
-                  obj.offeredUTXOIndex, obj.priceTerms, obj.signature, obj.blockHeight);
+        READWRITE(obj.version, obj.flags, obj.offeredType, obj.termsType, obj.tokenID, obj.wantTokenID,
+                  obj.offeredUTXOHash, obj.offeredUTXOIndex, obj.priceTerms, obj.signature, obj.blockHeight);
     }
 };
 
@@ -78,13 +82,21 @@ private:
     /// Move an order from open to history prefix
     bool MoveToHistory(const SwapOffer &offer);
     
+    /// Move an order from history back to open (for reorg handling)
+    bool MoveToOpen(const SwapOffer &offer);
+    
     /// Delete old history entries beyond retention period
     bool PruneOldHistory(int32_t current_height);
+    
+    /// Process a disconnected block during reorg
+    bool ProcessDisconnectedBlock(const CBlock &block);
 
 protected:
     bool Init() override;
 
     bool WriteBlock(const CBlock &block, const CBlockIndex *pindex) override;
+    
+    void BlockDisconnected(const std::shared_ptr<const CBlock> &block) override;
 
     BaseIndex::DB &GetDB() const override;
 
@@ -103,9 +115,20 @@ public:
     /// Look up historical (spent/cancelled) orders for a given token ID with pagination.
     bool GetHistoryOrders(const uint256 &tokenID, std::vector<SwapOffer> &orders,
                           size_t limit = DEFAULT_SWAP_QUERY_LIMIT, size_t offset = 0);
+
+    /// Look up open orders for a given wanted token ID with pagination.
+    bool GetOpenOrdersByWant(const uint256 &wantTokenID, std::vector<SwapOffer> &orders,
+                             size_t limit = DEFAULT_SWAP_QUERY_LIMIT, size_t offset = 0);
+
+    /// Look up historical orders for a given wanted token ID with pagination.
+    bool GetHistoryOrdersByWant(const uint256 &wantTokenID, std::vector<SwapOffer> &orders,
+                                size_t limit = DEFAULT_SWAP_QUERY_LIMIT, size_t offset = 0);
     
     /// Get counts of open and history orders for a token ID.
     bool GetOrderCounts(const uint256 &tokenID, SwapOrderCounts &counts);
+
+    /// Get counts of open and history orders for a wanted token ID.
+    bool GetOrderCountsByWant(const uint256 &wantTokenID, SwapOrderCounts &counts);
     
     /// Check spent UTXOs and move them to history. Called during WriteBlock.
     bool ProcessSpentOrders(const CBlock &block, int32_t height);

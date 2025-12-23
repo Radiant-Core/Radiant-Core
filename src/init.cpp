@@ -988,7 +988,7 @@ void SetupServerArgs() {
     gArgs.AddArg("-datacarriersize=<n>",
                  strprintf("Maximum total size of OP_RETURN output scripts in a single transaction "
                            "we relay and mine (in bytes, 0 to reject all OP_RETURN transactions, default: %u)",
-                           MAX_OP_RETURN_RELAY),
+                           DEFAULT_DATACARRIER_BYTES),
                  ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::NODE_RELAY);
     gArgs.AddArg("-permitbaremultisig",
                  strprintf("Relay non-P2SH multisig (default: %d)",
@@ -2052,7 +2052,7 @@ bool AppInitParameterInteraction(Config &config) {
     }
 
     fIsBareMultisigStd = gArgs.GetBoolArg("-permitbaremultisig", DEFAULT_PERMIT_BAREMULTISIG);
-    nMaxDatacarrierBytes = gArgs.GetArg("-datacarriersize", MAX_OP_RETURN_RELAY);
+    nMaxDatacarrierBytes = gArgs.GetArg("-datacarriersize", DEFAULT_DATACARRIER_BYTES);
 
     // Option to startup with mocktime set (used for regression testing):
     SetMockTime(gArgs.GetArg("-mocktime", 0)); // SetMockTime(0) is a no-op

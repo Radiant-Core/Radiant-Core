@@ -15,7 +15,7 @@
 
 typedef std::vector<uint8_t> valtype;
 
-uint32_t nMaxDatacarrierBytes = MAX_OP_RETURN_RELAY;
+uint32_t nMaxDatacarrierBytes = DEFAULT_DATACARRIER_BYTES;
 
 CScriptID::CScriptID(const CScript &in) : uint160(Hash160(in)) {}
 
