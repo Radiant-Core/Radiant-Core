@@ -153,6 +153,13 @@ rpcuser=youruser
 rpcpassword=yourpassword
 rpcallowip=127.0.0.1
 
+# Fee policy (amounts are in RXD/kB)
+# Defaults are tuned for RXD economics. Override only if you understand the tradeoffs.
+minrelaytxfee=0.1
+incrementalrelayfee=0.01
+blockmintxfee=0.1
+fallbackfee=0.1
+
 # Indexing (required for explorers/indexers)
 txindex=1
 
@@ -163,6 +170,43 @@ swapindex=1
 prometheusmetrics=1
 ```
 
+### Docker / Container Setup (Persistence, RPC safety, logging)
+
+If you run `radiantd` in Docker, make sure you persist the datadir and avoid exposing RPC publicly.
+
+#### Persist `~/.radiant`
+
+The default datadir is `~/.radiant` (inside a container this is usually `/root/.radiant`). Without a bind mount or Docker volume, you will lose chainstate/indexes when the container is removed.
+
+```bash
+docker volume create radiant-datadir
+docker run --name radiant-mainnet \
+  -p 7333:7333 \
+  -p 127.0.0.1:7332:7332 \
+  -v radiant-datadir:/root/.radiant \
+  radiant-core-local \
+  ./radiantd -nodeprofile=archive -server -rest
+```
+
+#### RPC hardening (recommended)
+
+- **Do not use** `-rpcallowip=0.0.0.0/0` unless you fully understand the exposure and have network-layer controls.
+- Bind RPC to localhost (or a private management network) and use strong authentication.
+
+If you need RPC from outside the host, prefer placing it behind a VPN / reverse proxy with authentication and IP allowlisting.
+
+Prefer `rpcauth` over plaintext `rpcpassword`. The repository includes tooling in `share/rpcauth/` to generate `rpcauth` entries.
+
+#### Logging verbosity
+
+Avoid running with `-debug=net` unless you are actively debugging P2P behavior. It produces very large `debug.log` files and adds disk I/O overhead.
+
+#### Indexing and fee policy notes
+
+- **`txindex=1`** is useful for explorers/indexers and increases disk usage. Disable it if you do not need arbitrary transaction lookups.
+- If you see `Warning: -minrelaytxfee is set very high!` in logs, check your config/flags and remove or lower the override unless intentionally running a restrictive relay policy.
+- Fee-related configuration values are expressed in **RXD/kB** (e.g. `minrelaytxfee=0.1`).
+- `incrementalrelayfee` controls the minimum fee-rate increase used for mempool limiting / replacement behavior.
 
 Development & CI
 --------------------------

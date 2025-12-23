@@ -76,7 +76,7 @@ static constexpr Amount DEFAULT_UTXO_FEE = Amount::zero();
 //! -maxtxfee default
 static constexpr Amount DEFAULT_TRANSACTION_MAXFEE(2000 * COIN);
 //! Discourage users to set fees higher than this amount (in satoshis) per kB
-static constexpr Amount HIGH_TX_FEE_PER_KB(COIN / 100);
+static constexpr Amount HIGH_TX_FEE_PER_KB(1 * COIN);
 /**
  * -maxtxfee will warn if called with a higher fee than this amount (in satoshis
  */

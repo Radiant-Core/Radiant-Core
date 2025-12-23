@@ -1,0 +1,224 @@
+# GLYPHSWAP / PSRT GUIDE
+
+## Purpose
+This document describes how **Glyph Swap Protocol (PSRT)** “swap offers” are **broadcast on-chain** in Radiant Core, how they are indexed by `SwapIndex`, and how clients should construct and discover offers.
+
+In Radiant Core, swap offers are not gossiped via a special P2P message. They are broadcast as a **standard transaction** containing an `OP_RETURN` output with protocol tag `RSWP` and a structured, multi-push payload.
+
+## Quick Glossary
+- **Maker**: creates and broadcasts a swap advertisement transaction.
+- **Taker**: finds a maker’s offer and spends the maker’s offered UTXO according to the off-chain/on-chain rules.
+- **Offer / Order**: a single on-chain swap advertisement.
+- **Token Ref / Token ID**: 32-byte identifier used to group offers (passed to RPC as `token_ref`).
+- **Offered UTXO**: the UTXO the maker is offering; offer “completion/cancel” is detected when that UTXO is spent.
+
+## Node Requirements
+### Indexing / Querying
+To query offers via RPC, the node must run with:
+- `-swapindex=1`
+
+Optional tuning:
+- `-swapcache=<n>`: swap index cache in **MiB** (default 10 MiB)
+- `-swaphistoryblocks=<n>`: retain spent/cancelled offers for **n blocks** (default 10000). Use `0` to keep all history.
+
+### OP_RETURN relay policy (important)
+Swap advertisements must be **standard** and relayable.
+
+Radiant Core enforces a max total size of all `OP_RETURN` output scripts per transaction:
+- Config: `-datacarriersize=<n>`
+- Default: `MAX_OP_RETURN_RELAY = 223` bytes
+
+This limit counts the **entire output script length**, not just your payload bytes.
+
+If your advertisement’s `OP_RETURN` script is too large, it will be rejected by policy with reason `oversize-op-return`.
+
+## How offers are broadcast
+### Broadcasting overview
+A maker broadcasts a swap offer by publishing a transaction that includes an `OP_RETURN` output with the `RSWP` multi-push payload.
+
+That transaction is:
+- **relayed through the mempool** like any other transaction (subject to policy), and
+- **indexed when confirmed in a block** by nodes with `-swapindex=1`.
+
+There is no additional broadcast step beyond broadcasting the transaction.
+
+## Photonic Wallet implementation notes (important)
+Photonic Wallet’s “swap” implementation is a **PSRT-style partially signed transaction workflow**, but it is **not** currently using the on-chain `RSWP` `OP_RETURN` advertisements (and it does not call `getopenorders`/`getswaphistory`).
+
+Instead:
+- The maker constructs a *partially signed transaction hex* and shares it **out-of-band** (copy/paste / message / etc.).
+- The taker loads that tx hex and completes/funds it, then broadcasts the final transaction.
+
+### Photonic’s “PSRT” transaction format (as implemented)
+In Photonic Wallet, the shared “PSRT” is effectively a transaction with:
+- Exactly **1 input**
+- Exactly **1 output**
+
+The input spends the maker’s offered UTXO. The output is the maker’s requested payment output.
+
+The maker signs with ECDSA using sighash flags:
+- `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY | SIGHASH_FORKID`
+
+Practical meaning:
+- The maker’s signature commits to **only their input** and the **corresponding output index** (index 0).
+- A taker can add additional inputs/outputs (e.g. funding inputs, change outputs, and the “payout to taker” output) without invalidating the maker’s signature.
+
+### Photonic maker procedure (high level)
+Photonic first “reserves” the asset being offered by moving it to a dedicated **swap address** (derived from a separate HD path). That reserved UTXO becomes the offered UTXO.
+
+Then the maker creates the partially-signed tx (“PSRT”) that spends that reserved UTXO using the sighash flags above and includes the maker’s requested payment output as output 0.
+
+### Photonic taker procedure (high level)
+The taker loads the maker’s partially-signed tx hex and then builds a final transaction that:
+- Uses the maker’s offered UTXO as input 0 (with maker’s existing scriptSig preserved)
+- Keeps the maker’s requested payment output as output 0
+- Adds output 1 paying the offered asset to the taker
+- Adds whatever additional inputs are needed to fund the payment + fees, plus change outputs
+
+### Key takeaway
+Photonic Wallet’s “swap broadcast” is **broadcasting the final spend transaction**, not broadcasting an on-chain `RSWP` advertisement. Discovery is currently out-of-band.
+
+## Swap advertisement payload format (RSWP)
+Radiant Core’s `SwapIndex` parses swap advertisements from an `OP_RETURN` script that contains **multiple pushes**.
+
+### Script structure
+The expected structure is:
+
+1. `OP_RETURN`
+2. push bytes: ASCII `RSWP` (4 bytes)
+3. push bytes: `version` (exactly 1 byte)
+4. push bytes: `type` (exactly 1 byte)
+5. push bytes: `tokenID` (exactly 32 bytes)
+6. push bytes: `offeredUTXOHash` (exactly 32 bytes)
+7. push bytes: `offeredUTXOIndex` (ScriptNum; minimally-encoded integer, up to 4 bytes, OR OP_N for 0..16)
+8. push bytes: `priceTerms` (arbitrary bytes)
+9. push bytes: `signature` (arbitrary bytes)
+
+### Field meanings (as implemented today)
+- `version`: protocol version (currently indexed as-is)
+- `type`: swap type (RPC help text uses `1=Sell, 2=Buy`)
+- `tokenID`: identifier used to group offers for RPC queries
+- `offeredUTXOHash` / `offeredUTXOIndex`: identifies the offered UTXO; offer is considered active until this outpoint is spent
+- `priceTerms`: **opaque bytes** to the node; returned as hex in RPC
+- `signature`: **opaque bytes** to the node; returned as hex in RPC
+
+Important: Radiant Core **does not interpret** `priceTerms` or `signature` beyond storing them. Any semantics and validation happen at the application/protocol layer.
+
+### Multi-push requirement
+Many wallet/RPC helpers can only create `OP_RETURN <single-push>` outputs (for example `createrawtransaction` “data” output creates one push).
+
+**SwapIndex expects multiple pushes** as listed above.
+
+If you are building transactions using RPC, you will likely need to:
+- build the raw transaction manually using a library that can compose a script, or
+- construct the tx hex, append the `OP_RETURN` output script, then sign it.
+
+(See `test/functional/feature_swap.py` for an example of constructing a multi-push `OP_RETURN` script.)
+
+## Byte order / endianness requirements
+This is the most common integration pitfall.
+
+### Token ID and TXIDs in scripts
+RPC parameters like `token_ref` are provided as hex strings in “display order” (human-readable TXID form).
+
+Internally, `uint256`/`TxId` values are stored little-endian. The `SwapIndex` parser does:
+- `offer.tokenID = uint256(data)`
+- `offer.offeredUTXOHash = uint256(data)`
+
+Therefore, to make RPC querying line up with what you place in the script, your script should push TXID bytes in **little-endian (reversed) order**.
+
+Practical rule:
+- If you have a txid string like `"aabb..."` (64 hex chars), then the script push should be `bytes.fromhex(txid)[::-1]`.
+
+This matches the functional test logic in `test/functional/feature_swap.py`.
+
+### offeredUTXOIndex encoding
+`offeredUTXOIndex` is parsed using ScriptNum semantics:
+- Prefer a minimally-encoded ScriptNum push (1–4 bytes)
+- For small values 0..16, you can use an `OP_N` encoding
+
+In the functional test, the vout is pushed as a single byte for small indices.
+
+## Indexing behavior (what the node does)
+### Open vs history
+The index stores:
+- **Open offers** under prefix `o`
+- **History (spent/cancelled)** under prefix `h`
+
+Offers move from open to history when the offered UTXO is detected as spent in a connected block.
+
+### Mempool-aware RPC behavior
+- `getopenorders` filters out offers whose UTXO is spent in the mempool (so it won’t show an offer that is already being filled).
+- `getswaphistory` returns indexed history entries, and also *adds* open offers that are spent in the mempool but not yet confirmed (so clients can see “just-filled” offers quickly).
+
+### History retention / pruning
+History entries are retained for `-swaphistoryblocks` blocks (default 10000), and then pruned.
+
+## RPC workflow (discovery)
+All RPCs require `-swapindex=1`.
+
+### Get open orders
+`getopenorders <token_ref> [limit] [offset]`
+- `limit` default 100, max 1000
+- `offset` default 0
+
+### Get history
+`getswaphistory <token_ref> [limit] [offset]`
+- Same paging parameters
+
+### Get counts (for pagination planning)
+`getswapcount <token_ref>`
+Returns:
+- `open`: number of active offers
+- `history`: number of history entries
+
+## End-to-end procedure
+### Maker procedure (broadcasting an offer)
+1. **Choose / determine the `token_ref`** you are advertising under.
+2. **Create the offered UTXO** (the outpoint you are offering).
+3. **Construct the `OP_RETURN` payload** using the exact multi-push sequence above.
+4. **Create the advertisement transaction**:
+   - include inputs to pay fees
+   - include the `OP_RETURN` output (0-value)
+   - include change output(s)
+5. **Sign and broadcast** the tx (`sendrawtransaction`).
+6. Wait for confirmation; indexers will surface it as an open order.
+
+### Taker procedure (filling an offer)
+1. Discover offers using:
+   - `getswapcount` (optional) to size paging
+   - `getopenorders` to fetch offers
+2. Select an offer and interpret its `priceTerms`/`signature` using your protocol rules.
+3. Construct and broadcast the fill transaction that spends `offeredUTXOHash:offeredUTXOIndex`.
+4. After the spend is in mempool:
+   - `getopenorders` will no longer show it
+   - `getswaphistory` may show it immediately (mempool-aware)
+5. After confirmation, the offer is moved to history in the index.
+
+## Operational notes / best practices
+- Keep the `OP_RETURN` script small (default relay limit is 223 bytes).
+- Use paging (`limit`/`offset`) for large token orderbooks.
+- Use `getswapcount` before paginating through large datasets.
+- For long-running indexers, configure `-swaphistoryblocks` based on your storage and analytics needs.
+
+## Open Questions (to finalize a “canonical” spec)
+Radiant Core currently treats `priceTerms` and `signature` as opaque bytes.
+
+Photonic Wallet strongly suggests a workable “canonical” interpretation if you want to use `SwapIndex` advertisements to represent Photonic-style PSRT swaps:
+- **`priceTerms`** could be the serialized “maker requested output” (at minimum: output script + amount). In Photonic, this is literally output 0 of the partially-signed tx.
+- **`signature`** could be the maker’s signature material for spending the offered UTXO using `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY | SIGHASH_FORKID`.
+
+However, Radiant Core does not currently specify the binary format of these fields. To lock this down, please confirm:
+1. **Advertisement vs out-of-band**: do you want swaps to be discoverable via on-chain `RSWP` advertisements + `getopenorders`, or is out-of-band PSRT sharing sufficient?
+2. **`priceTerms` exact bytes**: should it be:
+   - full serialized `CTxOut` (amount + scriptPubKey), or
+   - scriptPubKey only (amount implied elsewhere), or
+   - the full partially-signed tx (Photonic’s “PSRT”) as bytes?
+3. **`signature` exact bytes**: should it be:
+   - DER signature only,
+   - signature + sighash byte,
+   - full scriptSig (signature+sighash + pubkey), or
+   - something else (e.g. signature over a fixed message)?
+4. **Swap types**: Photonic doesn’t appear to use the `type` (1=Sell/2=Buy) field explicitly. Do we want `type` to reflect “offered asset vs requested asset” direction in a standardized way?
+
+Once you answer these, I can update this guide with a precise, byte-level “Maker builds X / Taker builds Y” spec and example encodings.

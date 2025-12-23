@@ -92,6 +92,12 @@ This document tracks the modernization and upgrade efforts for the Radiant Node 
 - **Default Configuration Review**: Audited `src/init.cpp` and `src/config.cpp` for outdated default values.
 - **Database Cache Optimization**: Increased default `dbcache` size (dynamic based on available RAM or higher static value).
 - **RPC Performance**: Increased default `rpcworkqueue` and `rpcthreads` to handle modern indexer loads.
+- **Fee Policy Defaults**: Updated default fee-related values for better alignment with RXD economics and to reduce noisy warnings while keeping relay/mining policy consistent.
+  - **Incremental relay fee**: `MEMPOOL_FULL_FEE_INCREMENT` default set to **0.01 RXD/kB** (`1,000,000 sat/kB`).
+  - **Wallet incremental relay fee**: `WALLET_INCREMENTAL_RELAY_FEE` default set to **0.01 RXD/kB** (`1,000,000 sat/kB`).
+  - **Wallet fallback fee**: `DEFAULT_FALLBACK_FEE` default set to **0.1 RXD/kB** (`10,000,000 sat/kB`).
+  - **High-fee warning threshold**: `HIGH_TX_FEE_PER_KB` set to **1 RXD/kB** (`1 * COIN`) so defaults do not trigger "very high" fee warnings.
+  - **Note**: Dust / ultra-small output policy was intentionally left unchanged.
 
 ### 10. Security & Observability
 - **Fuzz Testing**: Added `fuzz-radiant_opcodes` target for Radiant-specific consensus (unique references, introspection opcodes, `SCRIPT_PUSH_TX_STATE`).
