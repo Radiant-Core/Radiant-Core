@@ -82,6 +82,11 @@ mkdir build && cd build
 cmake -GNinja .. -DBUILD_RADIANT_QT=OFF
 ninja
 
+# Build with Qt GUI
+mkdir build && cd build
+cmake -GNinja .. -DBUILD_RADIANT_QT=ON
+ninja
+
 # Optional: Install system-wide
 sudo ninja install
 ```
@@ -91,11 +96,17 @@ Native Build: macOS
 
 ```bash
 # Install dependencies via Homebrew
-brew install cmake ninja boost libevent openssl berkeley-db miniupnpc zeromq
+brew install cmake ninja boost libevent openssl berkeley-db miniupnpc zeromq qt5
 
-# Build
+# Build without Qt GUI
 mkdir build && cd build
 cmake -GNinja .. -DBUILD_RADIANT_QT=OFF
+ninja
+
+# Build with Qt GUI
+export CMAKE_PREFIX_PATH="/opt/homebrew/opt/qt@5"
+mkdir build && cd build
+cmake -GNinja .. -DBUILD_RADIANT_QT=ON
 ninja
 ```
 
@@ -168,6 +179,22 @@ swapindex=1
 
 # Optional: Prometheus metrics
 prometheusmetrics=1
+```
+
+### Running Tests
+
+```bash
+# Unit tests
+./build/src/test/test_bitcoin
+
+# Qt GUI tests
+./build/src/qt/test/test_bitcoin-qt
+
+# Functional tests
+./build/test/functional/test_runner.py
+
+# Specific test suite
+./build/src/test/test_bitcoin --run_test=txvalidation_tests
 ```
 
 ### Docker / Container Setup (Persistence, RPC safety, logging)

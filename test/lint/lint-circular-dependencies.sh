@@ -17,7 +17,6 @@ EXPECTED_CIRCULAR_DEPENDENCIES=(
     "qt/bitcoingui -> qt/walletframe -> qt/bitcoingui"
     "qt/bitcoingui -> qt/walletview -> qt/bitcoingui"
     "qt/clientmodel -> qt/peertablemodel -> qt/clientmodel"
-    "qt/paymentserver -> qt/walletmodel -> qt/paymentserver"
     "qt/recentrequeststablemodel -> qt/walletmodel -> qt/recentrequeststablemodel"
     "qt/transactiontablemodel -> qt/walletmodel -> qt/transactiontablemodel"
     "qt/walletmodel -> qt/walletmodeltransaction -> qt/walletmodel"
@@ -41,7 +40,6 @@ EXPECTED_CIRCULAR_DEPENDENCIES=(
     "config -> policy/policy -> validation -> protocol -> config"
     "psbt -> script/script_execution_context -> psbt"
     # Pre-existing circular dependencies in Radiant codebase
-    "cashaddrenc -> key_io -> cashaddrenc"
     "primitives/transaction -> script/interpreter -> primitives/transaction"
     "chainparams -> primitives/block -> key_io -> chainparams"
     "primitives/transaction -> script/interpreter -> script/script_execution_context -> primitives/transaction"

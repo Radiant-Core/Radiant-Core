@@ -944,7 +944,7 @@ void BitcoinGUI::updateNetworkState() {
     QString tooltip;
 
     if (m_node.getNetworkActive()) {
-        tooltip = tr("%n active connection(s) to Bitcoin network", "", count) +
+        tooltip = tr("%n active connection(s) to Radiant network", "", count) +
                   QString(".<br>") + tr("Click to disable network activity.");
     } else {
         tooltip = tr("Network activity disabled.") + QString("<br>") +

@@ -29,7 +29,7 @@ QT_END_NAMESPACE
 
 enum class BlockSource { NONE, REINDEX, DISK, NETWORK };
 
-/** Model for Bitcoin network client. */
+/** Model for Radiant network client. */
 class ClientModel : public QObject {
     Q_OBJECT
 
