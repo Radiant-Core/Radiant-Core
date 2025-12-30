@@ -36,6 +36,7 @@ jobs:
             libqrencode-dev \
             libprotobuf-dev \
             protobuf-compiler \
+            librsvg2-bin \
             help2man
 
       - name: Configure
@@ -57,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg
 
       - name: Configure
         run: |
@@ -79,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg
 
       - name: Configure
         run: |
@@ -101,7 +102,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg
 
       - name: Configure
         run: |
@@ -148,9 +149,12 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows `
             -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON `
             -DCMAKE_PREFIX_PATH=C:/vcpkg/installed/x64-windows `
+            -DCMAKE_LIBRARY_PATH="$sdkLib" `
+            -DCMAKE_INCLUDE_PATH="$sdkInclude" `
             -DBUILD_RADIANT_QT=OFF `
             -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
-            -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib"
+            -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib" `
+            -DIPHLPAPI_LIBRARY="$sdkLib/iphlpapi.lib"
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }}
