@@ -41,7 +41,8 @@ jobs:
             qttools5-dev-tools \
             libqrencode-dev \
             libprotobuf-dev \
-            protobuf-compiler
+            protobuf-compiler \
+            help2man
 
       - name: Configure CMake
         run: |
