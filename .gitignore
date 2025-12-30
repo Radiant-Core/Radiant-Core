@@ -145,6 +145,7 @@ nbproject/
 
 #Local Development Environment - Visual Studio Code
 .vscode
+*.code-workspace
 
 #Local Development Environment - MinGW64
 mingw64/
@@ -158,6 +159,7 @@ build-local/
 ft-cache/
 ft-tmp/
 test-tmp/
+Testing/
 
 # Release artifacts
 release-*/
