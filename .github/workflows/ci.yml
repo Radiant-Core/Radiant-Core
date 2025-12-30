@@ -91,6 +91,27 @@ jobs:
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
 
+  build-macos-26:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja boost libevent openssl@3 berkeley-db@4 \
+            miniupnpc zeromq qt@5 qrencode protobuf
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
   build-windows:
     runs-on: windows-2022
     steps:
