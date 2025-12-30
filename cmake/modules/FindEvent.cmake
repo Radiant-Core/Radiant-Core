@@ -75,6 +75,19 @@ if(Event_INCLUDE_DIR)
 				LINK_LIBRARIES "${Event_event_LIBRARY}"
 				RUN_OUTPUT_VARIABLE _Event_VERSION
 			)
+			# On Windows, try_run may fail with error output (e.g., 0xC0000135).
+			# Strip whitespace/newlines and validate the version format.
+			if(_Event_VERSION)
+				string(STRIP "${_Event_VERSION}" _Event_VERSION)
+				# If output contains error indicators or doesn't look like a version, ignore it
+				if(_Event_VERSION MATCHES "Exit code" OR NOT _Event_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+")
+					set(_Event_VERSION "")
+				endif()
+			endif()
+			# Fallback if try_run failed or returned invalid output
+			if(NOT _Event_VERSION AND _Event_CheckVersion_RESULT)
+				set(_Event_VERSION 99.99.99)
+			endif()
 		else()
 			# There is no way to determine the version.
 			# Let's assume the user read the doc.

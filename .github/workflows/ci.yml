@@ -56,7 +56,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja boost libevent openssl@3 berkeley-db@4 \
+          brew install cmake ninja boost libevent openssl@3 berkeley-db \
             miniupnpc zeromq qt@5 qrencode protobuf
 
       - name: Configure
@@ -65,7 +65,8 @@ jobs:
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
-            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5 \
+            -DBerkeleyDB_ROOT=$(brew --prefix berkeley-db)
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -77,7 +78,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja boost libevent openssl@3 berkeley-db@4 \
+          brew install cmake ninja boost libevent openssl@3 berkeley-db \
             miniupnpc zeromq qt@5 qrencode protobuf
 
       - name: Configure
@@ -86,7 +87,8 @@ jobs:
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
-            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5 \
+            -DBerkeleyDB_ROOT=$(brew --prefix berkeley-db)
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -98,7 +100,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install cmake ninja boost libevent openssl@3 berkeley-db@4 \
+          brew install cmake ninja boost libevent openssl@3 berkeley-db \
             miniupnpc zeromq qt@5 qrencode protobuf
 
       - name: Configure
@@ -107,7 +109,8 @@ jobs:
           cmake .. -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
             -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
-            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5 \
+            -DBerkeleyDB_ROOT=$(brew --prefix berkeley-db)
 
       - name: Build
         run: cmake --build build -j$(sysctl -n hw.ncpu)
@@ -142,6 +145,9 @@ jobs:
           cd build
           cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON `
+            -DCMAKE_PREFIX_PATH=C:/vcpkg/installed/x64-windows `
             -DBUILD_RADIANT_QT=OFF `
             -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
             -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib"

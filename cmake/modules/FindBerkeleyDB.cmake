@@ -106,6 +106,11 @@ if(BerkeleyDB_INCLUDE_DIR)
 			"${_BerkeleyDB_DB_HEADER}"
 		)
 
+		# Strip any whitespace/newlines that may have been captured
+		string(STRIP "${BerkeleyDB_VERSION_MAJOR}" BerkeleyDB_VERSION_MAJOR)
+		string(STRIP "${BerkeleyDB_VERSION_MINOR}" BerkeleyDB_VERSION_MINOR)
+		string(STRIP "${BerkeleyDB_VERSION_PATCH}" BerkeleyDB_VERSION_PATCH)
+
 		# Cache the result.
 		set(BerkeleyDB_VERSION_MAJOR ${BerkeleyDB_VERSION_MAJOR}
 			CACHE INTERNAL "BerekeleyDB major version number"
