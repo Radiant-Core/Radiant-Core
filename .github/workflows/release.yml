@@ -1,0 +1,218 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libboost-all-dev \
+            libevent-dev \
+            libssl-dev \
+            libdb++-dev \
+            libminiupnpc-dev \
+            libzmq3-dev \
+            libqt5gui5 \
+            libqt5core5a \
+            libqt5dbus5 \
+            qttools5-dev \
+            qttools5-dev-tools \
+            libqrencode-dev \
+            libprotobuf-dev \
+            protobuf-compiler
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_RADIANT_QT=ON \
+            -DBUILD_RADIANT_WALLET=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(nproc)
+
+      - name: Create release package
+        run: |
+          VERSION=${{ github.event.inputs.version || github.ref_name }}
+          mkdir -p radiant-${VERSION}-linux-x64
+          cp build/src/radiantd radiant-${VERSION}-linux-x64/ || true
+          cp build/src/radiant-cli radiant-${VERSION}-linux-x64/ || true
+          cp build/src/radiant-tx radiant-${VERSION}-linux-x64/ || true
+          cp build/src/radiant-wallet radiant-${VERSION}-linux-x64/ || true
+          cp build/src/qt/radiant-qt radiant-${VERSION}-linux-x64/ || true
+          cp README.md radiant-${VERSION}-linux-x64/ || true
+          cp COPYING radiant-${VERSION}-linux-x64/ || true
+          tar -czvf radiant-${VERSION}-linux-x64.tar.gz radiant-${VERSION}-linux-x64
+          zip -r radiant-${VERSION}-linux-x64.zip radiant-${VERSION}-linux-x64
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: radiant-linux-x64
+          path: |
+            radiant-*-linux-x64.tar.gz
+            radiant-*-linux-x64.zip
+
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install \
+            cmake \
+            ninja \
+            boost \
+            libevent \
+            openssl@3 \
+            berkeley-db@4 \
+            miniupnpc \
+            zeromq \
+            qt@5 \
+            qrencode \
+            protobuf
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DBUILD_RADIANT_QT=ON \
+            -DBUILD_RADIANT_WALLET=ON \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
+
+      - name: Create DMG
+        run: |
+          VERSION=${{ github.event.inputs.version || github.ref_name }}
+          mkdir -p radiant-${VERSION}-macos
+          cp build/src/radiantd radiant-${VERSION}-macos/ || true
+          cp build/src/radiant-cli radiant-${VERSION}-macos/ || true
+          cp build/src/radiant-tx radiant-${VERSION}-macos/ || true
+          cp build/src/radiant-wallet radiant-${VERSION}-macos/ || true
+          cp -R build/src/qt/Radiant-Qt.app radiant-${VERSION}-macos/ || true
+          cp README.md radiant-${VERSION}-macos/ || true
+          cp COPYING radiant-${VERSION}-macos/ || true
+          
+          # Create DMG
+          hdiutil create -volname "Radiant-${VERSION}" \
+            -srcfolder radiant-${VERSION}-macos \
+            -ov -format UDZO \
+            radiant-${VERSION}-macos.dmg || true
+          
+          # Also create zip
+          zip -r radiant-${VERSION}-macos.zip radiant-${VERSION}-macos
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: radiant-macos
+          path: |
+            radiant-*-macos.dmg
+            radiant-*-macos.zip
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install boost-filesystem:x64-windows
+          vcpkg install boost-system:x64-windows
+          vcpkg install boost-thread:x64-windows
+          vcpkg install boost-test:x64-windows
+          vcpkg install libevent:x64-windows
+          vcpkg install openssl:x64-windows
+          vcpkg install berkeleydb:x64-windows
+          vcpkg install zeromq:x64-windows
+          vcpkg install miniupnpc:x64-windows
+
+      - name: Configure CMake
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DBUILD_RADIANT_QT=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Create release package
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.event.inputs.version || github.ref_name }}"
+          New-Item -ItemType Directory -Force -Path "radiant-${VERSION}-win64"
+          Copy-Item "build/src/${{ env.BUILD_TYPE }}/radiantd.exe" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Copy-Item "build/src/${{ env.BUILD_TYPE }}/radiant-cli.exe" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Copy-Item "build/src/${{ env.BUILD_TYPE }}/radiant-tx.exe" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Copy-Item "build/src/${{ env.BUILD_TYPE }}/radiant-wallet.exe" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Copy-Item "README.md" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Copy-Item "COPYING" "radiant-${VERSION}-win64/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "radiant-${VERSION}-win64" -DestinationPath "radiant-${VERSION}-win64.zip"
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: radiant-win64
+          path: radiant-*-win64.zip
+
+  create-release:
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            artifacts/**/*.dmg
+          draft: true
+          generate_release_notes: true

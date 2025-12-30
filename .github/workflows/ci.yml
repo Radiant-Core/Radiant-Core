@@ -1,0 +1,92 @@
+name: CI Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            libboost-all-dev \
+            libevent-dev \
+            libssl-dev \
+            libdb++-dev \
+            libminiupnpc-dev \
+            libzmq3-dev \
+            libqt5gui5 \
+            libqt5core5a \
+            libqt5dbus5 \
+            qttools5-dev \
+            qttools5-dev-tools \
+            libqrencode-dev \
+            libprotobuf-dev \
+            protobuf-compiler
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run tests
+        run: cd build && ctest --output-on-failure
+
+  build-macos:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cmake ninja boost libevent openssl@3 berkeley-db@4 \
+            miniupnpc zeromq qt@5 qrencode protobuf
+
+      - name: Configure
+        run: |
+          mkdir build && cd build
+          cmake .. -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3) \
+            -DQt5_DIR=$(brew --prefix qt@5)/lib/cmake/Qt5
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+  build-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install boost-filesystem:x64-windows boost-system:x64-windows `
+            boost-thread:x64-windows libevent:x64-windows openssl:x64-windows `
+            berkeleydb:x64-windows zeromq:x64-windows miniupnpc:x64-windows
+
+      - name: Configure
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
+            -DBUILD_RADIANT_QT=OFF
+
+      - name: Build
+        run: cmake --build build --config ${{ env.BUILD_TYPE }}

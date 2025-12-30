@@ -30,3 +30,6 @@ test-suite.log
 
 .dirstamp
 .libs
+
+# Keep gen/gen.cpp tracked (needed for build)
+!gen/gen.cpp
