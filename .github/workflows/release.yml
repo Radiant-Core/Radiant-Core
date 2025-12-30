@@ -163,13 +163,28 @@ jobs:
           vcpkg install zeromq:x64-windows
           vcpkg install miniupnpc:x64-windows
 
-      - name: Configure CMake
+      - name: Find Windows SDK
+        id: winsdk
+        shell: pwsh
         run: |
+          $sdkPath = "C:/Program Files (x86)/Windows Kits/10"
+          $sdkVersion = (Get-ChildItem "$sdkPath/Include" | Sort-Object Name -Descending | Select-Object -First 1).Name
+          echo "SDK_VERSION=$sdkVersion" >> $env:GITHUB_OUTPUT
+          echo "Found Windows SDK version: $sdkVersion"
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          $sdkVersion = "${{ steps.winsdk.outputs.SDK_VERSION }}"
+          $sdkInclude = "C:/Program Files (x86)/Windows Kits/10/Include/$sdkVersion/um"
+          $sdkLib = "C:/Program Files (x86)/Windows Kits/10/Lib/$sdkVersion/um/x64"
           mkdir build
           cd build
           cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
             -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake `
-            -DBUILD_RADIANT_QT=OFF
+            -DBUILD_RADIANT_QT=OFF `
+            -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
+            -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib"
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} -j $env:NUMBER_OF_PROCESSORS
