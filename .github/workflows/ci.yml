@@ -58,7 +58,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf librsvg
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg help2man
 
       - name: Configure
         run: |
@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf librsvg
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg help2man
 
       - name: Configure
         run: |
@@ -102,7 +102,7 @@ jobs:
       - name: Install dependencies
         run: |
           brew install cmake ninja boost libevent openssl@3 berkeley-db \
-            miniupnpc zeromq qt@5 qrencode protobuf librsvg
+            miniupnpc zeromq qt@5 qrencode protobuf librsvg help2man
 
       - name: Configure
         run: |
@@ -124,8 +124,8 @@ jobs:
       - name: Install vcpkg dependencies
         run: |
           vcpkg install boost-filesystem:x64-windows boost-system:x64-windows `
-            boost-thread:x64-windows libevent:x64-windows openssl:x64-windows `
-            berkeleydb:x64-windows zeromq:x64-windows miniupnpc:x64-windows
+            boost-thread:x64-windows boost-test:x64-windows libevent:x64-windows `
+            openssl:x64-windows berkeleydb:x64-windows zeromq:x64-windows miniupnpc:x64-windows
 
       - name: Find Windows SDK
         id: winsdk
