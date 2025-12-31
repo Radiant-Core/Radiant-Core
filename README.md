@@ -120,18 +120,64 @@ Running Radiant Node
 
 ### Node Profiles
 
-Use `-nodeprofile` for quick configuration:
+Radiant supports three node profiles optimized for different use cases. Use `-nodeprofile` for easy configuration:
+
+#### **Archive Node (Default)**
+**Traditional full node configuration - recommended for most users**
+- **Storage**: Full blockchain (no pruning)
+- **Transaction Index**: Enabled (`txindex=1`)
+- **Use Case**: General purpose, blockchain explorers, wallet services, historical queries
+- **Disk Usage**: Full blockchain size (~25GB+ growing)
+- **RPC Support**: Full transaction lookup via `getrawtransaction`
 
 ```bash
-# Archive node (default): Full history, txindex enabled
+# Archive node (default behavior)
+radiantd
+# or explicitly:
 radiantd -nodeprofile=archive
+```
 
-# Agent node: Pruned (~550MB), minimal footprint
+#### **Agent Node**
+**Lightweight configuration for resource-constrained environments**
+- **Storage**: Pruned to ~550MB minimum
+- **Transaction Index**: Disabled (`txindex=0`)
+- **Use Case**: Embedded systems, IoT devices, mobile applications
+- **Disk Usage**: Minimal footprint (~550MB)
+- **RPC Support**: Limited to recent transactions only
+- **Security**: Full validation, UTXO-focused operation
+
+```bash
+# Agent node (minimal footprint)
 radiantd -nodeprofile=agent
+```
 
-# Mining node: Balanced (~4GB), optimized for mining
+#### **Mining Node**
+**Optimized configuration for mining operations**
+- **Storage**: Pruned to ~4GB (keeps ~10,000 recent blocks)
+- **Transaction Index**: Disabled (`txindex=0`)
+- **Use Case**: Mining pools, solo mining, mining operations
+- **Disk Usage**: Moderate (~4GB)
+- **RPC Support**: Recent transactions only
+- **Security**: Full validation, mining-optimized performance
+
+```bash
+# Mining node (balanced performance)
 radiantd -nodeprofile=mining
 ```
+
+#### **Configuration Override**
+
+User-specified settings always take precedence over profile defaults:
+```bash
+# Archive profile with custom pruning
+radiantd -nodeprofile=archive -prune=10000
+
+# Mining profile with transaction index (not recommended)
+radiantd -nodeprofile=mining -txindex=1
+```
+
+#### **Security Note**
+All node profiles maintain full security guarantees. The transaction index (`txindex`) is only a convenience feature for historical transaction queries and does not affect validation, consensus, or double-spend protection.
 
 ### Systemd Service
 
