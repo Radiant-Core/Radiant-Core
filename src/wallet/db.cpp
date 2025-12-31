@@ -929,10 +929,33 @@ bool BerkeleyDatabase::Backup(const std::string &strDest) {
                 }
 
                 try {
-                    if (fs::equivalent(pathSrc, pathDest)) {
+                    // Check if source and destination are the same file
+                    bool same_file = false;
+                    try {
+                        same_file = fs::equivalent(pathSrc, pathDest);
+                    } catch (const fs::filesystem_error &) {
+                        // fs::equivalent() not supported on some platforms/macOS, 
+                        // fall back to string comparison
+                        same_file = fs::absolute(pathSrc).string() == fs::absolute(pathDest).string();
+                    }
+                    
+                    if (same_file) {
                         LogPrintf("cannot backup to wallet source file %s\n",
                                   pathDest.string());
                         return false;
+                    }
+
+                    // Ensure destination directory exists
+                    fs::path destDir = pathDest.parent_path();
+                    if (!destDir.empty() && !fs::exists(destDir)) {
+                        try {
+                            fs::create_directories(destDir);
+                            LogPrintf("created destination directory %s\n", destDir.string());
+                        } catch (const fs::filesystem_error &e) {
+                            LogPrintf("error creating destination directory %s - %s\n", 
+                                      destDir.string(), fsbridge::get_filesystem_error_message(e));
+                            return false;
+                        }
                     }
 
                     fs::copy_file(pathSrc, pathDest,

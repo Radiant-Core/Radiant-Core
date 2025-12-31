@@ -315,6 +315,26 @@ QString getSaveFileName(QWidget *parent, const QString &caption,
             }
             result.append(selectedSuffix);
         }
+        
+        // Ensure the filename is valid on all platforms
+        QString sanitizedResult = result;
+        // Replace invalid characters for cross-platform compatibility
+        QRegExp invalidChars("[<>:\"|?*]");
+        sanitizedResult.replace(invalidChars, "_");
+        
+        // Handle Windows reserved names
+        QStringList reservedNames = {"CON", "PRN", "AUX", "NUL", 
+                                    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+                                    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"};
+        QString baseName = QFileInfo(sanitizedResult).baseName().toUpper();
+        if (reservedNames.contains(baseName)) {
+            sanitizedResult = QFileInfo(sanitizedResult).path() + "/" + baseName + "_";
+            if (!info.suffix().isEmpty()) {
+                sanitizedResult += "." + info.suffix();
+            }
+        }
+        
+        result = sanitizedResult;
     }
 
     /* Return selected suffix if asked to */

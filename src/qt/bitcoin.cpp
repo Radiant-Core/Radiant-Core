@@ -225,6 +225,10 @@ BitcoinApplication::~BitcoinApplication() {
         qDebug() << __func__ << ": Stopped thread";
     }
 
+    // Delete shutdown window before main window to prevent crash
+    shutdownWindow.reset();
+    shutdownWindow = nullptr;
+
     delete window;
     window = nullptr;
 #ifdef ENABLE_WALLET

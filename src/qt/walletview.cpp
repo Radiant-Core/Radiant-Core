@@ -293,12 +293,43 @@ void WalletView::backupWallet() {
         return;
     }
 
-    if (!walletModel->wallet().backupWallet(filename.toLocal8Bit().data())) {
+    // Check if the file is writable before attempting backup
+    QFileInfo fileInfo(filename);
+    QDir dir = fileInfo.absoluteDir();
+    
+    if (!dir.exists()) {
+        if (!dir.mkpath(dir.absolutePath())) {
+            Q_EMIT message(
+                tr("Backup Failed"),
+                tr("Cannot create directory %1. Please check permissions.")
+                    .arg(dir.absolutePath()),
+                CClientUIInterface::MSG_ERROR);
+            return;
+        }
+    }
+    
+    // Check write permissions
+    if (!QFileInfo(dir.absolutePath()).isWritable()) {
         Q_EMIT message(
             tr("Backup Failed"),
-            tr("There was an error trying to save the wallet data to %1.")
-                .arg(filename),
+            tr("Cannot write to %1. Please check file permissions.")
+                .arg(dir.absolutePath()),
             CClientUIInterface::MSG_ERROR);
+        return;
+    }
+
+    if (!walletModel->wallet().backupWallet(filename.toLocal8Bit().data())) {
+        // Provide more specific error message based on common issues
+        QString errorMsg = tr("There was an error trying to save the wallet data to %1.").arg(filename);
+        
+        // Check for common issues
+        if (fileInfo.exists() && !fileInfo.isWritable()) {
+            errorMsg = tr("Cannot overwrite existing file %1. Please check file permissions.").arg(filename);
+        } else if (filename.contains(" ") && QSysInfo::productType() == "windows") {
+            errorMsg = tr("Path contains spaces which may cause issues on Windows. Try a path without spaces: %1").arg(filename);
+        }
+        
+        Q_EMIT message(tr("Backup Failed"), errorMsg, CClientUIInterface::MSG_ERROR);
     } else {
         Q_EMIT message(
             tr("Backup Successful"),
