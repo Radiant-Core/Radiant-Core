@@ -3,7 +3,9 @@
 project(wallet)
 
 # Add Berkeley DB dependency.
-find_package(BerkeleyDB 5.3 REQUIRED COMPONENTS CXX)
+# Use 4.8 as minimum for compatibility with vcpkg on Windows (provides 4.8.30)
+# and for wallet portability (Bitcoin traditionally used BDB 4.8).
+find_package(BerkeleyDB 4.8 REQUIRED COMPONENTS CXX)
 
 # Add event dependency. This is only required for evhttp_uridecode
 # in rpcwallet.cpp so it may be worth considering using an alternative.

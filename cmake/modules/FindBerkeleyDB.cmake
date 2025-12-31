@@ -8,7 +8,7 @@
 #
 # This is inspired by https://github.com/sum01/FindBerkeleyDB.
 #
-# Find the Berkeley database (versions >= 5.x) libraries The following
+# Find the Berkeley database (versions >= 4.8) libraries The following
 # components are available::
 #   C
 #   CXX
