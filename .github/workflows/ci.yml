@@ -141,7 +141,8 @@ jobs:
         shell: pwsh
         run: |
           $sdkPath = "C:/Program Files (x86)/Windows Kits/10"
-          $sdkVersion = (Get-ChildItem "$sdkPath/Include" | Sort-Object Name -Descending | Select-Object -First 1).Name
+          # Filter to only version folders (10.0.xxxxx.x format)
+          $sdkVersion = (Get-ChildItem "$sdkPath/Include" | Where-Object { $_.Name -match '^\d+\.\d+\.\d+' } | Sort-Object Name -Descending | Select-Object -First 1).Name
           echo "SDK_VERSION=$sdkVersion" >> $env:GITHUB_OUTPUT
           echo "Found Windows SDK version: $sdkVersion"
 
@@ -161,10 +162,12 @@ jobs:
             -DCMAKE_LIBRARY_PATH="$sdkLib" `
             -DCMAKE_INCLUDE_PATH="$sdkInclude" `
             -DBUILD_RADIANT_WALLET=OFF `
+            -DBUILD_RADIANT_ZMQ=OFF `
             -DQt5_DIR=C:/vcpkg/installed/x64-windows/share/cmake/Qt5 `
             -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
             -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib" `
-            -DIPHLPAPI_LIBRARY="$sdkLib/iphlpapi.lib"
+            -DIPHLPAPI_LIBRARY="$sdkLib/iphlpapi.lib" `
+            -DWS2_32_LIBRARY="$sdkLib/ws2_32.lib"
 
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }}
