@@ -171,6 +171,19 @@ jobs:
           Push-Location $buildDir
           $slnName = $slnFile.Name
           
+          # Upgrade VS2008 solution to VS2022 format (required for MSBuild)
+          Write-Host "Upgrading solution from VS2008 to VS2022 format..."
+          $devenv = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe"
+          $proc = Start-Process -FilePath $devenv -ArgumentList "`"$slnName`" /upgrade" -Wait -PassThru -NoNewWindow
+          Write-Host "devenv upgrade exit code: $($proc.ExitCode)"
+          
+          # Verify solution was upgraded (should now be text format starting with Microsoft)
+          $slnContent = Get-Content $slnName -First 1 -ErrorAction SilentlyContinue
+          Write-Host "Solution first line: $slnContent"
+          if ($slnContent -notlike "*Microsoft Visual Studio*") {
+            Write-Host "WARNING: Solution may not have upgraded properly"
+          }
+          
           # Build db project
           Write-Host "Building db library..."
           msbuild $slnName `
