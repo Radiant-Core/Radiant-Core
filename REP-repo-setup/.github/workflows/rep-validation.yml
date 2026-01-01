@@ -1,0 +1,139 @@
+name: REP Validation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**.md'
+
+jobs:
+  validate-rep:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install dependencies
+      run: |
+        npm install -g markdownlint-cli
+        npm install -g ajv
+        
+    - name: Validate REP format
+      run: |
+        # Check for required frontmatter fields
+        python3 << 'EOF'
+        import re
+        import sys
+        import yaml
+        
+        def validate_rep(filepath):
+            with open(filepath, 'r') as f:
+                content = f.read()
+            
+            # Extract frontmatter
+            if not content.startswith('```\n'):
+                print(f"❌ {filepath}: Must start with frontmatter")
+                return False
+                
+            frontmatter_end = content.find('```\n', 1)
+            if frontmatter_end == -1:
+                print(f"❌ {filepath}: Unclosed frontmatter")
+                return False
+                
+            frontmatter = content[4:frontmatter_end]
+            
+            try:
+                metadata = yaml.safe_load(frontmatter)
+            except yaml.YAMLError as e:
+                print(f"❌ {filepath}: Invalid YAML in frontmatter: {e}")
+                return False
+            
+            # Required fields
+            required_fields = ['REP', 'Title', 'Author', 'Status', 'Type', 'Created', 'License']
+            for field in required_fields:
+                if field not in metadata:
+                    print(f"❌ {filepath}: Missing required field '{field}'")
+                    return False
+            
+            # Validate REP number
+            if not re.match(r'^\d+$', str(metadata['REP'])):
+                print(f"❌ {filepath}: REP must be a number")
+                return False
+                
+            # Validate Type
+            valid_types = ['Standard', 'Informational', 'Process']
+            if metadata['Type'] not in valid_types:
+                print(f"❌ {filepath}: Type must be one of {valid_types}")
+                return False
+                
+            # Validate Status
+            valid_statuses = ['Draft', 'Active', 'Final', 'Rejected', 'Withdrawn']
+            if metadata['Status'] not in valid_statuses:
+                print(f"❌ {filepath}: Status must be one of {valid_statuses}")
+                return False
+                
+            # Validate date format
+            if not re.match(r'^\d{4}-\d{2}-\d{2}$', metadata['Created']):
+                print(f"❌ {filepath}: Created must be in YYYY-MM-DD format")
+                return False
+            
+            # Check for required sections
+            body = content[frontmatter_end + 4:]
+            required_sections = ['## Abstract', '## Specification', '## Motivation', '## Rationale', '## Backwards Compatibility']
+            
+            for section in required_sections:
+                if section not in body:
+                    print(f"❌ {filepath}: Missing required section '{section}'")
+                    return False
+            
+            # For Standard Track REPs, check for additional requirements
+            if metadata['Type'] == 'Standard':
+                if '## Reference Implementation' not in body:
+                    print(f"❌ {filepath}: Standard Track REPs must include Reference Implementation section")
+                    return False
+                    
+            print(f"✅ {filepath}: Format validation passed")
+            return True
+        
+        # Find all markdown files in the PR
+        import subprocess
+        result = subprocess.run(['git', 'diff', '--name-only', 'origin/main...HEAD', '--', '*.md'], 
+                              capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            print("Error getting changed files")
+            sys.exit(1)
+        
+        changed_files = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        
+        if not changed_files:
+            print("No markdown files changed")
+            sys.exit(0)
+        
+        all_valid = True
+        for filepath in changed_files:
+            if filepath and filepath.endswith('.md'):
+                if not validate_rep(filepath):
+                    all_valid = False
+        
+        if not all_valid:
+            print("❌ Some files failed validation")
+            sys.exit(1)
+        else:
+            print("✅ All files passed validation")
+        EOF
+        
+    - name: Check markdown style
+      run: |
+        markdownlint '**/*.md' --config .markdownlint.json || true
+        
+    - name: Check links
+      run: |
+        npm install -g markdown-link-check
+        find . -name "*.md" -not -path "./node_modules/*" -exec markdown-link-check {} \; || true

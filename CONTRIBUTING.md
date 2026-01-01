@@ -1,13 +1,13 @@
-# Contributing to Radiant Node
+# Contributing to Radiant Core
 
-The Radiant Node project welcomes contributors!
+The Radiant Core project welcomes contributors!
 
 This guide is intended to help developers and others contribute effectively
-to Radiant Node.
+to Radiant Core.
 
 ## Communicating with the project
 
-To get in contact with the Radiant Node project, we monitor a number
+To get in contact with the Radiant Core project, we monitor a number
 of resources.
 
 Our main development repository is currently located at
@@ -30,12 +30,12 @@ from the project website at
 
 [https://radiantblockchain.org](https://radiantblockchain.org)
 
-On all our channels, we seek to facilitate development of Radiant Node,
+On all our channels, we seek to facilitate development of Radiant Core,
 and to welcome and support people who wish to participate.
 
 Please visit our channels to
 
-- Introduce yourself to other Radiant Node contributors
+- Introduce yourself to other Radiant Core contributors
 - Get help with your development environment
 - Discuss how to complete a patch.
 
@@ -44,9 +44,9 @@ It is not for:
 - Market discussion
 - Non-constructive criticism
 
-## Radiant Node Development Philosophy
+## Radiant Core Development Philosophy
 
-Radiant Node aims for fast iteration and continuous integration.
+Radiant Core aims for fast iteration and continuous integration.
 
 This means that there should be quick turnaround for patches to be proposed,
 reviewed, and committed. Changes should not sit in a queue for long.
@@ -112,10 +112,17 @@ when they have a good reason to do so.
 - Don't be afraid to say "NO", or "MAYBE, but...", if a change seems
   undesirable or if you otherwise have reservations/caveats/etc.
 
-Here are some handy links for development practices aligned with Radiant Node:
+Here are some handy links for development practices aligned with Radiant Core:
 
-- [RADN GitLab development working rules and guidelines](doc/radn-github-usage-rules-and-guidelines.md)
+- [RXD GitHub development working rules and guidelines](doc/rxd-github-usage-rules-and-guidelines.md)
 - [Developer Notes](doc/developer-notes.md)
+- [Product Requirements Document](doc/PRD.md)
+- [Roadmap](ROADMAP.md)
+- [Linting Guidelines](doc/linting.md)
+- [Functional Tests](doc/functional-tests.md)
+- [Coverage Reports](doc/coverage.md)
+- [Benchmarking](doc/benchmarking.md)
+- [Build Instructions](doc/README.md)
 - [How to Write a Git Commit Message](https://chris.beams.io/posts/git-commit/)
 - [How to Do Code Reviews Like a Human - Part 1](https://mtlynch.io/human-code-reviews-1/)
 - [How to Do Code Reviews Like a Human - Part 2](https://mtlynch.io/human-code-reviews-2/)
@@ -145,28 +152,28 @@ Here are some handy links for development practices aligned with Radiant Node:
     - *NOTE: the path in the message shown above is specific to UNIX-like systems
       and may differ if you run on other platforms.*
 
-4. Upload your SSH public key to GitLab
+4. Upload your SSH public key to GitHub
 
     - Go to: [https://github.com](https://github.com), log in
     - Under "User Settings", "SSH Keys", add your public key
     - Paste contents from: `$HOME/.ssh/id_rsa.pub`
 
-5. Create a personal fork of the Radiant Node repository for your work
+5. Create a personal fork of the Radiant Core repository for your work
 
-    - Sign into GitLab under your account, then visit the project at [https://github.com/radiantblockchain/radiant-node](https://github.com/radiantblockchain/radiant-node)
+    - Sign into GitHub under your account, then visit the project at [https://github.com/radiantblockchain/radiant-core](https://github.com/radiantblockchain/radiant-core)
     - Click the 'Fork' button on the top right, and choose to fork the project to
-      your personal GitLab space.
+      your personal GitHub space.
 
 6. Clone your personal work repository to your local machine:
 
     ```
-    git clone git@github.com:username/radiant-node.git
+    git clone git@github.com:username/radiant-core.git
     ```
 
 7. Set your checked out copy's upstream to our main project:
 
     ```
-    git remote add upstream https://github.com/radiantblockchain/radiant-node.git
+    git remote add upstream https://github.com/radiant-core/radiant-core.git
     ```
 
 8. You may want to add the `mreq` alias to your `.git/config`:
@@ -176,7 +183,7 @@ Here are some handy links for development practices aligned with Radiant Node:
     mreq = !sh -c 'git fetch $1 merge-requests/$2/head:mr-$1-$2 && git checkout mr-$1-$2' -
     ```
 
-    This `mreq` alias can be used to easily check out Merge Requests from our
+    This `mreq` alias can be used to easily check out Pull Requests from our
     main repository if you intend to test them or work on them.
     Example:
 
@@ -184,18 +191,18 @@ Here are some handy links for development practices aligned with Radiant Node:
     $ git mreq upstream 93
     ```
 
-    This will checkout `merge-requests/93/head` and put you in a branch called `mr-origin-93`.
-    You can then proceed to test the changes proposed by that merge request.
+    This will checkout `pull/93/head` and put you in a branch called `pr-upstream-93`.
+    You can then proceed to test the changes proposed by that pull request.
 
 9. Code formatting tools
 
-    During submission of patches, our GitLab process may refused code that
+    During submission of patches, our CI process may refuse code that
     is not styled according to our coding guidelines.
 
-    To enforce Radiant Node codeformatting standards, you may need to
+    To enforce Radiant Core code formatting standards, you may need to
     install `clang-format-8`, `clang-tidy` (version >=8), `autopep8`, `flake8`,
     `phpcs` and `shellcheck` on your system to format your code before submission
-    as a Merge Request.
+    as a Pull Request.
 
     To install `clang-format-8` and `clang-tidy` on Ubuntu (>= 18.04+updates)
     or Debian (>= 10):
@@ -235,7 +242,7 @@ Here are some handy links for development practices aligned with Radiant Node:
 
     To run benchmarks, see [Benchmarking](doc/benchmarking.md).
 
-## Working with The Radiant Node Repository
+## Working with The Radiant Core Repository
 
 A typical workflow would be:
 
@@ -247,31 +254,31 @@ A typical workflow would be:
 
     `git commit -a -m 'my-commit'`
 
-- Push the topic branch to your GitLab repository
+- Push the topic branch to your GitHub repository
 
     `git push -u origin my-topic-branch`
 
-- Then create a Merge Request (the GitLab equivalent of a Pull Request)
+- Then create a Pull Request (the GitHub equivalent of a Merge Request)
   from that branch in your personal repository. To do this, you need to
-  sign in to GitLab, go to the branch and click the button which lets you
-  create a Merge Request (you need to fill out at least title and description
+  sign in to GitHub, go to the branch and click the button which lets you
+  create a Pull Request (you need to fill out at least title and description
   fields).
 
-- Work with us on GitLab to receive review comments, going back to the
+- Work with us on GitHub to receive review comments, going back to the
   'Make your changes' step above if needed to make further changes on your
   branch, and push them upstream as above. They will automatically appear
-  in your Merge Request.
+  in your Pull Request.
 
-All Merge Requests should contain a commit with a test plan that details
+All Pull Requests should contain a commit with a test plan that details
 how to test the changes. In all normal circumstances, you should build and
-test your changes locally before creating a Merge Request.
-A merge request should feature a specific test plan where possible, and
+test your changes locally before creating a Pull Request.
+A pull request should feature a specific test plan where possible, and
 indicate which regression tests may need to be run.
 
 If you have doubts about the scope of testing needed for your change,
 please contact our developers and they will help you decide.
 
-- For large changes, break them into several Merge Requests.
+- For large changes, break them into several Pull Requests.
 
 - If you are making numerous changes and rebuilding often, it's highly
   recommended to install `ccache` (re-run cmake if you install it
@@ -281,9 +288,26 @@ please contact our developers and they will help you decide.
 ## What to work on
 
 If you are looking for a useful task to contribute to the project, a good place
-to start is the list of issues at [https://github.com/radiantblockchain/radiant-node/-/issues](https://github.com/radiantblockchain/radiant-node/-/issues)
+to start is the list of issues at [https://github.com/Radiant-Core/Radiant-Core/issues](https://github.com/Radiant-Core/Radiant-Core/issues)
 
 Look for issues marked with a label 'good-first-issue'.
+
+## Radiant Enhancement Proposals (REPs)
+
+For major protocol changes or new features, consider submitting a Radiant Enhancement Proposal (REP). REPs are design documents that provide information to the Radiant community or describe new features.
+
+- [REP Repository](https://github.com/Radiant-Core/REP) - View existing REPs and submit new ones
+- [REP Process Documentation](https://github.com/Radiant-Core/REP/blob/main/REP-2001.md) - Learn about the REP process and format
+- [REP Template](https://github.com/Radiant-Core/REP/blob/main/rep-template.md) - Template for creating new REPs
+
+REPs are the primary mechanism for proposing:
+- Protocol changes (consensus, P2P network)
+- New opcodes or transaction types  
+- Changes to block validation rules
+- RPC interface changes
+- Process improvements
+
+Discuss your ideas on community channels before submitting a REP to gauge interest and gather feedback.
 
 ## Copyright
 
