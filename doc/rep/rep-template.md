@@ -39,3 +39,11 @@ All REPs must discuss security implications, including potential attack vectors 
 ## Copyright
 
 This document is licensed under the MIT License.
+
+---
+
+**Submission Instructions:**
+1. Copy this template to create your REP
+2. Submit as a pull request to the [Radiant REP repository](https://github.com/Radiant-Core/REP)
+3. Follow the REP process guidelines in [REP-2001](https://github.com/Radiant-Core/REP/blob/main/REP-2001.md)
+4. Participate in community review and discussion

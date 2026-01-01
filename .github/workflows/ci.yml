@@ -125,6 +125,9 @@ jobs:
       # with VS2022's modern C++ headers (macro conflicts in clib_port.h with <stdint.h>).
       # Wallet is fully supported on Mac and Linux.
 
+      - name: Clear any cached BerkeleyDB
+        run: if exist C:\bdb rmdir /s /q C:\bdb
+
       - name: Install vcpkg dependencies
         run: |
           vcpkg install boost-filesystem:x64-windows boost-system:x64-windows `

@@ -42,7 +42,6 @@ with other peers, you can disable transaction relay.
 
 Be reminded of the effects of this setting.
 
-- Fee estimation will no longer work.
 - Not relaying other's transactions could hurt your privacy if used while a
   wallet is loaded or if you use the node to broadcast transactions.
 - It makes block propagation slower because compact block relay can only be

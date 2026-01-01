@@ -6,6 +6,10 @@ Radiant Enhancement Proposals (REPs) are design documents providing information 
 
 The REP process is inspired by Bitcoin Improvement Proposals (BIPs) and adapted for the Radiant ecosystem's unique needs and architecture.
 
+**Repository:** [https://github.com/Radiant-Core/REP](https://github.com/Radiant-Core/REP)
+
+All REPs are maintained in the dedicated REP repository. Please submit new REPs and participate in discussions there.
+
 ## REP Types
 
 ### REP-XXX: Standard Track
@@ -98,7 +102,9 @@ Create the REP following the format above. The draft should be:
 - Well-reasoned
 
 ### 3. GitHub Pull Request
-Submit the REP as a pull request to the Radiant Core repository in the `rep/` directory.
+Submit the REP as a pull request to the **Radiant REP repository**: [https://github.com/Radiant-Core/REP](https://github.com/Radiant-Core/REP)
+
+Use the REP template from the repository and follow the submission guidelines.
 
 ### 4. Community Review
 The REP will be reviewed by the community. Expect feedback and be prepared to revise the proposal.
@@ -115,8 +121,11 @@ REPs are accepted through rough consensus and running code. The maintainers will
 
 ## REP Repository Structure
 
+The REP repository is located at: [https://github.com/Radiant-Core/REP](https://github.com/Radiant-Core/REP)
+
 ```
-rep/
+REP/
+├── README.md              # This file
 ├── REP-0001.md          # Standard Track REPs
 ├── REP-0002.md
 ├── ...
@@ -126,9 +135,11 @@ rep/
 ├── REP-2001.md          # Process REPs
 ├── REP-2002.md
 ├── ...
-├── README.md            # This file
-└── rep-template.md      # Template for new REPs
+├── rep-template.md      # Template for new REPs
+└── .github/             # GitHub templates and workflows
 ```
+
+Visit the repository to view all existing REPs, submit new ones, and participate in discussions.
 
 ## Writing Guidelines
 
@@ -185,4 +196,4 @@ This document is licensed under the MIT License.
 
 ---
 
-*Note: This REP process document itself should be formalized as REP-2001 (Process) once the repository structure is established.*
+*Note: This REP process document itself should be formalized as REP-2001 (Process) in the [REP repository](https://github.com/Radiant-Core/REP) once the repository structure is established.*
