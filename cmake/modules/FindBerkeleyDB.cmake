@@ -141,10 +141,21 @@ if(BerkeleyDB_INCLUDE_DIR)
 		"${BerkeleyDB_VERSION_MINOR}"
 	)
 
+	# On Windows, the library is typically named libdb48.lib
+	if(WIN32)
+		generate_versions_variants(
+			_db_win_variants
+			libdb
+			"${BerkeleyDB_VERSION_MAJOR}"
+			"${BerkeleyDB_VERSION_MINOR}"
+		)
+		list(APPEND _db_variants ${_db_win_variants})
+	endif()
+
 	find_component(BerkeleyDB C
 		NAMES ${_db_variants}
 		HINTS ${_BerkeleyDB_BREW_HINT}
-		PATH_SUFFIXES ${_db_variants}
+		PATH_SUFFIXES ${_db_variants} lib
 		INCLUDE_DIRS ${BerkeleyDB_INCLUDE_DIRS}
 	)
 
@@ -155,10 +166,21 @@ if(BerkeleyDB_INCLUDE_DIR)
 		"${BerkeleyDB_VERSION_MINOR}"
 	)
 
+	# On Windows, the C++ library is typically named libdb_cxx48.lib
+	if(WIN32)
+		generate_versions_variants(
+			_db_cxx_win_variants
+			libdb_cxx
+			"${BerkeleyDB_VERSION_MAJOR}"
+			"${BerkeleyDB_VERSION_MINOR}"
+		)
+		list(APPEND _db_cxx_variants ${_db_cxx_win_variants})
+	endif()
+
 	find_component(BerkeleyDB CXX
 		NAMES ${_db_cxx_variants}
 		HINTS ${_BerkeleyDB_BREW_HINT}
-		PATH_SUFFIXES ${_db_variants}
+		PATH_SUFFIXES ${_db_variants} lib
 		INCLUDE_DIRS ${BerkeleyDB_INCLUDE_DIRS}
 	)
 endif()

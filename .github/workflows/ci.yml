@@ -121,11 +121,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache BerkeleyDB
+        id: cache-bdb
+        uses: actions/cache@v4
+        with:
+          path: C:/bdb
+          key: bdb-4.8.30-msvc-v1
+
+      - name: Download and Build BerkeleyDB
+        if: steps.cache-bdb.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          # Download BerkeleyDB 4.8.30 source
+          $bdbVersion = "4.8.30"
+          $bdbUrl = "https://download.oracle.com/berkeley-db/db-${bdbVersion}.tar.gz"
+          $bdbDir = "C:/bdb"
+          
+          Invoke-WebRequest -Uri $bdbUrl -OutFile "db-${bdbVersion}.tar.gz"
+          tar -xzf "db-${bdbVersion}.tar.gz"
+          
+          cd "db-${bdbVersion}/build_windows"
+          
+          # Upgrade VS2010 solution to VS2022
+          & "C:/Program Files/Microsoft Visual Studio/2022/Enterprise/Common7/IDE/devenv.exe" `
+            Berkeley_DB_vs2010.sln /upgrade
+          
+          # Build Release x64 - db and db_cxx projects
+          msbuild Berkeley_DB_vs2010.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            /t:db:Rebuild `
+            /m
+          
+          msbuild Berkeley_DB_vs2010.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:PlatformToolset=v143 `
+            /p:WindowsTargetPlatformVersion=10.0 `
+            /t:db_cxx:Rebuild `
+            /m
+          
+          # Create install directory structure
+          New-Item -ItemType Directory -Force -Path "$bdbDir/include"
+          New-Item -ItemType Directory -Force -Path "$bdbDir/lib"
+          
+          # Copy headers
+          Copy-Item "db.h" "$bdbDir/include/"
+          Copy-Item "db_cxx.h" "$bdbDir/include/"
+          
+          # Copy libraries
+          Copy-Item "x64/Release/libdb48.lib" "$bdbDir/lib/"
+          Copy-Item "x64/Release/libdb_cxx48.lib" "$bdbDir/lib/"
+          Copy-Item "x64/Release/*.dll" "$bdbDir/lib/" -ErrorAction SilentlyContinue
+          
+          echo "BerkeleyDB built successfully at $bdbDir"
+          Get-ChildItem -Recurse "$bdbDir"
+
       - name: Install vcpkg dependencies
         run: |
           vcpkg install boost-filesystem:x64-windows boost-system:x64-windows `
             boost-thread:x64-windows boost-test:x64-windows libevent:x64-windows `
-            openssl:x64-windows berkeleydb:x64-windows zeromq:x64-windows miniupnpc:x64-windows
+            openssl:x64-windows zeromq:x64-windows miniupnpc:x64-windows `
+            qt5-base:x64-windows qt5-tools:x64-windows
 
       - name: Find Windows SDK
         id: winsdk
@@ -151,7 +210,8 @@ jobs:
             -DCMAKE_PREFIX_PATH=C:/vcpkg/installed/x64-windows `
             -DCMAKE_LIBRARY_PATH="$sdkLib" `
             -DCMAKE_INCLUDE_PATH="$sdkInclude" `
-            -DBUILD_RADIANT_QT=OFF `
+            -DBerkeleyDB_ROOT=C:/bdb `
+            -DQt5_DIR=C:/vcpkg/installed/x64-windows/share/cmake/Qt5 `
             -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
             -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib" `
             -DIPHLPAPI_LIBRARY="$sdkLib/iphlpapi.lib"
