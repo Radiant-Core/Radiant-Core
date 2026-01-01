@@ -12,7 +12,7 @@ of resources.
 
 Our main development repository is currently located at
 
-[https://github.com/radiantblockchain/radiant-node](https://github.com/radiantblockchain/radiant-node)
+[https://github.com/Radiant-Core/Radiant-Core](https://github.com/Radiant-Core/Radiant-Core)
 
 This features the project code, an issue tracker and facilities to see
 project progress and activities, even in detailed form such as individual
@@ -67,8 +67,7 @@ good reason to do so.
   on their own.
 - Sometimes you want to replace one subsystem by another implementation,
   in which case it is not possible to do things incrementally. In such cases,
-  you keep both implementations in the codebase for a while, as described
-  [here](https://www.gamasutra.com/view/news/128325/Opinion_Parallel_Implementations.php)
+  you keep both implementations in the codebase for a while.
 - There are no "development" branches, all merge requests apply to the master
   branch, and should always improve it (no regressions).
 - As soon as you see a bug, you fix it. Do not continue on. Fixing the bug
