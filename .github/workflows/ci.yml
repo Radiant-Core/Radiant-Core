@@ -147,21 +147,25 @@ jobs:
           Invoke-WebRequest -Uri $bdbUrl -OutFile "db-${bdbVersion}.tar.gz"
           tar -xzf "db-${bdbVersion}.tar.gz"
           
-          # Debug: Show extracted structure
-          Write-Host "Extracted directory structure:"
-          Get-ChildItem $srcDir -Directory | ForEach-Object { Write-Host "  DIR: $($_.Name)" }
-          Get-ChildItem $srcDir -File | ForEach-Object { Write-Host "  FILE: $($_.Name)" }
-          
-          # Find the actual solution file location
-          $slnFile = Get-ChildItem -Path $srcDir -Recurse -Filter "*.sln" | Select-Object -First 1
-          if ($slnFile) {
-            Write-Host "Found solution: $($slnFile.FullName)"
-            $buildDir = $slnFile.DirectoryName
-          } else {
-            Write-Error "No .sln file found in extracted archive"
-            Get-ChildItem -Recurse $srcDir | Select-Object -First 100
+          # Verify build_windows directory exists
+          $buildDir = "$srcDir\build_windows"
+          if (!(Test-Path $buildDir)) {
+            Write-Error "build_windows directory not found"
+            Get-ChildItem $srcDir -Directory | ForEach-Object { Write-Host "  DIR: $($_.Name)" }
             exit 1
           }
+          
+          # Find solution file in build_windows (prefer vs2010 version)
+          $slnFile = Get-ChildItem -Path $buildDir -Filter "*.sln" | Where-Object { $_.Name -like "*vs2010*" } | Select-Object -First 1
+          if (!$slnFile) {
+            $slnFile = Get-ChildItem -Path $buildDir -Filter "*.sln" | Select-Object -First 1
+          }
+          if (!$slnFile) {
+            Write-Error "No .sln file found in build_windows"
+            Get-ChildItem $buildDir | ForEach-Object { Write-Host "  $($_.Name)" }
+            exit 1
+          }
+          Write-Host "Using solution: $($slnFile.FullName)"
           
           # Change to build directory
           Push-Location $buildDir
