@@ -76,7 +76,7 @@ to `cmake`.
 Download the source code:
 
 ```bash
-git clone https://github.com/radiantblockchain/radiant-node.git
+git clone https://github.com/Radiant-Core/Radiant-Core.git
 cd radiant-node/
 ```
 

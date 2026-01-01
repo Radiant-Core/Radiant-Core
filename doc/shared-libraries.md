@@ -62,7 +62,7 @@ It will be `1` if the input script correctly spends the previous output `scriptP
 
 ### Example Implementations
 
-- [Radiant Node (RADN)](https://github.com/radiantblockchain/radiant-node/-/blob/master/src/script/bitcoinconsensus.h)
+- [Radiant Node (RADN)](https://github.com/Radiant-Core/Radiant-Core/-/blob/master/src/script/bitcoinconsensus.h)
  
 ### Historic Example Implementations in Bitcoin (pre-dating Radiant)
 

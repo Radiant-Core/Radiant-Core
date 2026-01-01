@@ -55,7 +55,7 @@
 2. Verify matching Gitian Builds, gather signatures
 3. Verify IBD bith with and without `-checkpoints=0 -assumevalid=0`
 4. Upload Gitian Builds to [radiantblockchain.org](https://radiantblockchain.org/)
-5. Create a [release](https://github.com/radiantblockchain/radiant-node)
+5. Create a [release](https://github.com/Radiant-Core/Radiant-Core)
    on our GitHub mirror: `contrib/release/github-release.sh -a <path to release binaries> -t <release tag> -o <file containing your Github OAuth token>`
 6. Create [Ubuntu PPA packages](https://launchpad.net/~radiant-node/+archive/ubuntu/ppa):
    Maintainers need to clone [packaging](https://github.com/radiantblockchain/radn-sw/packaging)

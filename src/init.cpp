@@ -1189,7 +1189,7 @@ void SetupServerArgs() {
 }
 
 std::string LicenseInfo() {
-    constexpr auto URL_SOURCE_CODE = "<https://github.com/radiantblockchain/radiant-node>";
+    constexpr auto URL_SOURCE_CODE = "<https://github.com/Radiant-Core/Radiant-Core>";
     constexpr auto URL_WEBSITE = "<https://radiantblockchain.org>";
 
     return CopyrightHolders(strprintf(_("Copyright (C) %i-%i"), 2009, COPYRIGHT_YEAR) + " ") +
