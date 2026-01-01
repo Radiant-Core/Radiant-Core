@@ -147,25 +147,34 @@ jobs:
           Invoke-WebRequest -Uri $bdbUrl -OutFile "db-${bdbVersion}.tar.gz"
           tar -xzf "db-${bdbVersion}.tar.gz"
           
-          # Verify extraction
-          if (!(Test-Path "$buildDir\Berkeley_DB_vs2010.sln")) {
-            Write-Error "Solution file not found at $buildDir\Berkeley_DB_vs2010.sln"
-            Get-ChildItem -Recurse $srcDir | Select-Object -First 50
+          # Debug: Show extracted structure
+          Write-Host "Extracted directory structure:"
+          Get-ChildItem $srcDir -Directory | ForEach-Object { Write-Host "  DIR: $($_.Name)" }
+          Get-ChildItem $srcDir -File | ForEach-Object { Write-Host "  FILE: $($_.Name)" }
+          
+          # Find the actual solution file location
+          $slnFile = Get-ChildItem -Path $srcDir -Recurse -Filter "*.sln" | Select-Object -First 1
+          if ($slnFile) {
+            Write-Host "Found solution: $($slnFile.FullName)"
+            $buildDir = $slnFile.DirectoryName
+          } else {
+            Write-Error "No .sln file found in extracted archive"
+            Get-ChildItem -Recurse $srcDir | Select-Object -First 100
             exit 1
           }
-          Write-Host "Found solution file at $buildDir"
           
           # Change to build directory
           Push-Location $buildDir
+          $slnName = $slnFile.Name
           
           # Upgrade solution to VS2022 (may show warnings, that's OK)
           Write-Host "Upgrading solution to VS2022..."
           $devenv = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe"
-          & $devenv "Berkeley_DB_vs2010.sln" /upgrade
+          & $devenv $slnName /upgrade
           
           # Build db project
           Write-Host "Building db library..."
-          msbuild Berkeley_DB_vs2010.sln `
+          msbuild $slnName `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:PlatformToolset=v143 `
@@ -175,7 +184,7 @@ jobs:
           
           # Build db_cxx project  
           Write-Host "Building db_cxx library..."
-          msbuild Berkeley_DB_vs2010.sln `
+          msbuild $slnName `
             /p:Configuration=Release `
             /p:Platform=x64 `
             /p:PlatformToolset=v143 `
