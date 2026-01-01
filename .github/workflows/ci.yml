@@ -155,14 +155,14 @@ jobs:
             exit 1
           }
           
-          # Find solution file in build_windows (prefer vs2010 version)
-          $slnFile = Get-ChildItem -Path $buildDir -Filter "*.sln" | Where-Object { $_.Name -like "*vs2010*" } | Select-Object -First 1
+          # List all solution files for debugging
+          Write-Host "Available solution files in build_windows:"
+          Get-ChildItem -Path $buildDir -Filter "*.sln" | ForEach-Object { Write-Host "  $($_.Name)" }
+          
+          # Find the native C++ solution (Berkeley_DB*.sln, not BDB_dotNet)
+          $slnFile = Get-ChildItem -Path $buildDir -Filter "Berkeley_DB*.sln" | Select-Object -First 1
           if (!$slnFile) {
-            $slnFile = Get-ChildItem -Path $buildDir -Filter "*.sln" | Select-Object -First 1
-          }
-          if (!$slnFile) {
-            Write-Error "No .sln file found in build_windows"
-            Get-ChildItem $buildDir | ForEach-Object { Write-Host "  $($_.Name)" }
+            Write-Error "No Berkeley_DB*.sln file found in build_windows"
             exit 1
           }
           Write-Host "Using solution: $($slnFile.FullName)"
@@ -170,11 +170,6 @@ jobs:
           # Change to build directory
           Push-Location $buildDir
           $slnName = $slnFile.Name
-          
-          # Upgrade solution to VS2022 (may show warnings, that's OK)
-          Write-Host "Upgrading solution to VS2022..."
-          $devenv = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe"
-          & $devenv $slnName /upgrade
           
           # Build db project
           Write-Host "Building db library..."
