@@ -6,6 +6,7 @@
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, wait_until
+from test_framework.authproxy import JSONRPCException as JSONRPCError
 from test_framework.script import (
     CScript,
     OP_RETURN,
@@ -183,6 +184,50 @@ class SwapTest(BitcoinTestFramework):
         assert_equal(len(orders_by_want), 1)
         assert_equal(orders_by_want[0]['tokenid'], token_txid)
         assert_equal(orders_by_want[0]['want_tokenid'], want_token_txid)
+
+        # 4.5. Test order expiration functionality
+        self.log.info("Testing order expiration with max_age parameter...")
+        
+        # Test with max_age = 0 (should return no orders)
+        orders_age_0 = node.getopenorders(token_txid, 100, 0, 0)
+        assert_equal(len(orders_age_0), 0, "max_age=0 should return no orders")
+        
+        orders_by_want_age_0 = node.getopenordersbywant(want_token_txid, 100, 0, 0)
+        assert_equal(len(orders_by_want_age_0), 0, "max_age=0 should return no orders for getopenordersbywant")
+        
+        # Test with max_age = 1000 (should return the order since it's very recent)
+        orders_age_large = node.getopenorders(token_txid, 100, 0, 1000)
+        assert_equal(len(orders_age_large), 1, "max_age=1000 should return the recent order")
+        
+        orders_by_want_age_large = node.getopenordersbywant(want_token_txid, 100, 0, 1000)
+        assert_equal(len(orders_by_want_age_large), 1, "max_age=1000 should return the recent order for getopenordersbywant")
+        
+        # Test error cases for max_age parameter
+        try:
+            node.getopenorders(token_txid, 100, 0, -1)
+            assert False, "Negative max_age should raise error"
+        except JSONRPCError as e:
+            assert "max_age must be non-negative" in str(e.error)
+            
+        try:
+            node.getopenordersbywant(want_token_txid, 100, 0, -1)
+            assert False, "Negative max_age should raise error for getopenordersbywant"
+        except JSONRPCError as e:
+            assert "max_age must be non-negative" in str(e.error)
+        
+        self.log.info("Order expiration tests passed!")
+
+        # 4.6. Test swap index info functionality
+        self.log.info("Testing swap index info RPC...")
+        
+        swap_info = node.getswapindexinfo()
+        assert swap_info['enabled'] == True, "Swap index should be enabled"
+        assert swap_info['current_height'] > 0, "Current height should be positive"
+        assert swap_info['total_orders'] >= 1, "Should have at least 1 order total"
+        assert swap_info['open_orders'] >= 1, "Should have at least 1 open order"
+        assert swap_info['history_blocks'] == 10000, "Default history blocks should be 10000"
+        
+        self.log.info("Swap index info tests passed!")
 
         # 5. Spend the offered UTXO and verify it disappears from open orders
         self.log.info("Spending offered UTXO to fill/cancel the order...")

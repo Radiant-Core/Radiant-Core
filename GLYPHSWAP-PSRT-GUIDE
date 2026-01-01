@@ -244,19 +244,41 @@ History entries are retained for `-swaphistoryblocks` blocks (default 10000), an
 All RPCs require `-swapindex=1`.
 
 ### Get open orders
-`getopenorders <token_ref> [limit] [offset]`
+`getopenorders <token_ref> [limit] [offset] [max_age]`
 - `limit` default 100, max 1000
 - `offset` default 0
+- `max_age` optional: Maximum age in blocks (null = no filter)
+
+**Age filtering examples:**
+- `getopenorders <token_ref> 100 0 720` - orders from last 6 hours (720 blocks)
+- `getopenorders <token_ref> 100 0 1440` - orders from last 12 hours (1440 blocks)
+- `getopenorders <token_ref> 100 0 0` - no orders (age = 0)
+
+### Get open orders by wanted token
+`getopenordersbywant <want_token_ref> [limit] [offset] [max_age]`
+- Same parameters as `getopenorders`
+- Useful for discovering orders based on what the maker wants to receive
 
 ### Get history
 `getswaphistory <token_ref> [limit] [offset]`
 - Same paging parameters
+- Note: `max_age` not available for history (orders already spent/cancelled)
 
 ### Get counts (for pagination planning)
 `getswapcount <token_ref>`
 Returns:
 - `open`: number of active offers
 - `history`: number of history entries
+
+### Get swap index status
+`getswapindexinfo`
+Returns index status and performance metrics:
+- `enabled`: whether swap index is enabled
+- `current_height`: current block height
+- `total_orders`: total number of orders (open + history)
+- `open_orders`: number of active orders
+- `history_orders`: number of historical orders
+- `history_blocks`: history retention period in blocks
 
 ## End-to-end procedure
 ### Maker procedure (broadcasting an offer)
@@ -273,13 +295,19 @@ Returns:
 ### Taker procedure (filling an offer)
 1. Discover offers using:
    - `getswapcount` (optional) to size paging
-   - `getopenorders` to fetch offers
+   - `getopenorders` to fetch offers, optionally with `max_age` to filter stale orders
+   - `getopenordersbywant` to find orders for specific tokens you want to spend
 2. Select an offer and interpret its `priceTerms`/`signature` using your protocol rules.
 3. Construct and broadcast the fill transaction that spends `offeredUTXOHash:offeredUTXOIndex`.
 4. After the spend is in mempool:
    - `getopenorders` will no longer show it
    - `getswaphistory` may show it immediately (mempool-aware)
 5. After confirmation, the offer is moved to history in the index.
+
+**Best practices for takers:**
+- Use `max_age` parameter to filter out potentially stale orders (e.g., `max_age=1440` for 12 hours)
+- Use `getswapindexinfo` to check index health and current block height
+- Consider orders with very large `block_height` differences as potentially stale
 
 ## Canonical on-chain swap protocol (recommended)
 This section specifies a **canonical** interpretation of the `RSWP` advertisement so that swaps can be:
@@ -293,6 +321,14 @@ The node still treats `priceTerms` and `signature` as opaque bytes, but this gui
 - Use paging (`limit`/`offset`) for large token orderbooks.
 - Use `getswapcount` before paginating through large datasets.
 - For long-running indexers, configure `-swaphistoryblocks` based on your storage and analytics needs.
+- **Order age filtering**: Use `max_age` parameter to improve UX by filtering stale orders:
+  - 6 hours (720 blocks) for active trading
+  - 12-24 hours (1440-2880 blocks) for general discovery
+  - 0 for testing (returns no orders)
+- **Performance monitoring**: Use `getswapindexinfo` to monitor:
+  - Index health and synchronization status
+  - Total system load (order counts)
+  - History retention configuration
 
 ## Complete v2 advertisement example (hex)
 
@@ -373,7 +409,7 @@ This section documents common RPC error codes and their meanings when interactin
 |------|----------|-------------|--------------|
 | -1 | `RPC_MISC_ERROR` | Swap index not enabled | Node not started with `-swapindex=1` |
 | -5 | `RPC_INVALID_ADDRESS_OR_KEY` | Invalid token reference | Malformed hex string for `token_ref` |
-| -8 | `RPC_INVALID_PARAMETER` | Invalid parameter value | Negative `limit` or `offset` value |
+| -8 | `RPC_INVALID_PARAMETER` | Invalid parameter value | Negative `limit`, `offset`, or `max_age` value |
 | -32600 | `RPC_INTERNAL_ERROR` | Internal index error | Database read failure |
 
 ### Common error messages
@@ -410,6 +446,17 @@ This section documents common RPC error codes and their meanings when interactin
 }
 ```
 **Solution**: Provide a non-negative integer for the `offset` parameter.
+
+#### "max_age must be non-negative"
+```json
+{
+  "error": {
+    "code": -8,
+    "message": "max_age must be non-negative"
+  }
+}
+```
+**Solution**: Provide a non-negative integer or omit the `max_age` parameter for no age filtering.
 
 #### Invalid token_ref format
 ```json
@@ -490,6 +537,24 @@ A typical P2PKH signature is ~107 bytes, leaving **~800 bytes** for `priceTerms`
    - All required fields have correct sizes
 
 5. **Index not synced**: The swap index may still be syncing. Check node logs for "Syncing swapindex" messages.
+
+6. **Age filtering**: If using `max_age` parameter, orders older than the specified block count will be filtered out. Try without `max_age` or with a larger value.
+
+### Order not appearing with max_age filter
+
+**Possible causes**:
+
+1. **Order too old**: The order's `block_height` may be older than the specified `max_age`. Check the order's age with `getopenorders` without `max_age` first.
+
+2. **Block height mismatch**: If the node's current height is very close to the order's `block_height`, age calculation may filter it out unexpectedly.
+
+**Debugging steps**:
+```bash
+# Check current block height and order age
+radiant-cli getswapindexinfo
+radiant-cli getopenorders <token_ref>  # Without max_age to see all orders
+radiant-cli getopenorders <token_ref> 100 0 10000  # With large max_age to include old orders
+```
 
 ### Order stuck in open after being filled
 

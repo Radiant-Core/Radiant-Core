@@ -14,6 +14,7 @@
 #include <txmempool.h>
 
 #include <univalue.h>
+#include <optional>
 
 // Helper to build a swap offer JSON object
 static UniValue::Object BuildSwapOfferObject(const SwapOffer &offer) {
@@ -43,7 +44,7 @@ static UniValue::Object BuildSwapOfferObject(const SwapOffer &offer) {
 
 static UniValue getopenordersbywant(const Config &config,
                                     const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3) {
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 4) {
         throw std::runtime_error(
             RPCHelpMan{"getopenordersbywant",
                 "\nReturns a list of active swap advertisements for a given wanted token reference.\n",
@@ -51,6 +52,7 @@ static UniValue getopenordersbywant(const Config &config,
                     {"want_token_ref", RPCArg::Type::STR_HEX, /* opt */ false, /* default_val */ "", "The wanted token reference (TXID) to filter by"},
                     {"limit", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "100", "Maximum number of results to return (max 1000)"},
                     {"offset", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "0", "Number of results to skip for pagination"},
+                    {"max_age", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "null", "Maximum age in blocks (null = no filter)"},
                 }}
                 .ToString() +
             "\nResult:\n"
@@ -75,7 +77,8 @@ static UniValue getopenordersbywant(const Config &config,
             "\nExamples:\n" +
             HelpExampleCli("getopenordersbywant", "\"<want_token_ref>\"") +
             HelpExampleCli("getopenordersbywant", "\"<want_token_ref>\" 50 0") +
-            HelpExampleRpc("getopenordersbywant", "\"<want_token_ref>\", 50, 0"));
+            HelpExampleCli("getopenordersbywant", "\"<want_token_ref>\" 100 0 1440") + // 1440 blocks = ~12 hours at 5 min blocks
+            HelpExampleRpc("getopenordersbywant", "\"<want_token_ref>\", 50, 0, 720")); // 720 blocks = ~6 hours
     }
 
     if (!g_swapindex) {
@@ -86,6 +89,7 @@ static UniValue getopenordersbywant(const Config &config,
 
     size_t limit = DEFAULT_SWAP_QUERY_LIMIT;
     size_t offset = 0;
+    std::optional<int64_t> maxAge;
 
     if (request.params.size() > 1 && !request.params[1].isNull()) {
         int64_t limitParam = request.params[1].get_int64();
@@ -103,6 +107,14 @@ static UniValue getopenordersbywant(const Config &config,
         offset = static_cast<size_t>(offsetParam);
     }
 
+    if (request.params.size() > 3 && !request.params[3].isNull()) {
+        int64_t maxAgeParam = request.params[3].get_int64();
+        if (maxAgeParam < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "max_age must be non-negative");
+        }
+        maxAge = maxAgeParam;
+    }
+
     std::vector<SwapOffer> orders;
     if (!g_swapindex->GetOpenOrdersByWant(wantTokenID, orders, limit, offset)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to retrieve orders from swap index");
@@ -112,6 +124,12 @@ static UniValue getopenordersbywant(const Config &config,
     CCoinsViewCache &view = *pcoinsTip;
     CCoinsViewMemPool viewMemPool(&view, g_mempool);
 
+    // Get current block height for age filtering
+    int32_t currentHeight = 0;
+    if (::ChainActive().Tip()) {
+        currentHeight = ::ChainActive().Tip()->nHeight;
+    }
+
     UniValue::Array result;
     for (const auto &offer : orders) {
         COutPoint outpoint(TxId(offer.offeredUTXOHash), offer.offeredUTXOIndex);
@@ -119,6 +137,17 @@ static UniValue getopenordersbywant(const Config &config,
 
         if (g_mempool.isSpent(outpoint) || !viewMemPool.GetCoin(outpoint, coin) || coin.IsSpent()) {
             continue;
+        }
+
+        // Skip if order is too old (age filtering)
+        if (maxAge.has_value()) {
+            if (currentHeight <= offer.blockHeight) {
+                continue; // Invalid block height, skip
+            }
+            int64_t orderAge = currentHeight - offer.blockHeight;
+            if (orderAge > maxAge.value()) {
+                continue; // Order too old, skip
+            }
         }
 
         result.emplace_back(BuildSwapOfferObject(offer));
@@ -260,7 +289,7 @@ static UniValue getswaphistorybywant(const Config &config,
 
 static UniValue getopenorders(const Config &config,
                               const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3) {
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 4) {
         throw std::runtime_error(
             RPCHelpMan{"getopenorders",
                 "\nReturns a list of active swap advertisements for a given token reference.\n",
@@ -268,6 +297,7 @@ static UniValue getopenorders(const Config &config,
                     {"token_ref", RPCArg::Type::STR_HEX, /* opt */ false, /* default_val */ "", "The token reference (TXID) to filter by"},
                     {"limit", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "100", "Maximum number of results to return (max 1000)"},
                     {"offset", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "0", "Number of results to skip for pagination"},
+                    {"max_age", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "null", "Maximum age in blocks (null = no filter)"},
                 }}
                 .ToString() +
             "\nResult:\n"
@@ -292,7 +322,8 @@ static UniValue getopenorders(const Config &config,
             "\nExamples:\n" +
             HelpExampleCli("getopenorders", "\"<token_ref>\"") +
             HelpExampleCli("getopenorders", "\"<token_ref>\" 50 0") +
-            HelpExampleRpc("getopenorders", "\"<token_ref>\", 50, 0"));
+            HelpExampleCli("getopenorders", "\"<token_ref>\" 100 0 1440") + // 1440 blocks = ~12 hours at 5 min blocks
+            HelpExampleRpc("getopenorders", "\"<token_ref>\", 50, 0, 720")); // 720 blocks = ~6 hours
     }
 
     if (!g_swapindex) {
@@ -303,6 +334,7 @@ static UniValue getopenorders(const Config &config,
     
     size_t limit = DEFAULT_SWAP_QUERY_LIMIT;
     size_t offset = 0;
+    std::optional<int64_t> maxAge;
     
     if (request.params.size() > 1 && !request.params[1].isNull()) {
         int64_t limitParam = request.params[1].get_int64();
@@ -320,6 +352,14 @@ static UniValue getopenorders(const Config &config,
         offset = static_cast<size_t>(offsetParam);
     }
 
+    if (request.params.size() > 3 && !request.params[3].isNull()) {
+        int64_t maxAgeParam = request.params[3].get_int64();
+        if (maxAgeParam < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "max_age must be non-negative");
+        }
+        maxAge = maxAgeParam;
+    }
+
     std::vector<SwapOffer> orders;
     if (!g_swapindex->GetOpenOrders(tokenID, orders, limit, offset)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to retrieve orders from swap index");
@@ -331,6 +371,12 @@ static UniValue getopenorders(const Config &config,
     CCoinsViewCache &view = *pcoinsTip;
     CCoinsViewMemPool viewMemPool(&view, g_mempool);
 
+    // Get current block height for age filtering
+    int32_t currentHeight = 0;
+    if (::ChainActive().Tip()) {
+        currentHeight = ::ChainActive().Tip()->nHeight;
+    }
+
     UniValue::Array result;
 
     for (const auto &offer : orders) {
@@ -340,6 +386,17 @@ static UniValue getopenorders(const Config &config,
         // Skip if spent in mempool or not in UTXO set
         if (g_mempool.isSpent(outpoint) || !viewMemPool.GetCoin(outpoint, coin) || coin.IsSpent()) {
             continue;
+        }
+
+        // Skip if order is too old (age filtering)
+        if (maxAge.has_value()) {
+            if (currentHeight <= offer.blockHeight) {
+                continue; // Invalid block height, skip
+            }
+            int64_t orderAge = currentHeight - offer.blockHeight;
+            if (orderAge > maxAge.value()) {
+                continue; // Order too old, skip
+            }
         }
 
         result.emplace_back(BuildSwapOfferObject(offer));
@@ -489,16 +546,75 @@ static UniValue getswapcount(const Config &config,
     return result;
 }
 
+static UniValue getswapindexinfo(const Config &config,
+                                const JSONRPCRequest &request) {
+    if (request.fHelp || request.params.size() > 0) {
+        throw std::runtime_error(
+            RPCHelpMan{"getswapindexinfo",
+                "\nReturns information about the swap index status and performance metrics.\n",
+                {}}
+                .ToString() +
+            "\nResult:\n"
+            "{\n"
+            "  \"enabled\": true|false,     (boolean) Whether swap index is enabled\n"
+            "  \"current_height\": n,       (numeric) Current block height\n"
+            "  \"total_orders\": n,         (numeric) Total number of orders (open + history)\n"
+            "  \"open_orders\": n,          (numeric) Number of open orders\n"
+            "  \"history_orders\": n,       (numeric) Number of historical orders\n"
+            "  \"history_blocks\": n,      (numeric) History retention period in blocks\n"
+            "}\n"
+            "\nExamples:\n" +
+            HelpExampleCli("getswapindexinfo", "") +
+            HelpExampleRpc("getswapindexinfo", ""));
+    }
+
+    UniValue::Object result;
+    result.emplace_back("enabled", g_swapindex != nullptr);
+    
+    if (g_swapindex) {
+        LOCK(cs_main);
+        int32_t currentHeight = 0;
+        if (::ChainActive().Tip()) {
+            currentHeight = ::ChainActive().Tip()->nHeight;
+        }
+        result.emplace_back("current_height", currentHeight);
+        
+        // Get total counts across all tokens (approximate)
+        SwapOrderCounts totalCounts;
+        if (g_swapindex->GetOrderCounts(uint256(), totalCounts)) {
+            result.emplace_back("total_orders", (uint64_t)(totalCounts.openCount + totalCounts.historyCount));
+            result.emplace_back("open_orders", (uint64_t)totalCounts.openCount);
+            result.emplace_back("history_orders", (uint64_t)totalCounts.historyCount);
+        } else {
+            result.emplace_back("total_orders", 0);
+            result.emplace_back("open_orders", 0);
+            result.emplace_back("history_orders", 0);
+        }
+        
+        // Get history retention setting
+        result.emplace_back("history_blocks", DEFAULT_SWAP_HISTORY_BLOCKS);
+    } else {
+        result.emplace_back("current_height", 0);
+        result.emplace_back("total_orders", 0);
+        result.emplace_back("open_orders", 0);
+        result.emplace_back("history_orders", 0);
+        result.emplace_back("history_blocks", DEFAULT_SWAP_HISTORY_BLOCKS);
+    }
+
+    return result;
+}
+
 // clang-format off
 static const ContextFreeRPCCommand commands[] = {
     //  category            name                      actor (function)        argNames
     //  ------------------- ------------------------  ----------------------  ----------
-    { "blockchain",         "getopenorders",          getopenorders,          {"token_ref", "limit", "offset"} },
-    { "blockchain",         "getopenordersbywant",    getopenordersbywant,    {"want_token_ref", "limit", "offset"} },
+    { "blockchain",         "getopenorders",          getopenorders,          {"token_ref", "limit", "offset", "max_age"} },
+    { "blockchain",         "getopenordersbywant",    getopenordersbywant,    {"want_token_ref", "limit", "offset", "max_age"} },
     { "blockchain",         "getswaphistory",         getswaphistory,         {"token_ref", "limit", "offset"} },
     { "blockchain",         "getswaphistorybywant",   getswaphistorybywant,   {"want_token_ref", "limit", "offset"} },
     { "blockchain",         "getswapcount",           getswapcount,           {"token_ref"} },
     { "blockchain",         "getswapcountbywant",     getswapcountbywant,     {"want_token_ref"} },
+    { "blockchain",         "getswapindexinfo",       getswapindexinfo,       {} },
 };
 // clang-format on
 
