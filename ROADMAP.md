@@ -11,6 +11,20 @@ This document tracks planned future work for Radiant Core. For completed feature
 - [ ] **Update Code**: Add the new seeder's domain to `src/chainparams.cpp` (Mainnet & Testnet).
 - [ ] **Verify Crawling**: Ensure the seeder is correctly crawling the network and serving valid peers.
 
+## 2. PSRT Swap Protocol Enhancements
+- [ ] **Client-Side Order Expiration**: Implement order filtering based on age using existing `blockHeight` field.
+  - Add optional `max_age` parameter to swap RPCs (`getopenorders`, `getopenordersbywant`)
+  - Implement expiration logic in Photonic Wallet and other clients
+  - Document best practices for expiration thresholds (e.g., 30-90 days)
+- [ ] **Price Terms Validation Research**: Define validation requirements and approaches.
+  - Survey ecosystem needs for price reasonableness checks
+  - Evaluate static range vs. market-reference validation models
+  - Design schema validation for price term formats
+- [ ] **Maker Reputation System Design**: Research off-chain reputation tracking approaches.
+  - Define key metrics (success rate, fill time, dispute outcomes)
+  - Evaluate centralized vs. distributed reputation models
+  - Design API specifications for reputation data exchange
+
 # Phase 2: Performance & Modernization (1-3 Months)
 
 ## 1. Asynchronous RPC & Network
@@ -51,7 +65,19 @@ This document tracks planned future work for Radiant Core. For completed feature
   - Wrapped asset minting/burning protocols.
   - Cross-chain transaction finality guarantees.
 
-## 2. Advanced Vault Security
+## 2. PSRT Advanced Features
+- [ ] **Cross-Chain Atomic Swaps**: Extend PSRT protocol for cross-chain swap coordination.
+  - Research HTLC-based vs. oracle-based approaches for atomic settlement
+  - Design timing coordination mechanisms for different block times and finality
+  - Implement security models for fund custody during cross-chain swaps
+  - Create failure handling protocols for partial chain failures
+- [ ] **Privacy-Enhanced PSRT**: Implement gradual privacy improvements for swap protocol.
+  - **Phase 1**: Encrypted price terms with selective revelation to committed counterparties
+  - **Phase 2**: Mixnet-based order dissemination to separate discovery from blockchain posting
+  - **Phase 3**: Research ZK-SNARK implementation for complete swap confidentiality
+  - Evaluate privacy vs. performance trade-offs for each approach
+
+## 3. Advanced Vault Security
 - [ ] **Time-Locked Vaults**: Implement native timelock primitives for cold storage.
 - [ ] **Multi-Signature Enhancements**: Improve CHECKMULTISIG performance and add Schnorr-based MuSig2.
 - [ ] **Watchtower Infrastructure**: Design watchtower protocol for vault monitoring and automated response.
