@@ -163,6 +163,7 @@ jobs:
             -DCMAKE_INCLUDE_PATH="$sdkInclude" `
             -DBUILD_RADIANT_WALLET=OFF `
             -DBUILD_RADIANT_ZMQ=OFF `
+            -DSECP256K1_ECMULT_STATIC_PRECOMPUTATION=OFF `
             -DQt5_DIR=C:/vcpkg/installed/x64-windows/share/cmake/Qt5 `
             -DSHLWAPI_INCLUDE_DIR="$sdkInclude" `
             -DSHLWAPI_shlwapi_LIBRARY="$sdkLib/shlwapi.lib" `
