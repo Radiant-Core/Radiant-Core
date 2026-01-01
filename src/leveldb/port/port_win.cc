@@ -28,14 +28,6 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 //
 
-// Ensure Windows Vista+ APIs are available (needed for FILE_INFO_BY_HANDLE_CLASS)
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
-#ifndef WINVER
-#define WINVER 0x0600
-#endif
-
 #include "port/port_win.h"
 
 #include <windows.h>

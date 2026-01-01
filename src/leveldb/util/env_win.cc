@@ -5,15 +5,6 @@
 // project (http://code.google.com/p/leveldbwin/) lists the 'New BSD License'
 // as the license.
 #if defined(LEVELDB_PLATFORM_WINDOWS)
-
-// Ensure Windows Vista+ APIs are available (needed for FILE_INFO_BY_HANDLE_CLASS)
-#ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0600
-#endif
-#ifndef WINVER
-#define WINVER 0x0600
-#endif
-
 #include <map>
 
 

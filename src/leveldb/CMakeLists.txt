@@ -85,6 +85,8 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	target_compile_definitions(leveldb
 		PRIVATE
 			__USE_MINGW_ANSI_STDIO=1
+			_WIN32_WINNT=0x0600
+			WINVER=0x0600
 	)
 
 	find_package(SHLWAPI REQUIRED)
