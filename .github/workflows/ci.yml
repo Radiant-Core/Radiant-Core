@@ -126,6 +126,7 @@ jobs:
       # Wallet is fully supported on Mac and Linux.
 
       - name: Clear any cached BerkeleyDB
+        shell: cmd
         run: if exist C:\bdb rmdir /s /q C:\bdb
 
       - name: Install vcpkg dependencies
