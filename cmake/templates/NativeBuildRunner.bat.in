@@ -1,0 +1,4 @@
+@echo off
+REM Windows native build runner for individual executables
+
+"${CMAKE_COMMAND}" --build "${NATIVE_BUILD_DIR}" --target "${TARGET}"
