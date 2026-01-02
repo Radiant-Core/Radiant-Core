@@ -1,12 +1,11 @@
 # The Radiant Blockchain Developers
 # The purpose of this image is to be able to host Radiant Core Node (RXDC) and ElectrumX or RXinDexer
 # Build with: `docker build .`
-# Public images at: https://hub.docker.com/repository/docker/radiantblockchain
 FROM ubuntu:24.04
 
-LABEL maintainer="radiantblockchain@protonmail.com"
-LABEL version="1.1.0"
-LABEL description="Docker image for radiantd node"
+LABEL maintainer="info@radiantfoundation.org"
+LABEL version="2.0.0"
+LABEL description="Docker image for Radiant Core Node"
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y curl ca-certificates gnupg
@@ -71,7 +70,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y $PACKAGES && \
 
 # Install radiant-node
 WORKDIR /root
-RUN git clone --depth 1 --branch v1.3.0 https://github.com/radiantblockchain/radiant-node.git
+RUN git clone --depth 1 --branch v1.3.0 https://github.com/Radiant-Core/Radiant-Core.git
 RUN mkdir -p /root/radiant-node/build
 WORKDIR /root/radiant-node/build
 RUN cmake -GNinja .. -DBUILD_RADIANT_QT=OFF
