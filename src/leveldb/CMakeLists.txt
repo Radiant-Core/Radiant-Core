@@ -66,9 +66,11 @@ add_library(leveldb
 	util/status.cc
 )
 
-# The SSE4.2 optimized CRC32 implementation.
-add_library(leveldb-sse4.2 port/port_posix_sse.cc)
-target_link_libraries(leveldb leveldb-sse4.2)
+# The SSE4.2 optimized CRC32 implementation (POSIX only, not for Windows/MSVC).
+if(NOT MSVC)
+	add_library(leveldb-sse4.2 port/port_posix_sse.cc)
+	target_link_libraries(leveldb leveldb-sse4.2)
+endif()
 
 # The libmemenv library.
 add_library(memenv helpers/memenv/memenv.cc)
@@ -160,29 +162,33 @@ function(configure_leveldb_lib LIB)
 endfunction()
 
 configure_leveldb_lib(leveldb)
-configure_leveldb_lib(leveldb-sse4.2)
+if(NOT MSVC)
+	configure_leveldb_lib(leveldb-sse4.2)
+endif()
 configure_leveldb_lib(memenv)
 
-# Check support for SSE4.2 and act accordingly.
-set(CMAKE_REQUIRED_FLAGS -msse4.2)
-check_c_source_compiles("
-	#include <stdint.h>
-	#if defined(_MSC_VER)
-	#include <intrin.h>
-	#elif defined(__GNUC__) && defined(__SSE4_2__)
-	#include <nmmintrin.h>
-	#endif
-	int main() {
-		uint64_t l = 0;
-		l = _mm_crc32_u8(l, 0);
-		l = _mm_crc32_u32(l, 0);
-		l = _mm_crc32_u64(l, 0);
-		return l;
-	}
-" ENABLE_HWCRC32)
-if(ENABLE_HWCRC32)
-	target_compile_definitions(leveldb-sse4.2 PRIVATE LEVELDB_PLATFORM_POSIX_SSE)
-	target_compile_options(leveldb-sse4.2 PRIVATE -msse4.2)
+# Check support for SSE4.2 and act accordingly (not for MSVC).
+if(NOT MSVC)
+	set(CMAKE_REQUIRED_FLAGS -msse4.2)
+	check_c_source_compiles("
+		#include <stdint.h>
+		#if defined(_MSC_VER)
+		#include <intrin.h>
+		#elif defined(__GNUC__) && defined(__SSE4_2__)
+		#include <nmmintrin.h>
+		#endif
+		int main() {
+			uint64_t l = 0;
+			l = _mm_crc32_u8(l, 0);
+			l = _mm_crc32_u32(l, 0);
+			l = _mm_crc32_u64(l, 0);
+			return l;
+		}
+	" ENABLE_HWCRC32)
+	if(ENABLE_HWCRC32)
+		target_compile_definitions(leveldb-sse4.2 PRIVATE LEVELDB_PLATFORM_POSIX_SSE)
+		target_compile_options(leveldb-sse4.2 PRIVATE -msse4.2)
+	endif()
 endif()
 
 option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
