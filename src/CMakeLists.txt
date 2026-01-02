@@ -330,14 +330,20 @@ file(MAKE_DIRECTORY "${OBJ_DIR}")
 set(BUILD_HEADER "${OBJ_DIR}/build.h")
 set(BUILD_HEADER_TMP "${BUILD_HEADER}.tmp")
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+  set(GENBUILD_SCRIPT "${CMAKE_SOURCE_DIR}/share/genbuild.bat")
+else()
+  set(GENBUILD_SCRIPT "${CMAKE_SOURCE_DIR}/share/genbuild.sh")
+endif()
+
 add_custom_command(
   DEPENDS
     "${GIT_HEAD_LOGS_FILE}"
-    "${CMAKE_SOURCE_DIR}/share/genbuild.sh"
+    "${GENBUILD_SCRIPT}"
   OUTPUT
     "${BUILD_HEADER}"
   COMMAND
-    "${CMAKE_SOURCE_DIR}/share/genbuild.sh"
+    "${GENBUILD_SCRIPT}"
     "${BUILD_HEADER_TMP}"
     "${CMAKE_SOURCE_DIR}"
   COMMAND

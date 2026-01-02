@@ -35,6 +35,11 @@ string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${
 # Add path for custom modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
+# Apply portable Windows configuration if on Windows
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows" AND NOT DEFINED ENV{RADIANT_SKIP_PORTABLE_CONFIG})
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PortableWindowsConfig.cmake)
+endif()
+
 # Make contrib script accessible.
 set(CONTRIB_PATH ${CMAKE_CURRENT_SOURCE_DIR}/contrib)
 

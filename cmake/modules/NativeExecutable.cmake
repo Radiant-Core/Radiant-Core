@@ -50,10 +50,19 @@ function(add_native_executable NAME)
 		set(NATIVE_BINARY "${NATIVE_BUILD_DIR}/${NATIVE_TARGET}")
 		set(NATIVE_LINK "${CMAKE_CURRENT_BINARY_DIR}/native-${NAME}")
 
-		configure_file(
-			"${CMAKE_SOURCE_DIR}/cmake/templates/NativeBuildRunner.cmake.in"
-			"${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.sh"
-		)
+		if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+			configure_file(
+				"${CMAKE_SOURCE_DIR}/cmake/templates/NativeBuildRunner.bat.in"
+				"${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.bat"
+			)
+			set(NATIVE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.bat")
+		else()
+			configure_file(
+				"${CMAKE_SOURCE_DIR}/cmake/templates/NativeBuildRunner.cmake.in"
+				"${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.sh"
+			)
+			set(NATIVE_BUILD_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.sh")
+		endif()
 
 		# We create a symlink because cmake craps itself if the imported
 		# executable has the same name as the executable itself.
@@ -61,10 +70,10 @@ function(add_native_executable NAME)
 		add_custom_command_with_depfile(
 			OUTPUT "${NATIVE_LINK}"
 			COMMENT "Building native ${NATIVE_TARGET}"
-			COMMAND "${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.sh"
+			COMMAND "${NATIVE_BUILD_SCRIPT}"
 			DEPENDS
 				native-cmake-build
-				"${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.sh"
+				"${NATIVE_BUILD_SCRIPT}"
 				${ARGN}
 			DEPFILE "${NATIVE_LINK}.d"
 			VERBATIM USES_TERMINAL
@@ -99,12 +108,39 @@ function(_gen_native_cmake_target)
 	list(SORT ARGSLIST)
 	list(REMOVE_DUPLICATES ARGSLIST)
 	list(JOIN ARGSLIST " " ARGS)
+	
+	# Add dependency paths for native build on Windows
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		if(DEFINED OPENSSL_ROOT_DIR)
+			string(APPEND ARGS " -DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}")
+		endif()
+		if(DEFINED BOOST_INCLUDEDIR)
+			string(APPEND ARGS " -DBOOST_INCLUDEDIR=${BOOST_INCLUDEDIR}")
+		endif()
+		if(DEFINED BOOST_LIBRARYDIR)
+			string(APPEND ARGS " -DBOOST_LIBRARYDIR=${BOOST_LIBRARYDIR}")
+		endif()
+		if(DEFINED CMAKE_INCLUDE_PATH)
+			string(APPEND ARGS " -DCMAKE_INCLUDE_PATH=${CMAKE_INCLUDE_PATH}")
+		endif()
+		if(DEFINED CMAKE_LIBRARY_PATH)
+			string(APPEND ARGS " -DCMAKE_LIBRARY_PATH=${CMAKE_LIBRARY_PATH}")
+		endif()
+	endif()
 
 	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
-	configure_file(
-		"${CMAKE_SOURCE_DIR}/cmake/templates/NativeCmakeRunner.cmake.in"
-		"${CMAKE_BINARY_DIR}/config/run_native_cmake.sh"
-	)
+	
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		configure_file(
+			"${CMAKE_SOURCE_DIR}/cmake/templates/NativeCmakeRunner.bat.in"
+			"${CMAKE_BINARY_DIR}/config/run_native_cmake.bat"
+		)
+	else()
+		configure_file(
+			"${CMAKE_SOURCE_DIR}/cmake/templates/NativeCmakeRunner.cmake.in"
+			"${CMAKE_BINARY_DIR}/config/run_native_cmake.sh"
+		)
+	endif()
 endfunction(_gen_native_cmake_target)
 
 function(_gen_native_cmake_hook VAR ACCESS)
@@ -120,11 +156,17 @@ if(NOT __IS_NATIVE_BUILD AND NOT TARGET native-cmake-build)
 	# Set a hook to execute when everything is set.
 	variable_watch(CMAKE_CURRENT_LIST_DIR _gen_native_cmake_hook)
 
+	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		set(NATIVE_SCRIPT "${CMAKE_BINARY_DIR}/config/run_native_cmake.bat")
+	else()
+		set(NATIVE_SCRIPT "${CMAKE_BINARY_DIR}/config/run_native_cmake.sh")
+	endif()
+
 	add_custom_command_with_depfile(
 		OUTPUT "${NATIVE_BUILD_DIR}/CMakeCache.txt"
 		COMMENT "Preparing native build..."
-		COMMAND "${CMAKE_BINARY_DIR}/config/run_native_cmake.sh"
-		DEPENDS "${CMAKE_BINARY_DIR}/config/run_native_cmake.sh"
+		COMMAND "${NATIVE_SCRIPT}"
+		DEPENDS "${NATIVE_SCRIPT}"
 		WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
 		DEPFILE "${NATIVE_BUILD_DIR}/CMakeFiles/CMakeCache.txt.d"
 		VERBATIM USES_TERMINAL
