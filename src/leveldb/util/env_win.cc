@@ -4,6 +4,21 @@
 // Those files don't have any explicit license headers but the 
 // project (http://code.google.com/p/leveldbwin/) lists the 'New BSD License'
 // as the license.
+
+// Windows version must be defined before ANY includes to enable modern APIs
+#ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+#ifndef WINVER
+#define WINVER 0x0601
+#endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x06010000
+#endif
+#include <sdkddkver.h>
+#endif
+
 #if defined(LEVELDB_PLATFORM_WINDOWS)
 #include <map>
 
