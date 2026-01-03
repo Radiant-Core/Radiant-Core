@@ -5,8 +5,16 @@
 #include "leveldb/c.h"
 
 #include <stdlib.h>
+#include <string.h>
 #ifndef WIN32
 #include <unistd.h>
+#endif
+
+// Cross-platform strdup compatibility
+#ifdef _MSC_VER
+#define leveldb_strdup _strdup
+#else
+#define leveldb_strdup strdup
 #endif
 #include "leveldb/cache.h"
 #include "leveldb/comparator.h"
@@ -136,11 +144,11 @@ static bool SaveError(char** errptr, const Status& s) {
   if (s.ok()) {
     return false;
   } else if (*errptr == NULL) {
-    *errptr = _strdup(s.ToString().c_str());
+    *errptr = leveldb_strdup(s.ToString().c_str());
   } else {
     // TODO(sanjay): Merge with existing error?
     free(*errptr);
-    *errptr = _strdup(s.ToString().c_str());
+    *errptr = leveldb_strdup(s.ToString().c_str());
   }
   return true;
 }
@@ -244,8 +252,8 @@ char* leveldb_property_value(
     const char* propname) {
   std::string tmp;
   if (db->rep->GetProperty(Slice(propname), &tmp)) {
-    // We use _strdup() since we expect human readable output.
-    return _strdup(tmp.c_str());
+    // We use strdup() since we expect human readable output.
+    return leveldb_strdup(tmp.c_str());
   } else {
     return NULL;
   }
