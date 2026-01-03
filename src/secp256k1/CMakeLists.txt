@@ -53,15 +53,6 @@ add_c_compiler_flags(
 	-Wno-long-long
 )
 
-# Suppress Windows-specific warnings for cleaner build output
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	target_compile_options(secp256k1 PRIVATE
-		/wd4710 # function not inlined
-		/wd4711 # function selected for automatic inline expansion
-		/wd5045 # Spectre mitigation
-	)
-endif()
-
 # Default visibility is hidden on all targets.
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 
@@ -75,6 +66,15 @@ include_directories(
 # The library
 add_library(secp256k1 src/secp256k1.c)
 target_include_directories(secp256k1 PUBLIC include)
+
+# Suppress Windows-specific warnings for cleaner build output (must be after target creation)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	target_compile_options(secp256k1 PRIVATE
+		/wd4710 # function not inlined
+		/wd4711 # function selected for automatic inline expansion
+		/wd5045 # Spectre mitigation
+	)
+endif()
 
 set(SECP256K1_PUBLIC_HEADERS
 	include/secp256k1.h
