@@ -19,19 +19,6 @@ add_compiler_flags(
 )
 add_c_compiler_flags(-Wno-strict-prototypes)
 
-# Suppress Windows-specific warnings for cleaner build output
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	target_compile_options(leveldb PRIVATE
-		/wd4267 # conversion from 'size_t' to smaller type
-		/wd4244 # conversion from larger type to smaller type
-		/wd4996 # deprecated function
-		/wd4005 # macro redefinition
-		/wd4312 # pointer size conversion
-	)
-	# Suppress OS_WINDOWS macro redefinition warning from shlwapi.h
-	target_compile_definitions(leveldb PRIVATE OS_WINDOWS=1)
-endif()
-
 include(CheckIncludeFileCXX)
 check_include_file_cxx("atomic" LEVELDB_ATOMIC_PRESENT)
 
@@ -175,6 +162,20 @@ function(configure_leveldb_lib LIB)
 endfunction()
 
 configure_leveldb_lib(leveldb)
+
+# Suppress Windows-specific warnings for cleaner build output (must be after target creation)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	target_compile_options(leveldb PRIVATE
+		/wd4267 # conversion from 'size_t' to smaller type
+		/wd4244 # conversion from larger type to smaller type
+		/wd4996 # deprecated function
+		/wd4005 # macro redefinition
+		/wd4312 # pointer size conversion
+	)
+	# Suppress OS_WINDOWS macro redefinition warning from shlwapi.h
+	target_compile_definitions(leveldb PRIVATE OS_WINDOWS=1)
+endif()
+
 if(NOT MSVC)
 	configure_leveldb_lib(leveldb-sse4.2)
 endif()
