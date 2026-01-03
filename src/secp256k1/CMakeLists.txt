@@ -53,6 +53,15 @@ add_c_compiler_flags(
 	-Wno-long-long
 )
 
+# Suppress Windows-specific warnings for cleaner build output
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	target_compile_options(secp256k1 PRIVATE
+		/wd4710 # function not inlined
+		/wd4711 # function selected for automatic inline expansion
+		/wd5045 # Spectre mitigation
+	)
+endif()
+
 # Default visibility is hidden on all targets.
 set(CMAKE_C_VISIBILITY_PRESET hidden)
 
