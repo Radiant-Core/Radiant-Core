@@ -25,23 +25,241 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 - **Node Profiles**: `-nodeprofile=archive|agent|mining` for easy configuration
 - **Large Transaction Support**: Up to 12 MB transactions (~81,000 inputs)
 
-Quick Start: Docker Build (Recommended)
+## 🚀 Quick Start: Release Builds
+
+We provide comprehensive release build scripts for all platforms with automated dependency management and security verification.
+
+### 📦 Pre-built Releases (Recommended)
+
+Download official releases from [GitHub Releases](https://github.com/Radiant-Core/Radiant-Core/releases) with verified checksums:
+
+#### Latest Release: v2.0.0-7cfb963
+
+| Platform | Download | Size | Checksum (SHA256) |
+|----------|----------|------|------------------|
+| **Windows x64** | [radiant-core-windows-x64.zip] | 25 MB | `2964124758955D4FF4F8E395E3FF9C5807C3999494B658D727E6355D67DE84E3` |
+| **Linux x86_64** | [radiant-core-linux-x86_64.tar.gz] | 23 MB | *(Available on release page)* |
+| **macOS Universal** | [radiant-core-macos-universal.tar.gz] | 28 MB | *(Available on release page)* |
+| **Docker Image** | `radiant-core:latest` | 150 MB | *(Verified by Docker Hub)* |
+
+**🔐 Security Verification:**
+```bash
+# Verify Windows release
+sha256sum radiant-core-windows-x64.zip
+# Should match: 2964124758955D4FF4F8E395E3FF9C5807C3999494B658D727E6355D67DE84E3
+
+# Verify Linux release
+sha256sum radiant-core-linux-x86_64.tar.gz
+
+# Verify macOS release
+shasum -a 256 radiant-core-macos-universal.tar.gz
+```
+
+### 🛠️ Build from Source
+
+Choose your platform below for automated build scripts:
+
+#### **Windows Build** (Portable, One-Click)
+```cmd
+# Automatic build with dependency detection
+build-portable-windows-v2.bat
+
+# Create portable distribution
+create-portable-dist.bat
+
+# Create installer
+build-complete.bat
+```
+**Requirements:** Windows 10/11, Visual Studio 2019/2022 OR MinGW-w64, CMake 3.22+
+
+#### **Linux Build** (Ubuntu/Debian/CentOS/Fedora)
+```bash
+# Automated build with dependency installation
+./build-linux-release.sh
+
+# Multi-platform build (if on Linux)
+./build-all-releases.sh
+```
+**Requirements:** Linux x86_64, GCC 10+ or Clang 11+, CMake 3.16+
+
+#### **macOS Build** (Universal Binary)
+```bash
+# Universal Binary (Intel + Apple Silicon)
+./build-macos-release.sh
+
+# Create DMG installer
+./create-dmg.sh
+```
+**Requirements:** macOS 10.15+, Xcode 12+, Homebrew
+
+#### **Docker Build** (Any Platform)
+```bash
+# Build Docker image and extract binaries
+./build-docker-release.sh
+
+# Run directly from Docker
+docker run -d --name radiant-node \
+  -p 7332:7332 -p 7333:7333 \
+  -v radiant-data:/home/radiant/.radiant \
+  radiant-core:latest
+```
+**Requirements:** Docker Engine 20.10+
+
+#### **All Platforms** (Multi-Platform Build)
+```bash
+# Interactive build for all platforms
+./build-all-releases.sh
+
+# Creates:
+# - Linux tar.gz
+# - Docker image
+# - macOS universal binary + DMG
+# - Windows ZIP
+# - All with SHA256 checksums
+```
+
+### 📋 Build System Features
+
+- ✅ **Automated dependency installation**
+- ✅ **Cross-platform compatibility** 
+- ✅ **Release optimization**
+- ✅ **Security verification** (SHA256 checksums)
+- ✅ **Universal binaries** (macOS Intel + Apple Silicon)
+- ✅ **Docker multi-stage builds**
+- ✅ **Portable Windows builds**
+- ✅ **Professional installers** (Windows NSIS, macOS DMG)
+
+### 🐳 Docker Quick Start
+
+```bash
+# Pull and run official image
+docker run -d --name radiant-node \
+  -p 7332:7333 -p 7333:7333 \
+  -v radiant-data:/home/radiant/.radiant \
+  radiant-core:latest \
+  -rpcuser=dockeruser -rpcpassword=dockerpass
+
+# Check status
+docker exec radiant-node radiant-cli getblockchaininfo
+```
+
+### ⚡ Quick Test (After Installation)
+
+```bash
+# Test daemon
+radiantd --version
+
+# Test RPC client  
+radiant-cli --version
+
+# Test transaction utility
+radiant-tx --help
+
+# Start daemon with default profile
+radiantd -nodeprofile=archive
+```
+
+---
+
+## 📚 Advanced Build Options
+
+### Development & CI Builds
+
+For development and continuous integration, we provide additional build methods:
+
+#### **CI Build (Docker-based Testing)**
+```bash
+# Full CI build with testing
+./contrib/run-ci-local.sh
+```
+This builds in a standardized Docker environment with:
+- Ubuntu 24.04, CMake 3.28+, Boost 1.83, OpenSSL 3.0, C++20
+- Full test suite (unit tests + functional tests)
+- Cross-compilation for multiple platforms
+
+#### **Native Build Options**
+
+**Ubuntu/Debian:**
+```bash
+# Install dependencies
+sudo apt-get install build-essential cmake ninja-build libboost-all-dev \
+    libevent-dev libssl-dev libdb++-dev libminiupnpc-dev libzmq3-dev
+
+# Build
+mkdir build && cd build
+cmake -GNinja .. -DBUILD_RADIANT_QT=OFF
+ninja
+```
+
+**macOS:**
+```bash
+# Install dependencies
+brew install cmake ninja boost libevent openssl berkeley-db miniupnpc zeromq qt5
+
+# Build
+mkdir build && cd build
+cmake -GNinja .. -DBUILD_RADIANT_QT=OFF
+ninja
+```
+
+**Windows (Manual):**
+```cmd
+# Using Visual Studio
+mkdir build && cd build
+cmake .. -G "Visual Studio 16 2019" -A x64 -DBUILD_RADIANT_QT=OFF
+cmake --build . --config Release
+
+# Using MinGW
+mkdir build && cd build  
+cmake .. -G "MinGW Makefiles" -DBUILD_RADIANT_QT=OFF
+mingw32-make
+```
+
+### 📖 Detailed Documentation
+
+- **[RELEASE-BUILD-GUIDE.md](RELEASE-BUILD-GUIDE.md)** - Comprehensive build instructions
+- **[BUILD-WINDOWS-PORTABLE.md](BUILD-WINDOWS-PORTABLE.md)** - Windows-specific guide  
+- **[RELEASE-SYSTEM-COMPLETE.md](RELEASE-SYSTEM-COMPLETE.md)** - Complete system overview
+- **[doc/build-unix.md](doc/build-unix.md)** - Unix build details
+- **[doc/build-windows.md](doc/build-windows.md)** - Windows build details
+
+---
+
+## 🔒 Security & Verification
+
+### Checksum Verification
+
+All official releases include SHA256 checksums for security verification:
+
+```bash
+# Example: Verify Windows release
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.0.0/radiant-core-windows-x64.zip
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.0.0/radiant-core-windows-x64.zip.sha256
+
+sha256sum -c radiant-core-windows-x64.zip.sha256
+# Should output: radiant-core-windows-x64.zip: OK
+```
+
+### Code Signing
+
+Production releases are signed:
+- **Windows**: Authenticode code signing certificates
+- **macOS**: Apple Developer ID signatures  
+- **Linux**: GPG signatures maintainers
+
+### Reproducible Builds
+
+Our build system supports reproducible builds with:
+- Deterministic compilation flags
+- Fixed dependency versions
+- Source verification via Git tags
+
+---
+
+Quick Start: Docker Build (Development)
 ---------------------
 
-We provide a standardized build environment using Docker to ensure consistency across all platforms. This is the recommended way to build Radiant Node for any host OS.
-
-1. **Install Docker**: Ensure you have Docker installed and running on your machine.
-
-2. **Run the CI Build Script**:
-   ```bash
-   ./contrib/run-ci-local.sh
-   ```
-   This script will:
-   - Build the `radiant-node-ci` Docker image (Ubuntu 24.04, CMake 3.28+, Boost 1.83, OpenSSL 3.0, C++20)
-   - Compile the Radiant Node software inside the container
-   - Run the full test suite (unit tests + functional tests)
-
-The build runs entirely inside Docker, so you can run the CI script on **any host OS** (Linux, macOS, Windows) as long as Docker/Orbstackis installed.
+For development and testing, we provide a standardized build environment using Docker to ensure consistency across all platforms.
 
 ### Where You Can Run the CI
 
@@ -225,7 +443,6 @@ swapindex=1
 
 # Optional: Prometheus metrics
 prometheusmetrics=1
-```
 
 ### Running Tests
 
