@@ -1,0 +1,17 @@
+
+# Simple Makefile for libevent
+CC = gcc
+CFLAGS = -O2 -DHAVE_CONFIG_H -I./include -I./WIN32-Code -I.
+AR = ar
+ARFLAGS = rcs
+
+LIBEVENT_OBJS = event.o buffer.o bufferevent.o evbuffer.o log.o evutil.o strlcpy.o
+
+all: libevent.a
+
+libevent.a: 	\ \ \$@ 
+.c.o:
+	\ \ -c \$< -o \$@
+
+clean:
+	del /Q *.o *.a 2>nul || true
