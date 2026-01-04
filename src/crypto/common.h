@@ -12,6 +12,10 @@
 #include <cstdint>
 #include <cstring>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
+
 #include <compat/endian.h>
 #include <crypto/sha512_256v2.h>
 #include <crypto/sha512_256.h>
@@ -82,20 +86,34 @@ static inline void WriteBE64(uint8_t *ptr, uint64_t x) {
  * bit in x is set.
  */
 uint64_t static inline CountBits(uint64_t x) {
-#ifdef HAVE_DECL___BUILTIN_CLZL
+#if defined(_MSC_VER)
+    if (x == 0) return 0;
+    unsigned long index;
+#if defined(_M_X64) || defined(_M_ARM64)
+    _BitScanReverse64(&index, x);
+#else
+    // 32-bit fallback
+    if (_BitScanReverse(&index, (uint32_t)(x >> 32))) {
+        index += 32;
+    } else {
+        _BitScanReverse(&index, (uint32_t)x);
+    }
+#endif
+    return index + 1;
+#elif HAVE_DECL___BUILTIN_CLZL
     if (sizeof(unsigned long) >= sizeof(uint64_t)) {
         return x ? 8 * sizeof(unsigned long) - __builtin_clzl(x) : 0;
     }
-#endif
-#ifdef HAVE_DECL___BUILTIN_CLZLL
+#elif HAVE_DECL___BUILTIN_CLZLL
     if (sizeof(unsigned long long) >= sizeof(uint64_t)) {
         return x ? 8 * sizeof(unsigned long long) - __builtin_clzll(x) : 0;
     }
-#endif
+#else
     int ret = 0;
     while (x) {
         x >>= 1;
         ++ret;
     }
     return ret;
+#endif
 }
