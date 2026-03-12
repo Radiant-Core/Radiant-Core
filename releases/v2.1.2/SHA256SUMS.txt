@@ -3,4 +3,4 @@
 3872ad955a05dd468679a5027bcab97e776e64512a13658f02d558c33ccfbb45  radiant-core-docker-v2.1.2.tar.gz
 5c2a41d24ff22dde3d82c0fa285cc7dc9809fd197597d2947fa664aaf71e3138  radiant-qt-linux-x64-v2.1.2.tar.gz
 73dd5abd5d97caad5cd372c8405afd53020e0f5504c05e5614c01c191e025471  Radiant-Core-Qt-Wallet-2.1.2.dmg
-c44d31ea23beed267c717ff8de9ce69eb274972b04bac20d1fcd84582302e3af  Radiant-Node-Web-GUI-2.1.2.dmg
+a85245386d530981bca8852bd1b2ac14b259fa9ef38add40b9487bef14e93f5a  Radiant-Node-Web-GUI-2.1.2.dmg

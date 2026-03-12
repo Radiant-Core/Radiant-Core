@@ -124,7 +124,11 @@ BINARIES_FOUND=false
 if [[ -f "$LOCAL_BINARIES/radiantd" ]] && [[ -d "$LOCAL_BINARIES/libs" ]]; then
     # Use pre-bundled local binaries (already has libs fixed)
     echo "  Using local bundled binaries from gui/binaries..."
-    cp -R "$LOCAL_BINARIES"/* "$BINARIES_DIR/" 2>/dev/null || true
+    # Copy binaries directly (not in subdirectory)
+    cp "$LOCAL_BINARIES"/*.dylib "$BINARIES_DIR/" 2>/dev/null || true
+    cp "$LOCAL_BINARIES"/radiantd "$LOCAL_BINARIES"/radiant-cli "$LOCAL_BINARIES"/radiant-tx "$BINARIES_DIR/" 2>/dev/null || true
+    # Copy libs directory
+    cp -R "$LOCAL_BINARIES/libs" "$BINARIES_DIR/" 2>/dev/null || true
     chmod +x "$BINARIES_DIR/radiantd" "$BINARIES_DIR/radiant-cli" "$BINARIES_DIR/radiant-tx" 2>/dev/null || true
     BINARIES_FOUND=true
     echo -e "  ${GREEN}✓${NC} Local binaries bundled (with libs)"
