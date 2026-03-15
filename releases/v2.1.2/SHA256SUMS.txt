@@ -1,6 +1,7 @@
-0a88e4ebe0f3b348d8bdc15360a1f2cf80797fa62cc8617abed0ff59f627d492  radiant-core-macos-arm64-v2.1.2.tar.gz
-98c4ea0bb4f9242a52084bae03742c1492ba2067ce513770425de2e880818ed7  radiant-core-linux-x64-v2.1.2.tar.gz
-3872ad955a05dd468679a5027bcab97e776e64512a13658f02d558c33ccfbb45  radiant-core-docker-v2.1.2.tar.gz
+04fd5374873f8e77210c4e097753a8d868ff153447ba29425d8da122850abae4  radiant-core-macos-arm64-v2.1.2.tar.gz
 5c2a41d24ff22dde3d82c0fa285cc7dc9809fd197597d2947fa664aaf71e3138  radiant-qt-linux-x64-v2.1.2.tar.gz
 73dd5abd5d97caad5cd372c8405afd53020e0f5504c05e5614c01c191e025471  Radiant-Core-Qt-Wallet-2.1.2.dmg
-a85245386d530981bca8852bd1b2ac14b259fa9ef38add40b9487bef14e93f5a  Radiant-Node-Web-GUI-2.1.2.dmg
+7829e8ec65f5b66c371db929d9415c90b5254166c218bb7f33f34a99323ca4dd  Radiant-Node-Web-GUI-2.1.2.dmg
+a562ccd4005fbdc498c5d8de74f79f1db2db4125d5930258fd9c003507eb9dd4  radiant-core-docker-v2.1.2.tar.gz
+b1012b1d64c572f8b40eb28e8244393a7ffc11d9f8126b1a455dea7ba8e56538  radiant-core-qt-wallet-macos-arm64-v2.1.2.zip
+bd302af1210f1b9a179c468de0a83f9bb854e199a1f8585bcb8e1bf66fbe5603  radiant-core-linux-x64-v2.1.2.tar.gz

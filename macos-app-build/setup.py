@@ -17,7 +17,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Application metadata
 APP_NAME = 'Radiant Core'
-APP_VERSION = '2.1.0'
+APP_VERSION = '2.1.2'
 APP_BUNDLE_ID = 'org.radiantblockchain.radiant-core-gui'
 
 # Main application script

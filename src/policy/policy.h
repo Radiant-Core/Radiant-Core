@@ -52,6 +52,12 @@ static constexpr Amount RADIANT_CORE_2_MIN_RELAY_TX_FEE_PER_KB(10000000 * SATOSH
 static constexpr Amount LEGACY_BLOCK_MIN_TX_FEE_PER_KB(1000000 * SATOSHI);
 static constexpr Amount DEFAULT_BLOCK_MIN_TX_FEE_PER_KB(1000000 * SATOSHI);
 static constexpr Amount RADIANT_CORE_2_BLOCK_MIN_TX_FEE_PER_KB(10000000 * SATOSHI);
+
+// Maximum block mining fee constants to prevent empty block mining
+// Radiant Core 2.2: Set at 0.5 RXD/kB (5x minimum) to allow high-priority transactions while
+// discouraging pools from setting fees so high they exclude all legitimate transactions
+static constexpr Amount LEGACY_BLOCK_MAX_TX_FEE_PER_KB(100000000 * SATOSHI);  // 1 RXD/kB
+static constexpr Amount RADIANT_CORE_2_BLOCK_MAX_TX_FEE_PER_KB(50000000 * SATOSHI);  // 0.5 RXD/kB
 /**
  * Default for -gbtcheckvalidity, which determines whether we call
  * TestBlockValidity() on the generated block template.
