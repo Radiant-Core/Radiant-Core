@@ -14,21 +14,56 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <ctime>
 #include <deque>
 #include <map>
 #include <set>
+#include <string>
 #include <vector>
 
 #define MIN_RETRY 1000
 
 #define REQUIRE_VERSION 70001
 
+// Minimum block height a node must report to be considered reliable.
+// Defaults to the last checkpoint height; overridden by -minheight.
 static inline int GetRequireHeight() {
     if (Params().Checkpoints().mapCheckpoints.empty()) {
         return 0;
     }
     return Params().Checkpoints().mapCheckpoints.rbegin()->first;
+}
+
+// Global minimum client version (set from -minclientversion flag).
+// Format: 1000000*major + 10000*minor + 100*revision (e.g. 2010200 = v2.1.2).
+// 0 means no minimum.
+extern int g_min_client_version;
+
+// Global minimum block height (set from -minheight flag, defaults to GetRequireHeight()).
+extern int g_min_height;
+
+// Parse a subversion string like "/radiant-node:2.1.2/" or
+// "/radiant-node-seeder:2.1.2/" and return the encoded client version
+// (1000000*major + 10000*minor + 100*revision), or 0 on parse failure.
+static inline int ParseSubVersionNumber(const std::string &subVer) {
+    // Find the colon that separates the client name from the version
+    auto colon = subVer.find(':');
+    if (colon == std::string::npos) {
+        return 0;
+    }
+    // Find the closing slash
+    auto slash = subVer.find('/', colon);
+    if (slash == std::string::npos) {
+        slash = subVer.size();
+    }
+    std::string ver = subVer.substr(colon + 1, slash - colon - 1);
+    // Parse major.minor.revision
+    int major = 0, minor = 0, revision = 0;
+    if (std::sscanf(ver.c_str(), "%d.%d.%d", &major, &minor, &revision) < 2) {
+        return 0;
+    }
+    return 1000000 * major + 10000 * minor + 100 * revision;
 }
 
 static inline std::string ToString(const CService &ip) {
@@ -120,8 +155,17 @@ public:
         if (clientVersion && clientVersion < REQUIRE_VERSION) {
             return false;
         }
-        if (blocks && blocks < GetRequireHeight()) {
+        // Enforce minimum block height (V2 hard fork chain validation)
+        int requiredHeight = g_min_height > 0 ? g_min_height : GetRequireHeight();
+        if (blocks && blocks < requiredHeight) {
             return false;
+        }
+        // Enforce minimum client version from subversion string
+        if (g_min_client_version > 0 && !clientSubVersion.empty()) {
+            int parsedVersion = ParseSubVersionNumber(clientSubVersion);
+            if (parsedVersion > 0 && parsedVersion < g_min_client_version) {
+                return false;
+            }
         }
 
         if (total <= 3 && success * 2 >= total) {

@@ -175,9 +175,9 @@ public:
         assert(genesis.hashMerkleRoot ==
                uint256S("027c3f6ae3858a75e2c287a915b3d82a50c48ee7021b715eedae9497f8ba2c37"));
 
-        // DNS seeds disabled - most resolve to Cloudflare proxy IPs
-        // Using fixed seeds in chainparamsseeds.h instead
+        // DNS seeds for peer discovery
         vSeeds.clear();
+        vSeeds.emplace_back("seed.radiantcore.org");
         
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<uint8_t>(1, 0);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<uint8_t>(1, 5);

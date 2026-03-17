@@ -33,6 +33,11 @@
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
+// Global minimum client version filter (set via -minclientversion)
+int g_min_client_version = 0;
+// Global minimum block height filter (set via -minheight)
+int g_min_height = 0;
+
 //! All globals in this file are private to this translation unit
 namespace {
 
@@ -124,6 +129,23 @@ public:
             filter_whitelist.insert(NODE_NETWORK | NODE_XTHIN);
             filter_whitelist.insert(NODE_NETWORK | NODE_BLOOM | NODE_XTHIN);
         }
+
+        // Parse -minclientversion (e.g. "2.1.2" -> 2010200)
+        if (gArgs.IsArgSet("-minclientversion")) {
+            std::string verStr = gArgs.GetArg("-minclientversion", "");
+            int major = 0, minor = 0, revision = 0;
+            if (std::sscanf(verStr.c_str(), "%d.%d.%d", &major, &minor, &revision) >= 2) {
+                g_min_client_version = 1000000 * major + 10000 * minor + 100 * revision;
+            } else {
+                std::fprintf(stderr, "Invalid -minclientversion format: %s (expected major.minor.revision)\n",
+                             verStr.c_str());
+                return EXIT_FAILURE;
+            }
+        }
+
+        // Parse -minheight
+        g_min_height = gArgs.GetArg("-minheight", 0);
+
         return CONTINUE_EXECUTION;
     }
 
@@ -162,6 +184,17 @@ private:
                      OptionsCategory::CONNECTION);
         gArgs.AddArg("-reseed", strprintf("Reseed the database from the fixed seed list (default: %d)", DEFAULT_RESEED), ArgsManager::ALLOW_ANY,
                      OptionsCategory::CONNECTION);
+        gArgs.AddArg("-minclientversion=<version>",
+                     "Minimum client version to consider a node reliable. "
+                     "Format: major.minor.revision (e.g. 2.1.2). Nodes reporting "
+                     "a lower version in their subversion string are excluded. "
+                     "(default: no minimum)",
+                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        gArgs.AddArg("-minheight=<height>",
+                     "Minimum block height a node must report to be considered reliable. "
+                     "Useful for ensuring nodes are past a hard fork activation height. "
+                     "(default: last checkpoint height)",
+                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
         SetupChainParamsBaseOptions();
     }
 };
@@ -529,6 +562,16 @@ int main(int argc, char **argv) {
     }
     bool fDNS = true;
     std::fprintf(stdout, "Using %s.\n", gArgs.GetChainName().c_str());
+    if (g_min_client_version > 0) {
+        std::fprintf(stdout, "Minimum client version: %d.%d.%d (encoded: %d)\n",
+                     g_min_client_version / 1000000,
+                     (g_min_client_version / 10000) % 100,
+                     (g_min_client_version / 100) % 100,
+                     g_min_client_version);
+    }
+    if (g_min_height > 0) {
+        std::fprintf(stdout, "Minimum block height: %d\n", g_min_height);
+    }
     if (opts.ns.empty()) {
         std::fprintf(stdout, "No nameserver set. Not starting DNS server.\n");
         fDNS = false;
