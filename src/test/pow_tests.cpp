@@ -206,7 +206,7 @@ BOOST_AUTO_TEST_CASE(ASERTHalfLifeUpgrade_mainnet_height_switch)
     DummyConfig config(CBaseChainParams::MAIN);
     const Consensus::Params& params = config.GetChainParams().GetConsensus();
 
-    BOOST_REQUIRE(params.asertHalfLifeUpgradeHeight == 400000);
+    BOOST_REQUIRE(params.asertHalfLifeUpgradeHeight == 410000);
     BOOST_REQUIRE(params.asertAnchorParams.has_value());
 
     const auto& anchorParams = *params.asertAnchorParams;
@@ -256,7 +256,7 @@ BOOST_AUTO_TEST_CASE(ASERTHalfLifeUpgrade_asert_simulation)
     DummyConfig config(CBaseChainParams::MAIN);
     const Consensus::Params& params = config.GetChainParams().GetConsensus();
 
-    BOOST_REQUIRE(params.asertHalfLifeUpgradeHeight == 400000);
+    BOOST_REQUIRE(params.asertHalfLifeUpgradeHeight == 410000);
     BOOST_REQUIRE(params.asertAnchorParams.has_value());
 
     const auto& anchorParams = *params.asertAnchorParams;

@@ -3827,9 +3827,9 @@ static bool ContextualCheckBlockHeader(const CChainParams &params,
 
     // Check proof of work
     const Consensus::Params &consensusParams = params.GetConsensus();
-    if (block.nBits !=
-        GetNextWorkRequired(pindexPrev, &block, consensusParams)) {
-        LogPrintf("bad bits after height: %d\n", pindexPrev->nHeight);
+    const uint32_t expectedBits = GetNextWorkRequired(pindexPrev, &block, consensusParams);
+    if (block.nBits != expectedBits) {
+        LogPrintf("bad bits after height: %d actual=0x%08x expected=0x%08x\n", pindexPrev->nHeight, block.nBits, expectedBits);
         return state.DoS(100, false, REJECT_INVALID, "bad-diffbits", false,
                          "incorrect proof of work");
     }

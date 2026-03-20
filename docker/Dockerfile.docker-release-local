@@ -39,7 +39,7 @@ RUN cmake --build build --target radiantd radiant-cli radiant-tx -j$(nproc)
 FROM ubuntu:24.04 AS runtime
 
 LABEL maintainer="info@radiantfoundation.org"
-LABEL version="2.1.2"
+LABEL version="2.2.0"
 LABEL description="Radiant Core Node - Runtime"
 
 ENV DEBIAN_FRONTEND=noninteractive

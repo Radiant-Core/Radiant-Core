@@ -44,7 +44,7 @@ except ImportError:
     VALID_WORD_COUNTS = (12, 15, 18, 21, 24)
 
 # GitHub release configuration
-GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.1.2"
+GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.2.0"
 RELEASE_ASSETS = {
     "darwin_arm64": {
         "filename": "radiant-core-macos-arm64.zip",
@@ -443,25 +443,27 @@ class NodeManager:
         
         paths = []
         
-        # Check next to running executable first (release folder layout on Windows)
-        if getattr(sys, 'frozen', False):
-            exe_dir = Path(sys.executable).parent
-            paths.append(exe_dir / name)
-        
-        # Check app bundle Resources first (for frozen macOS app)
+        # Check app bundle Resources FIRST (for frozen macOS app) - highest priority
         if getattr(sys, 'frozen', False) and platform.system() == 'Darwin':
             # Running as macOS app bundle
             bundle_dir = Path(sys.executable).parent.parent  # Contents/MacOS -> Contents
-            # Check both Resources/ and Resources/binaries/
-            paths.append(bundle_dir / "Resources" / name)
+            # Check Resources/binaries/radiant-core-macos-arm64/ first (correct structure)
+            paths.append(bundle_dir / "Resources" / "binaries" / "radiant-core-macos-arm64" / name)
+            # Fallback to other possible locations
             paths.append(bundle_dir / "Resources" / "binaries" / name)
+            paths.append(bundle_dir / "Resources" / name)
         
-        # Check downloaded binaries
+        # Check next to running executable (for Windows, not macOS)
+        if getattr(sys, 'frozen', False) and platform.system() != 'Darwin':
+            exe_dir = Path(sys.executable).parent
+            paths.append(exe_dir / name)
+        
+        # Check downloaded binaries (but only if not in app bundle)
         downloaded_path = self.download_manager.get_binary_path()
         if downloaded_path:
             paths.append(downloaded_path / name)
         
-        # Common user download locations
+        # Common user download locations - only check AFTER app bundle
         home = Path.home()
         paths.extend([
             # User's Downloads folder

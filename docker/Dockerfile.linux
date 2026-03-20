@@ -38,6 +38,6 @@ RUN mkdir -p /release/radiant-core-linux-x64 && \
     strip /release/radiant-core-linux-x64/*
 
 WORKDIR /release
-RUN tar -czf radiant-core-linux-x64-v2.1.2.tar.gz radiant-core-linux-x64
+RUN tar -czf radiant-core-linux-x64-v2.2.0.tar.gz radiant-core-linux-x64
 
 CMD ["/bin/bash"]
