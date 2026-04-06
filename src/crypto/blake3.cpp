@@ -115,7 +115,9 @@ CBlake3 &CBlake3::Write(const uint8_t *data, size_t len) {
             Compress(m_cv, m_block, BLOCK_LEN, m_counter, m_flags, out);
             // First 8 words become the new chaining value
             memcpy(m_cv, out, 8 * sizeof(uint32_t));
-            m_counter++;
+            // Note: m_counter is the CHUNK counter, not a block counter.
+            // Within a single chunk (≤1024 bytes), it stays constant.
+            // It only increments when moving to the next chunk.
             m_block_len = 0;
             memset(m_block, 0, BLOCK_LEN);
             // After the first block, clear CHUNK_START flag

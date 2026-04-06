@@ -866,6 +866,58 @@ BOOST_AUTO_TEST_CASE(blake3_tests) {
 
         BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
     }
+
+    // Multi-block test vectors (>64 bytes, exercises block chaining).
+    // Regression: the chunk counter must stay constant within a single
+    // chunk; only block boundaries advance the chaining value.
+    {
+        uint8_t hash[32];
+
+        // len=65 (2 blocks: 64 + 1)
+        uint8_t in65[65];
+        for (int i = 0; i < 65; i++) in65[i] = i % 251;
+        CBlake3().Write(in65, 65).Finalize(hash);
+        BOOST_CHECK_EQUAL(HexStr(std::vector<uint8_t>(hash, hash + 32)),
+            "de1e5fa0be70df6d2be8fffd0e99ceaa8eb6e8c93a63f2d8d1c30ecb6b263dee");
+
+        // len=72 (2 blocks: 64 + 8, typical dMint PoW preimage size)
+        uint8_t in72[72];
+        for (int i = 0; i < 72; i++) in72[i] = i % 251;
+        CBlake3().Write(in72, 72).Finalize(hash);
+        BOOST_CHECK_EQUAL(HexStr(std::vector<uint8_t>(hash, hash + 32)),
+            "028eb97d80291fc1f4ab846657fb2277cae9d7eda639c09bd220a9c869f0e9e6");
+
+        // len=128 (2 blocks: 64 + 64)
+        uint8_t in128[128];
+        for (int i = 0; i < 128; i++) in128[i] = i % 251;
+        CBlake3().Write(in128, 128).Finalize(hash);
+        BOOST_CHECK_EQUAL(HexStr(std::vector<uint8_t>(hash, hash + 32)),
+            "f17e570564b26578c33bb7f44643f539624b05df1a76c81f30acd548c44b45ef");
+
+        // len=251 (3+ blocks)
+        uint8_t in251[251];
+        for (int i = 0; i < 251; i++) in251[i] = i % 251;
+        CBlake3().Write(in251, 251).Finalize(hash);
+        BOOST_CHECK_EQUAL(HexStr(std::vector<uint8_t>(hash, hash + 32)),
+            "2a43e6bf5d7dfe202bf9653c94aacb221a20cd5e449602684d9ffbd38d9a8920");
+    }
+
+    // Test multi-block chunked writes (split across block boundary)
+    {
+        uint8_t input[72];
+        for (int i = 0; i < 72; i++) input[i] = i % 251;
+
+        uint8_t hash_single[32], hash_chunked[32];
+        CBlake3().Write(input, 72).Finalize(hash_single);
+
+        CBlake3 chunked;
+        chunked.Write(input, 30);
+        chunked.Write(input + 30, 30);
+        chunked.Write(input + 60, 12);
+        chunked.Finalize(hash_chunked);
+
+        BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(k12_tests) {
