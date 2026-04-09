@@ -918,6 +918,36 @@ BOOST_AUTO_TEST_CASE(blake3_tests) {
 
         BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
     }
+
+    // Test exact chunk boundary (1024 bytes) - maximum supported input
+    {
+        uint8_t hash[32];
+        uint8_t in1024[1024];
+        for (int i = 0; i < 1024; i++) in1024[i] = i % 251;
+
+        // This should succeed (exactly at CHUNK_LEN boundary)
+        bool result = CBlake3().Write(in1024, 1024).Finalize(hash);
+        BOOST_CHECK(result);
+        // Verify hash is non-zero (basic sanity check)
+        bool all_zero = true;
+        for (int i = 0; i < 32; i++) {
+            if (hash[i] != 0) { all_zero = false; break; }
+        }
+        BOOST_CHECK(!all_zero);
+    }
+
+    // Test >1024 bytes fails (single-chunk mode limit)
+    {
+        uint8_t hash[32];
+        uint8_t in1025[1025];
+        for (int i = 0; i < 1025; i++) in1025[i] = i % 251;
+
+        CBlake3 hasher;
+        hasher.Write(in1025, 1025);
+        // This should fail (exceeds CHUNK_LEN)
+        bool result = hasher.Finalize(hash);
+        BOOST_CHECK(!result);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(k12_tests) {
@@ -973,6 +1003,46 @@ BOOST_AUTO_TEST_CASE(k12_tests) {
         hasher.Reset();
         hasher.Finalize(hash2);
         BOOST_CHECK(memcmp(hash1, hash2, 32) == 0);
+    }
+
+    // Test multi-block input (>168 bytes, crosses rate boundary)
+    {
+        uint8_t in200[200];
+        for (int i = 0; i < 200; i++) in200[i] = i % 251;
+
+        // Single write
+        uint8_t hash_single[32];
+        CK12().Write(in200, 200).Finalize(hash_single);
+
+        // Chunked write (split across rate boundary at 168 bytes)
+        uint8_t hash_chunked[32];
+        CK12 chunked;
+        chunked.Write(in200, 100);      // First 100 bytes
+        chunked.Write(in200 + 100, 100); // Remaining 100 bytes (crosses 168 boundary)
+        chunked.Finalize(hash_chunked);
+
+        BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
+    }
+
+    // Test larger multi-block input (1000 bytes)
+    {
+        uint8_t in1000[1000];
+        for (int i = 0; i < 1000; i++) in1000[i] = i % 251;
+
+        uint8_t hash_single[32];
+        CK12().Write(in1000, 1000).Finalize(hash_single);
+
+        // Chunked in multiple pieces
+        uint8_t hash_chunked[32];
+        CK12 chunked;
+        chunked.Write(in1000, 50);
+        chunked.Write(in1000 + 50, 150);
+        chunked.Write(in1000 + 200, 200);
+        chunked.Write(in1000 + 400, 300);
+        chunked.Write(in1000 + 700, 300);
+        chunked.Finalize(hash_chunked);
+
+        BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
     }
 }
 

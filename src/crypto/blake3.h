@@ -22,6 +22,10 @@ public:
 
     CBlake3();
     CBlake3 &Write(const uint8_t *data, size_t len);
+    // Finalize computation and write 32-byte hash to output.
+    // Returns false if input exceeded CHUNK_LEN (1024 bytes), true on success.
+    // Note: Unlike CK12::Finalize() which returns void, this returns bool
+    // to allow graceful handling of oversized inputs in single-chunk mode.
     bool Finalize(uint8_t *output);
     CBlake3 &Reset();
 

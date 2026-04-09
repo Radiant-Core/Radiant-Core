@@ -19,9 +19,16 @@ class CK12 {
 public:
     static const size_t OUTPUT_SIZE = 32;
     static const size_t RATE = 168; // bytes (1344 bits, capacity = 256 bits)
+    // Maximum input length for single-block mode (no tree hashing)
+    static const size_t MAX_INPUT_LEN = 8192;
 
     CK12();
     CK12 &Write(const uint8_t *data, size_t len);
+    // Finalize computation and write 32-byte hash to output.
+    // Asserts if input exceeded MAX_INPUT_LEN (8192 bytes) in debug builds.
+    // Note: Unlike CBlake3::Finalize() which returns bool, this returns void
+    // and uses assert() for error handling since K12 supports much larger
+    // inputs (up to 8192 bytes in this single-block implementation).
     void Finalize(uint8_t *output);
     CK12 &Reset();
 
@@ -29,6 +36,7 @@ private:
     uint64_t m_state[25];
     uint8_t m_buffer[RATE];
     size_t m_buf_pos;
+    size_t m_bytes_consumed;
 
     // Keccak-p[1600,12]: reduced-round permutation (last 12 of 24 rounds)
     static void KeccakP12(uint64_t (&st)[25]);

@@ -115,6 +115,7 @@ CK12 &CK12::Reset() {
     memset(m_state, 0, sizeof(m_state));
     memset(m_buffer, 0, sizeof(m_buffer));
     m_buf_pos = 0;
+    m_bytes_consumed = 0;
     return *this;
 }
 
@@ -124,6 +125,7 @@ CK12 &CK12::Write(const uint8_t *data, size_t len) {
         size_t take = (len < space) ? len : space;
         memcpy(m_buffer + m_buf_pos, data, take);
         m_buf_pos += take;
+        m_bytes_consumed += take;
         data += take;
         len -= take;
 
@@ -141,6 +143,9 @@ CK12 &CK12::Write(const uint8_t *data, size_t len) {
 }
 
 void CK12::Finalize(uint8_t *output) {
+    // Enforce single-block mode limit (no tree hashing support)
+    assert(m_bytes_consumed <= MAX_INPUT_LEN);
+
     // K12 single-leaf finalization (with empty custom string C=""):
     // Per K12 spec: K12(M, C) = TurboSHAKE128(M || C || length_encode(|C|), 0x07)
     // For empty C: length_encode(0) = 0x00
