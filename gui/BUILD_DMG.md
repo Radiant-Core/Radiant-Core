@@ -68,12 +68,17 @@ source venv/bin/activate
 python3 setup.py py2app
 
 # Copy bundled dylibs to app bundle (py2app doesn't handle wildcards)
+# Note: The binaries expect dylibs in ../Frameworks/ (not libs/)
 cp -R binaries/radiant-core-macos-arm64/libs dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/
+
+# CRITICAL: Also copy dylibs to Frameworks/ directory where binaries expect them
+mkdir -p dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks
+cp binaries/radiant-core-macos-arm64/libs/* dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks/
 
 # Verify the app was built
 ls -la dist/"Radiant Core.app"
 
-# Test the bundled binary
+# Test the bundled binary (must show version without dyld errors)
 dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/radiantd --version
 ```
 
@@ -88,15 +93,20 @@ Radiant Core.app/
     │   └── Radiant Core (Python executable)
     ├── Resources/
     │   ├── binaries/
-    │   │   └── radiant-core-macos-arm64/
-    │   │       ├── radiantd
-    │   │       ├── radiant-cli
-    │   │       ├── radiant-tx
-    │   │       └── libs/ (58 bundled dylibs)
-    │   │           ├── libcrypto.3.dylib
-    │   │           ├── libevent_pthreads-2.1.7.dylib
-    │   │           ├── libzmq.5.dylib
-    │   │           └── ... (55 more dylibs)
+    │   │   ├── radiant-core-macos-arm64/
+    │   │   │   ├── radiantd
+    │   │   │   ├── radiant-cli
+    │   │   │   ├── radiant-tx
+    │   │   │   └── libs/ (58 bundled dylibs - copied for reference)
+    │   │   │       ├── libcrypto.3.dylib
+    │   │   │       ├── libevent_pthreads-2.1.7.dylib
+    │   │   │       ├── libzmq.5.dylib
+    │   │   │       └── ... (55 more dylibs)
+    │   │   └── Frameworks/ (CRITICAL: binaries load from here)
+    │   │       ├── libevent-2.1.7.dylib
+    │   │       ├── libcrypto.3.dylib
+    │   │       ├── libzmq.5.dylib
+    │   │       └── ... (all 58 dylibs)
     │   ├── bip39.py
     │   ├── radiant_node_web.py
     │   └── ... (other Python resources)
@@ -129,14 +139,14 @@ cd ..  # Back to Radiant-Core-main root
 
 # Create DMG
 hdiutil create \
-  -volname "Radiant Node Web GUI 2.2.0" \
+  -volname "Radiant Node Web GUI 2.3.0" \
   -srcfolder gui/dist/"Radiant Core.app" \
   -ov \
   -format UDZO \
-  releases/v2.2.0/Radiant-Node-Web-GUI-2.2.0.dmg
+  releases/v2.3.0/Radiant-Node-Web-GUI-2.3.0.dmg
 
 # Verify DMG was created
-ls -lh releases/v2.2.0/Radiant-Node-Web-GUI-2.2.0.dmg
+ls -lh releases/v2.3.0/Radiant-Node-Web-GUI-2.3.0.dmg
 ```
 
 ### 8. Test the DMG
@@ -145,32 +155,30 @@ Mount and test the DMG:
 
 ```bash
 # Mount the DMG
-hdiutil attach releases/v2.2.0/Radiant-Node-Web-GUI-2.2.0.dmg -readonly
+hdiutil attach releases/v2.3.0/Radiant-Node-Web-GUI-2.3.0.dmg -readonly
 
 # The DMG should contain "Radiant Core.app"
-ls -la /Volumes/Radiant\ Node\ Web\ GUI\ 2.2.0/
+ls -la /Volumes/Radiant\ Node\ Web\ GUI\ 2.3.0/
 
 # Test launching from the DMG
-open /Volumes/Radiant\ Node\ Web\ GUI\ 2.2.0/"Radiant Core.app"
+open /Volumes/Radiant\ Node\ Web\ GUI\ 2.3.0/"Radiant Core.app"
 
 # Unmount when done
-hdiutil detach /Volumes/Radiant\ Node\ Web\ GUI\ 2.2.0/
+hdiutil detach /Volumes/Radiant\ Node\ Web\ GUI\ 2.3.0/
 ```
 
 ### 9. Update SHA256 Checksums
 
 ```bash
-cd releases/v2.2.0
+cd releases/v2.3.0
 
 # Regenerate checksums with the new DMG
 shasum -a 256 \
-  radiant-core-macos-arm64-v2.2.0.tar.gz \
-  radiant-qt-linux-x64-v2.2.0.tar.gz \
-  Radiant-Core-Qt-Wallet-2.2.0.dmg \
-  Radiant-Node-Web-GUI-2.2.0.dmg \
-  radiant-core-docker-v2.2.0.tar.gz \
-  radiant-core-qt-wallet-macos-arm64-v2.2.0.zip \
-  radiant-core-linux-x64-v2.2.0.tar.gz \
+  radiant-core-macos-arm64-v2.3.0.tar.gz \
+  radiant-core-gui-macos-arm64-v2.3.0.zip \
+  Radiant-Node-Web-GUI-2.3.0.dmg \
+  radiant-core-docker-v2.3.0.tar.gz \
+  radiant-core-linux-x64-v2.3.0.tar.gz \
   > SHA256SUMS.txt
 ```
 
@@ -186,12 +194,19 @@ This means the app is trying to run Linux binaries instead of macOS binaries. Ch
 
 ### "Library not loaded" or "dyld" errors
 
-This means dylibs are missing. Check:
+This means dylibs are missing or in the wrong location. The binaries expect dylibs in `../Frameworks/` relative to their location.
+
+Check:
 
 1. Run the dylib fix script: `./scripts/fix-macos-dylibs.sh gui/binaries/radiant-core-macos-arm64`
-2. Copy libs to app bundle: `cp -R binaries/radiant-core-macos-arm64/libs dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/`
-3. Test binary: `dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/radiantd --version`
-4. Should show version without dyld errors
+2. Copy libs to the app bundle's `radiant-core-macos-arm64/libs/` directory
+3. **CRITICAL**: Also copy dylibs to `binaries/Frameworks/` where binaries load from:
+   ```bash
+   mkdir -p dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks
+   cp binaries/radiant-core-macos-arm64/libs/* dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks/
+   ```
+4. Test binary: `dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/radiantd --version`
+5. Should show version without dyld errors
 
 ### App won't open (Gatekeeper)
 
@@ -224,8 +239,10 @@ cd /Users/main/Downloads/Radiant-Core-main && \
   source venv/bin/activate && \
   python3 setup.py py2app && \
   cp -R binaries/radiant-core-macos-arm64/libs dist/"Radiant Core.app"/Contents/Resources/binaries/radiant-core-macos-arm64/ && \
+  mkdir -p dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks && \
+  cp binaries/radiant-core-macos-arm64/libs/* dist/"Radiant Core.app"/Contents/Resources/binaries/Frameworks/ && \
   cd .. && \
-  hdiutil create -volname "Radiant Node Web GUI 2.2.0" -srcfolder gui/dist/"Radiant Core.app" -ov -format UDZO releases/v2.2.0/Radiant-Node-Web-GUI-2.2.0.dmg && \
+  hdiutil create -volname "Radiant Node Web GUI 2.3.0" -srcfolder gui/dist/"Radiant Core.app" -ov -format UDZO releases/v2.3.0/Radiant-Node-Web-GUI-2.3.0.dmg && \
   echo "✓ DMG created successfully"
 ```
 
