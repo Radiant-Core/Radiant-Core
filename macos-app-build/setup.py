@@ -17,7 +17,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Application metadata
 APP_NAME = 'Radiant Core'
-APP_VERSION = '2.1.2'
+APP_VERSION = '2.3.0'
 APP_BUNDLE_ID = 'org.radiantblockchain.radiant-core-gui'
 
 # Main application script
@@ -30,7 +30,12 @@ DATA_FILES = [
         '../doc/images/RXD_light_logo.svg',
         '../doc/images/RXD_dark_logo.svg',
     ]),  # Logo images
-]
+    ('binaries/radiant-core-macos-arm64', [
+        'binaries/radiant-core-macos-arm64/radiantd',
+        'binaries/radiant-core-macos-arm64/radiant-cli',
+        'binaries/radiant-core-macos-arm64/radiant-tx',
+    ]),  # Include macOS ARM64 binaries
+    ]
 
 # Icon file path
 ICON_FILE = os.path.join(script_dir, '..', 'doc', 'images', 'RXDCore.icns')

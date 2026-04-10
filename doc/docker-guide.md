@@ -46,7 +46,7 @@ All production Dockerfiles now build from the **GitHub repository** for reproduc
   ```bash
   docker build -f docker/Dockerfile.release -t radiant-core:latest .
   # Or with specific version:
-  docker build -f docker/Dockerfile.release --build-arg GIT_TAG=v2.1.0 -t radiant-core:v2.1.0 .
+  docker build -f docker/Dockerfile.release --build-arg GIT_TAG=v2.3.0 -t radiant-core:v2.3.0 .
   ```
 
 #### `docker/Dockerfile.seeder` (DNS Seeder)
@@ -163,7 +163,7 @@ Create a `.env` file for custom settings:
 ```bash
 RPC_USER=myuser
 RPC_PASSWORD=mypassword
-GIT_TAG=v2.1.0
+GIT_TAG=v2.3.0
 ```
 
 ### Production Deployment (Standalone)
@@ -171,8 +171,8 @@ GIT_TAG=v2.1.0
 ```bash
 # Build from GitHub (specific version)
 docker build -f docker/Dockerfile.release \
-  --build-arg GIT_TAG=v2.1.0 \
-  -t radiant-core:v2.1.0 .
+  --build-arg GIT_TAG=v2.3.0 \
+  -t radiant-core:v2.3.0 .
 
 # Run with persistent data
 docker run -d --name radiant-node \
@@ -180,7 +180,7 @@ docker run -d --name radiant-node \
   -v radiant-data:/home/radiant/.radiant \
   -e RPC_USER=myuser \
   -e RPC_PASSWORD=mypassword \
-  radiant-core:v2.1.0
+  radiant-core:v2.3.0
 
 # Check status
 docker exec radiant-node radiant-cli getblockchaininfo

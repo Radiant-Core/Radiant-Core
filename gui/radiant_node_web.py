@@ -44,7 +44,7 @@ except ImportError:
     VALID_WORD_COUNTS = (12, 15, 18, 21, 24)
 
 # GitHub release configuration
-GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.2.0"
+GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v2.3.0"
 RELEASE_ASSETS = {
     "darwin_arm64": {
         "filename": "radiant-core-macos-arm64.zip",

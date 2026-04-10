@@ -3,11 +3,24 @@ Radiant Core Releases
 
 Release artifacts for Radiant Core.
 
-Latest Release: v2.1.0
+Latest Release: v2.3.0
 ----------------------
+- See doc/release-notes/release-notes-2.3.0.md for full details
+- v2.3.0/RELEASE_NOTES.md                               - Full release notes
+- v2.3.0/radiant-core-linux-x64-v2.3.0.tar.gz           - Linux x86_64 CLI binaries (Ubuntu 22.04+)
+- v2.3.0/radiant-core-macos-arm64-v2.3.0.tar.gz         - macOS ARM64 CLI binaries
+- v2.3.0/radiant-core-gui-macos-arm64-v2.3.0.zip        - macOS ARM64 GUI app bundle
+- v2.3.0/radiant-core-docker-v2.3.0.tar.gz              - Docker runtime image (amd64, Ubuntu 22.04)
+- v2.3.0/Windows/RadiantCore.exe                         - Classic Qt GUI wallet (requires DLLs)
+- v2.3.0/Windows/RadiantCoreNode+Wallet-v.2.3.0.exe     - Standalone Node+Wallet GUI (no DLLs needed)
+- v2.3.0/Windows/radiant-core-windows-x64.zip            - All-in-one archive (all exes + all DLLs)
+- v2.3.0/Windows/radiant-core-windows-x64.sha256         - Windows SHA-256 checksums
+- v2.3.0/*.sha256                                        - SHA-256 checksums
+
+v2.1.0 Release:
+-----------------
 - V2 Hard Fork release with 6 new/re-enabled opcodes (OP_BLAKE3, OP_K12, OP_LSHIFT, OP_RSHIFT, OP_2MUL, OP_2DIV)
 - Activation height: block 410,000 (mainnet & testnet3)
-- See doc/release-notes/release-notes-2.1.0.md for full details
 - v2.1.0/RELEASE_NOTES.md                               - Full release notes
 - v2.1.0/radiant-core-linux-x64-v2.1.0.tar.gz           - Linux x86_64 CLI binaries (Ubuntu 22.04+)
 - v2.1.0/radiant-core-macos-arm64-v2.1.0.tar.gz         - macOS ARM64 CLI binaries

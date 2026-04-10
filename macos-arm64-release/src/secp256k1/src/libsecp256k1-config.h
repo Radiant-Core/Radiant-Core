@@ -1,0 +1,41 @@
+/* Copyright (c) 2017 The Bitcoin developers */
+
+#ifndef LIBSECP256K1_CONFIG_H
+#define LIBSECP256K1_CONFIG_H
+
+#define HAVE___INT128
+
+/* #undef USE_NUM_GMP */
+/* #undef USE_FIELD_INV_NUM */
+/* #undef USE_SCALAR_INV_NUM */
+
+#define USE_NUM_NONE
+#define USE_FIELD_INV_BUILTIN
+#define USE_SCALAR_INV_BUILTIN
+
+#define USE_SCALAR_4X64
+#define USE_FIELD_5X52
+
+/* #undef USE_SCALAR_8X32 */
+/* #undef USE_FIELD_10X26 */
+
+/* #undef USE_ASM_X86_64 */
+/* #undef USE_EXTERNAL_ASM */
+
+#define USE_ENDOMORPHISM
+/* #undef USE_EXTERNAL_DEFAULT_CALLBACKS */
+
+#define USE_ECMULT_STATIC_PRECOMPUTATION
+#define ECMULT_WINDOW_SIZE 15
+#define ECMULT_GEN_PREC_BITS 4
+
+/* #undef ENABLE_MODULE_ECDH */
+/* #undef ENABLE_MODULE_MULTISET */
+#define ENABLE_MODULE_RECOVERY
+#define ENABLE_MODULE_SCHNORR
+
+#define ENABLE_OPENSSL_TESTS
+
+/* #undef COVERAGE */
+
+#endif /* LIBSECP256K1_CONFIG_H */

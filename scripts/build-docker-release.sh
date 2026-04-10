@@ -19,7 +19,7 @@ cat > Dockerfile.release << 'EOF'
 FROM ubuntu:24.04 AS builder
 
 LABEL maintainer="info@radiantfoundation.org"
-LABEL version="2.1.1"
+LABEL version="2.3.0"
 LABEL description="Radiant Core Node - Release Build"
 
 # Install build dependencies
@@ -67,7 +67,7 @@ RUN ninja
 FROM ubuntu:24.04 AS runtime
 
 LABEL maintainer="info@radiantfoundation.org"
-LABEL version="2.1.1"
+LABEL version="2.3.0"
 LABEL description="Radiant Core Node - Runtime"
 
 # Install runtime dependencies

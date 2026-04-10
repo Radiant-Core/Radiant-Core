@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="${1:-2.1.1}"
+VERSION="${1:-2.3.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/release-builds"

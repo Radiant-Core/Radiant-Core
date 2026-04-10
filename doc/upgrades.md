@@ -172,5 +172,17 @@ This document tracks the modernization and upgrade efforts for the Radiant Node 
 - **Ecosystem**: All 9 downstream repositories updated (radiantjs, radiantblockchain-constants, RadiantScript, rxdeb, RXinDexer, Photonic Wallet, Glyph-miner, Glyph Token Standards).
 - **Release Notes**: See `doc/release-notes/release-notes-2.1.0.md`.
 
+### 14. Version 2.3.0 — Maintenance Release
+- **Version Bump**: Updated all version strings across the codebase to 2.3.0:
+  - `CMakeLists.txt`: `VERSION 2.3.0`
+  - `gui/setup.py`: `APP_VERSION = '2.3.0'`
+  - `macos-app-build/setup.py`: `APP_VERSION = '2.3.0'`
+  - `gui/radiant_node_web.py`: `GITHUB_RELEASE_URL` updated to v2.3.0
+  - `macos-app-build/radiant_node_web.py`: `GITHUB_RELEASE_URL` updated to v2.3.0
+  - Build scripts: Default versions updated in `build-gui-release.sh`, `build-docker-release.sh`, `build-all-releases.sh`, `build-macos-app.sh`
+  - Docker files: LABEL version updated to 2.3.0
+  - Documentation: `README.md`, `docker/README.md`, `docker-guide.md`, `releases/README.txt` updated
+- **Release Notes**: See `doc/release-notes/release-notes-2.3.0.md`.
+
 ## 🔮 Future Development
 For the active development roadmap and upcoming features, please refer to [roadmap.md](roadmap.md).
