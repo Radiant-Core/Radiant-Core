@@ -1,1 +1,1 @@
-#define BUILD_SUFFIX a42551ea-dirty
+#define BUILD_DESC "v2.3.0"
