@@ -148,17 +148,23 @@ enum WalletFlags : uint64_t {
     //! addresses, and other watch only things, and is therefore "blank."
     //!
     //! The only function this flag serves is to distinguish a blank wallet from
-    //! a newly created wallet when the wallet database is loaded, to avoid
+    //! a newly created wallet when the database is loaded, to avoid
     //! initialization that should only happen on first run.
     //!
     //! This flag is also a mandatory flag to prevent previous versions of
     //! bitcoin from opening the wallet, thinking it was newly created, and
     //! then improperly reinitializing it.
     WALLET_FLAG_BLANK_WALLET = (1ULL << 33),
+
+    //! Flag set when a wallet uses the legacy non-BIP44 derivation path (m/0'/0'/k).
+    //! New wallets use BIP44 SLIP-0044 Radiant standard (m/44'/512'/0'/0/k).
+    //! This flag is used to maintain backward compatibility with wallets created
+    //! before version 3.0.0.
+    WALLET_FLAG_LEGACY_DERIVATION = (1ULL << 34),
 };
 
 static constexpr uint64_t g_known_wallet_flags =
-    WALLET_FLAG_DISABLE_PRIVATE_KEYS | WALLET_FLAG_BLANK_WALLET;
+    WALLET_FLAG_DISABLE_PRIVATE_KEYS | WALLET_FLAG_BLANK_WALLET | WALLET_FLAG_LEGACY_DERIVATION;
 
 /** Return value of CWallet::CreateTransaction */
 enum class CreateTransactionResult : uint32_t {

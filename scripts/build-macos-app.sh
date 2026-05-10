@@ -9,12 +9,12 @@
 #   - pip install py2app pywebview
 #
 # Usage: ./scripts/build-macos-app.sh [version]
-# Example: ./scripts/build-macos-app.sh 2.3.0
+# Example: ./scripts/build-macos-app.sh 3.0.0
 #
 
 set -e
 
-VERSION="${1:-2.3.0}"
+VERSION="${1:-3.0.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 GUI_DIR="$ROOT_DIR/gui"

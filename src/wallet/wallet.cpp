@@ -246,58 +246,94 @@ CPubKey CWallet::GenerateNewKey(WalletBatch &batch, bool internal) {
 
 void CWallet::DeriveNewChildKey(WalletBatch &batch, CKeyMetadata &metadata,
                                 CKey &secret, bool internal) {
-    // for now we use a fixed keypath scheme of m/0'/0'/k
-    // seed (256bit)
-    CKey seed;
-    // hd master key
-    CExtKey masterKey;
-    // key at m/0'
-    CExtKey accountKey;
-    // key at m/0'/0' (external) or m/0'/1' (internal)
-    CExtKey chainChildKey;
-    // key at m/0'/0'/<n>'
-    CExtKey childKey;
-
     // try to get the seed
+    CKey seed;
     if (!GetKey(hdChain.seed_id, seed)) {
         throw std::runtime_error(std::string(__func__) + ": seed not found");
     }
 
+    // Check if this wallet uses legacy derivation (pre-3.0.0 style)
+    const bool useLegacyPath = IsWalletFlagSet(WALLET_FLAG_LEGACY_DERIVATION);
+
+    CExtKey masterKey;
     masterKey.SetSeed(seed.begin(), seed.size());
 
-    // derive m/0'
-    // use hardened derivation (child keys >= 0x80000000 are hardened after
-    // bip32)
-    masterKey.Derive(accountKey, BIP32_HARDENED_KEY_LIMIT);
+    if (useLegacyPath) {
+        // Legacy derivation: m/0'/0'/k (or m/0'/1'/k for change)
+        // key at m/0'
+        CExtKey accountKey;
+        masterKey.Derive(accountKey, BIP32_HARDENED_KEY_LIMIT);
 
-    // derive m/0'/0' (external chain) OR m/0'/1' (internal chain)
-    assert(internal ? CanSupportFeature(FEATURE_HD_SPLIT) : true);
-    accountKey.Derive(chainChildKey,
-                      BIP32_HARDENED_KEY_LIMIT + (internal ? 1 : 0));
+        // key at m/0'/0' (external) or m/0'/1' (internal)
+        assert(internal ? CanSupportFeature(FEATURE_HD_SPLIT) : true);
+        CExtKey chainChildKey;
+        accountKey.Derive(chainChildKey,
+                          BIP32_HARDENED_KEY_LIMIT + (internal ? 1 : 0));
 
-    // derive child key at next index, skip keys already known to the wallet
-    do {
-        // always derive hardened keys
-        // childIndex | BIP32_HARDENED_KEY_LIMIT = derive childIndex in hardened
-        // child-index-range
-        // example: 1 | BIP32_HARDENED_KEY_LIMIT == 0x80000001 == 2147483649
-        if (internal) {
-            chainChildKey.Derive(childKey, hdChain.nInternalChainCounter |
-                                               BIP32_HARDENED_KEY_LIMIT);
-            metadata.hdKeypath = "m/0'/1'/" +
-                                 std::to_string(hdChain.nInternalChainCounter) +
-                                 "'";
-            hdChain.nInternalChainCounter++;
-        } else {
-            chainChildKey.Derive(childKey, hdChain.nExternalChainCounter |
-                                               BIP32_HARDENED_KEY_LIMIT);
-            metadata.hdKeypath = "m/0'/0'/" +
-                                 std::to_string(hdChain.nExternalChainCounter) +
-                                 "'";
-            hdChain.nExternalChainCounter++;
-        }
-    } while (HaveKey(childKey.key.GetPubKey().GetID()));
-    secret = childKey.key;
+        // derive child key at next index, skip keys already known to the wallet
+        CExtKey childKey;
+        do {
+            // always derive hardened keys
+            if (internal) {
+                chainChildKey.Derive(childKey, hdChain.nInternalChainCounter |
+                                                   BIP32_HARDENED_KEY_LIMIT);
+                metadata.hdKeypath = "m/0'/1'/" +
+                                     std::to_string(hdChain.nInternalChainCounter) +
+                                     "'";
+                hdChain.nInternalChainCounter++;
+            } else {
+                chainChildKey.Derive(childKey, hdChain.nExternalChainCounter |
+                                                   BIP32_HARDENED_KEY_LIMIT);
+                metadata.hdKeypath = "m/0'/0'/" +
+                                     std::to_string(hdChain.nExternalChainCounter) +
+                                     "'";
+                hdChain.nExternalChainCounter++;
+            }
+        } while (HaveKey(childKey.key.GetPubKey().GetID()));
+        secret = childKey.key;
+    } else {
+        // BIP44 Radiant Standard derivation: m/44'/512'/0'/0/k
+        // 512 = SLIP-0044 registered coin type for Radiant
+        static const uint32_t BIP44_PURPOSE = 44;
+        static const uint32_t RADIANT_COIN_TYPE = 512;
+        static const uint32_t ACCOUNT_INDEX = 0;
+
+        // m/44' - purpose level (hardened)
+        CExtKey purposeKey;
+        masterKey.Derive(purposeKey, BIP32_HARDENED_KEY_LIMIT + BIP44_PURPOSE);
+
+        // m/44'/512' - coin type level (hardened)
+        CExtKey coinTypeKey;
+        purposeKey.Derive(coinTypeKey, BIP32_HARDENED_KEY_LIMIT + RADIANT_COIN_TYPE);
+
+        // m/44'/512'/0' - account level (hardened)
+        CExtKey accountKey;
+        coinTypeKey.Derive(accountKey, BIP32_HARDENED_KEY_LIMIT + ACCOUNT_INDEX);
+
+        // m/44'/512'/0'/0 (external) or m/44'/512'/0'/1 (internal) - change level (non-hardened)
+        assert(internal ? CanSupportFeature(FEATURE_HD_SPLIT) : true);
+        CExtKey changeKey;
+        accountKey.Derive(changeKey, internal ? 1 : 0);
+
+        // derive child key at next index, skip keys already known to the wallet
+        // Address level uses non-hardened derivation (BIP44 standard)
+        CExtKey childKey;
+        do {
+            if (internal) {
+                changeKey.Derive(childKey, hdChain.nInternalChainCounter);
+                metadata.hdKeypath = "m/44'/512'/0'/1/" +
+                                     std::to_string(hdChain.nInternalChainCounter);
+                hdChain.nInternalChainCounter++;
+            } else {
+                changeKey.Derive(childKey, hdChain.nExternalChainCounter);
+                metadata.hdKeypath = "m/44'/512'/0'/0/" +
+                                     std::to_string(hdChain.nExternalChainCounter);
+                hdChain.nExternalChainCounter++;
+            }
+        } while (HaveKey(childKey.key.GetPubKey().GetID()));
+        secret = childKey.key;
+    }
+
     metadata.hd_seed_id = hdChain.seed_id;
     // update the chain model in the database
     if (!batch.WriteHDChain(hdChain)) {
@@ -4594,6 +4630,22 @@ std::shared_ptr<CWallet> CWallet::CreateWalletFromFile(
         // Ensure this wallet.dat can only be opened by clients supporting
         // HD with chain split and expects no default key.
         walletInstance->SetMinVersion(FEATURE_LATEST);
+
+        // Check derivation type preference (default: radiant = BIP44 SLIP-0044)
+        // Priority: 1) RPC wallet_creation_flags, 2) startup -derivationtype argument
+        bool useLegacyDerivation = false;
+        if (wallet_creation_flags & WALLET_FLAG_LEGACY_DERIVATION) {
+            useLegacyDerivation = true;
+        } else {
+            std::string derivationType = gArgs.GetArg("-derivationtype", "radiant");
+            if (derivationType == "legacy") {
+                useLegacyDerivation = true;
+            }
+        }
+        if (useLegacyDerivation) {
+            walletInstance->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+            walletInstance->WalletLogPrintf("Using legacy derivation path (m/0'/0'/k) for new wallet\n");
+        }
 
         if ((wallet_creation_flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
             // selective allow to set flags

@@ -124,6 +124,13 @@ void WalletInit::AddWalletOptions() const {
                  "is replaced by TxID)",
                  ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
     gArgs.AddArg(
+        "-derivationtype=<mode>",
+        "Specify derivation path type for new wallets: radiant (default) for "
+        "m/44'/512'/0'/0/k (BIP44 SLIP-0044 standard), legacy for m/0'/0'/k "
+        "(pre-3.0.0 compatibility). Use legacy only when creating a wallet "
+        "that must be compatible with older Radiant Core versions.",
+        ArgsManager::ALLOW_ANY, OptionsCategory::WALLET);
+    gArgs.AddArg(
         "-zapwallettxes=<mode>",
         "Delete all wallet transactions and only recover those parts of the "
         "blockchain through -rescan on startup (1 = keep tx meta data e.g. "

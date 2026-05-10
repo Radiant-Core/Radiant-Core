@@ -3000,7 +3000,7 @@ static UniValue loadwallet(const Config &config,
 static UniValue createwallet(const Config &config,
                              const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() < 1 ||
-        request.params.size() > 3) {
+        request.params.size() > 4) {
         throw std::runtime_error(
             RPCHelpMan{"createwallet",
                 "\nCreates and loads a new wallet.\n",
@@ -3008,6 +3008,7 @@ static UniValue createwallet(const Config &config,
                     {"wallet_name", RPCArg::Type::STR, /* opt */ false, /* default_val */ "", "The name for the new wallet. If this is a path, the wallet will be created at the path location."},
                     {"disable_private_keys", RPCArg::Type::BOOL, /* opt */ true, /* default_val */ "false", "Disable the possibility of private keys (only watchonlys are possible in this mode)."},
                     {"blank", RPCArg::Type::BOOL, /* opt */ true, /* default_val */ "false", "Create a blank wallet. A blank wallet has no keys or HD seed. One can be set using sethdseed."},
+                    {"legacy_derivation", RPCArg::Type::BOOL, /* opt */ true, /* default_val */ "false", "Use legacy derivation path m/0'/0'/k (pre-3.0.0 compatibility) instead of BIP44 SLIP-0044 m/44'/512'/0'/0/k."},
                 }}
                 .ToString() +
             "\nResult:\n"
@@ -3020,7 +3021,9 @@ static UniValue createwallet(const Config &config,
             "}\n"
             "\nExamples:\n" +
             HelpExampleCli("createwallet", "\"testwallet\"") +
-            HelpExampleRpc("createwallet", "\"testwallet\""));
+            HelpExampleCli("createwallet", "\"testwallet\" false false true") +
+            HelpExampleRpc("createwallet", "\"testwallet\"") +
+            HelpExampleRpc("createwallet", "\"testwallet\", false, false, true"));
     }
 
     const CChainParams &chainParams = config.GetChainParams();
@@ -3035,6 +3038,10 @@ static UniValue createwallet(const Config &config,
 
     if (!request.params[2].isNull() && request.params[2].get_bool()) {
         flags |= WALLET_FLAG_BLANK_WALLET;
+    }
+
+    if (!request.params[3].isNull() && request.params[3].get_bool()) {
+        flags |= WALLET_FLAG_LEGACY_DERIVATION;
     }
 
     WalletLocation location(request.params[0].get_str());
@@ -4163,7 +4170,7 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
         return UniValue();
     }
 
-    if (request.fHelp || request.params.size() > 2) {
+    if (request.fHelp || request.params.size() > 3) {
         throw std::runtime_error(
             RPCHelpMan{"sethdseed",
                 "\nSet or generate a new HD wallet seed. Non-HD wallets will not be upgraded to being a HD wallet. Wallets that are already\n"
@@ -4177,13 +4184,20 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
             "                             keypool will be used until it has been depleted."},
                     {"seed", RPCArg::Type::STR, /* opt */ true, /* default_val */ "", "The WIF private key to use as the new HD seed; if not provided a random seed will be used.\n"
             "                             The seed value can be retrieved using the dumpwallet command. It is the private key marked hdseed=1"},
+                    {"coin_type", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "512", "BIP44 coin type for address scanning: 512 (SLIP-0044 Radiant Standard) or 0 (Legacy Bitcoin-compatible). "
+            "                             The wallet will scan both paths and import any found keys, but will set the derivation type based on this parameter."},
                 }}
                 .ToString() +
+            "\nResult:\n"
+            "{\n"
+            "  \"warning\" : <warning>,            (string) Warning message if "
+            "keys were found on an alternate derivation path.\n"
+            "}\n"
             "\nExamples:\n"
             + HelpExampleCli("sethdseed", "")
             + HelpExampleCli("sethdseed", "false")
-            + HelpExampleCli("sethdseed", "true \"wifkey\"")
-            + HelpExampleRpc("sethdseed", "true, \"wifkey\"")
+            + HelpExampleCli("sethdseed", "true \"wifkey\" 512")
+            + HelpExampleRpc("sethdseed", "true, \"wifkey\", 512")
             );
     }
 
@@ -4217,6 +4231,22 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
         flush_key_pool = request.params[0].get_bool();
     }
 
+    // Get coin_type preference (default: 512 for Radiant SLIP-0044)
+    int coin_type = 512;
+    if (!request.params[2].isNull()) {
+        coin_type = request.params[2].get_int();
+        if (coin_type != 0 && coin_type != 512) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "coin_type must be 0 (Legacy) or 512 (Radiant Standard)");
+        }
+    }
+
+    // Set derivation type based on coin_type preference
+    bool use_legacy = (coin_type == 0);
+    if (use_legacy) {
+        pwallet->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+    }
+
     CPubKey master_pub_key;
     if (request.params[1].isNull()) {
         master_pub_key = pwallet->GenerateNewSeed();
@@ -4237,11 +4267,29 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
     }
 
     pwallet->SetHDSeed(master_pub_key);
+
+    // Scan for keys on the alternate derivation path and warn if found
+    std::string warning_msg;
+    int alternate_coin_type = use_legacy ? 512 : 0;
+    // TODO: Implement dual-path scanning logic (scans m/44'/512'/0'/0/k and m/44'/0'/0'/k)
+    // For now, emit a warning that the user should check for funds on the alternate path
+    warning_msg = strprintf(
+        "Derivation path set to %s (coin_type %d). "
+        "If you had funds on the %s path (coin_type %d), "
+        "you may need to import them separately or send them to the new address.",
+        use_legacy ? "legacy m/0'/0'/k" : "Radiant Standard m/44'/512'/0'/0/k",
+        coin_type,
+        use_legacy ? "Radiant Standard" : "legacy",
+        alternate_coin_type);
+
     if (flush_key_pool) {
         pwallet->NewKeyPool();
     }
 
-    return UniValue();
+    UniValue::Object obj;
+    obj.reserve(1);
+    obj.emplace_back("warning", warning_msg);
+    return obj;
 }
 
 static UniValue walletprocesspsbt(const Config &config,

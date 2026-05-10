@@ -48,6 +48,6 @@ RUN mkdir -p /release/radiant-qt-linux-x64 && \
     strip /release/radiant-qt-linux-x64/radiant-qt
 
 WORKDIR /release
-RUN tar -czf radiant-qt-linux-x64-v2.2.0.tar.gz radiant-qt-linux-x64
+RUN tar -czf radiant-qt-linux-x64-v3.0.0.tar.gz radiant-qt-linux-x64
 
 CMD ["/bin/bash"]

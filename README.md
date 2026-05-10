@@ -35,7 +35,7 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 
 ---
 
-## Radiant Core 2.3.0
+## Radiant Core 3.0.0
 
 **Activation Height:** Block 410,000 (mainnet & testnet3)
 
