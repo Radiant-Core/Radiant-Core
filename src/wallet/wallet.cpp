@@ -4742,7 +4742,47 @@ std::shared_ptr<CWallet> CWallet::CreateWalletFromFile(
         gArgs.GetBoolArg("-spendzeroconfchange", DEFAULT_SPEND_ZEROCONF_CHANGE);
 
     walletInstance->m_default_address_type = DEFAULT_ADDRESS_TYPE;
-    walletInstance->m_default_change_type = DEFAULT_CHANGE_TYPE;
+    walletInstance->m_default_change_type = DEFAULT_ADDRESS_TYPE;
+
+    // Auto-detect legacy derivation wallets on load (C2 security fix)
+    // If this is an existing wallet without explicit legacy flag, check key metadata
+    // to determine if it was created with pre-v3.0.0 derivation path (m/0'/0'/k)
+    if (!fFirstRun && !walletInstance->IsWalletFlagSet(WALLET_FLAG_LEGACY_DERIVATION)) {
+        // Check if any keys have legacy path pattern (m/0'/0'/* or m/0'/1'/*)
+        bool hasLegacyPathKeys = false;
+        bool hasBip44PathKeys = false;
+        {
+            LOCK(walletInstance->cs_KeyStore);
+            for (const auto& keyPair : walletInstance->mapKeyMetadata) {
+                const CKeyMetadata& metadata = keyPair.second;
+                if (!metadata.hdKeypath.empty()) {
+                    // Legacy path pattern: m/0'/0'/* or m/0'/1'/*
+                    if (metadata.hdKeypath.find("m/0'/0'-") == 0 ||
+                        metadata.hdKeypath.find("m/0'/1'-") == 0 ||
+                        metadata.hdKeypath.find("m/0'/0'/") == 0 ||
+                        metadata.hdKeypath.find("m/0'/1'/") == 0) {
+                        hasLegacyPathKeys = true;
+                    }
+                    // BIP44 path pattern: m/44'/512'/*
+                    if (metadata.hdKeypath.find("m/44'/512'") == 0) {
+                        hasBip44PathKeys = true;
+                    }
+                }
+            }
+        }
+
+        // If wallet has legacy path keys and no BIP44 keys, auto-enable legacy mode
+        if (hasLegacyPathKeys && !hasBip44PathKeys) {
+            walletInstance->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+            walletInstance->WalletLogPrintf(
+                "Auto-enabled legacy derivation mode: detected keys with pre-v3.0.0 "
+                "path pattern (m/0'/0'/k). BIP44 path (m/44'/512'/0'/0/k) was not used.\n");
+            InitWarning(_(
+                "This wallet was created with a legacy derivation path. "
+                "Legacy mode has been automatically enabled. If you restore from seed, "
+                "use coin_type=0 or -derivationtype=legacy to access your funds."));
+        }
+    }
 
     walletInstance->WalletLogPrintf("Wallet completed loading in %15dms\n",
                                     GetTimeMillis() - nStart);

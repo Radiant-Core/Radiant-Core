@@ -142,9 +142,12 @@ CK12 &CK12::Write(const uint8_t *data, size_t len) {
     return *this;
 }
 
-void CK12::Finalize(uint8_t *output) {
+bool CK12::Finalize(uint8_t *output) {
     // Enforce single-block mode limit (no tree hashing support)
-    assert(m_bytes_consumed <= MAX_INPUT_LEN);
+    // Return false instead of crashing if the caller exceeds this.
+    if (m_bytes_consumed > MAX_INPUT_LEN) {
+        return false;
+    }
 
     // K12 single-leaf finalization (with empty custom string C=""):
     // Per K12 spec: K12(M, C) = TurboSHAKE128(M || C || length_encode(|C|), 0x07)
@@ -175,4 +178,5 @@ void CK12::Finalize(uint8_t *output) {
     for (size_t i = 0; i < OUTPUT_SIZE / 8; i++) {
         WriteLE64(output + 8 * i, m_state[i]);
     }
+    return true;
 }

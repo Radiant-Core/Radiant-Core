@@ -25,11 +25,10 @@ public:
     CK12();
     CK12 &Write(const uint8_t *data, size_t len);
     // Finalize computation and write 32-byte hash to output.
-    // Asserts if input exceeded MAX_INPUT_LEN (8192 bytes) in debug builds.
-    // Note: Unlike CBlake3::Finalize() which returns bool, this returns void
-    // and uses assert() for error handling since K12 supports much larger
-    // inputs (up to 8192 bytes in this single-block implementation).
-    void Finalize(uint8_t *output);
+    // Returns false if input exceeded MAX_INPUT_LEN (8192 bytes), true on success.
+    // Note: Now returns bool like CBlake3::Finalize() to allow graceful handling
+    // of oversized inputs in single-block mode.
+    bool Finalize(uint8_t *output);
     CK12 &Reset();
 
 private:

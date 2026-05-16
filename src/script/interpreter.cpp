@@ -1102,9 +1102,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                             }
                         } else if (opcode == OP_K12) {
-                            CK12()
-                                .Write(vch.data(), vch.size())
-                                .Finalize(vchHash.data());
+                            if (vch.size() > CK12::MAX_INPUT_LEN) {
+                                return set_error(serror, ScriptError::INVALID_OPERAND_SIZE);
+                            }
+                            CK12 hasher;
+                            hasher.Write(vch.data(), vch.size());
+                            if (!hasher.Finalize(vchHash.data())) {
+                                return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
+                            }
                         }
                         popstack(stack);
                         stack.push_back(vchHash);

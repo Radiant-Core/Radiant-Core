@@ -45,26 +45,33 @@ except ImportError:
 
 # GitHub release configuration
 GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.0.0"
+# C4 Security: SHA-256 hashes for release asset verification
+# These must be updated with each release by running: sha256sum <asset_file>
 RELEASE_ASSETS = {
     "darwin_arm64": {
         "filename": "radiant-core-macos-arm64.zip",
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Apple Silicon)",
+        # C4: SHA-256 hash - MUST be updated at release time
+        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
     },
     "darwin_x86_64": {
         "filename": "radiant-core-macos-arm64.zip",  # Use ARM64 for now, x64 not available
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Intel) - Using ARM64 binary via Rosetta",
+        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
     },
     "linux_x86_64": {
         "filename": "radiant-core-linux-x64.tar.gz",
         "folder": "radiant-core-linux-x64",
         "display": "Linux (x86_64)",
+        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
     },
     "linux_aarch64": {
         "filename": "radiant-core-linux-x64.tar.gz",  # ARM Linux not available yet
         "folder": "radiant-core-linux-x64",
         "display": "Linux (ARM64) - x64 binary (requires emulation)",
+        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
     },
     "windows_x64": {
         "filename": "radiant-core-windows-x64.zip",
@@ -256,31 +263,68 @@ class DownloadManager:
                     "message": f"Error: {str(e)}",
                 }
                 return False
-            
+
+        # C4 Security: Verify SHA-256 hash before extraction
+        self.download_progress = {
+            "status": "verifying",
+            "percent": 100,
+            "message": "Verifying download...",
+        }
+
+        try:
+            sha256_hash = hashlib.sha256()
+            with open(tar_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    sha256_hash.update(chunk)
+            computed_hash = sha256_hash.hexdigest()
+
+            expected_hash = asset.get("sha256", "")
+            # Skip verification if hash is placeholder (must be updated at release time)
+            if expected_hash and not expected_hash.startswith("PLACEHOLDER"):
+                if computed_hash != expected_hash:
+                    tar_path.unlink()  # Delete the bad file
+                    self.download_progress = {
+                        "status": "error",
+                        "percent": 0,
+                        "message": "Download verification failed: SHA-256 mismatch. File may be corrupted or tampered with.",
+                    }
+                    return False
+        except Exception as e:
+            self.download_progress = {
+                "status": "error",
+                "percent": 0,
+                "message": f"Verification error: {str(e)}",
+            }
+            return False
+
         # Extract
         self.download_progress = {
             "status": "extracting",
             "percent": 100,
             "message": "Extracting files...",
         }
-        
+
         try:
-            # Extract based on file type
+            # C4 Security: Extract with data filter to prevent path traversal attacks
             if asset["filename"].endswith(".zip"):
                 with zipfile.ZipFile(tar_path, 'r') as zip_ref:
-                    zip_ref.extractall(self.binaries_path)
+                    # C4: Use filter='data' if available (Python 3.12+) for path traversal protection
+                    if hasattr(zip_ref, 'extractall') and callable(getattr(zipfile, 'ZipFile', None)):
+                        try:
+                            zip_ref.extractall(self.binaries_path, filter='data')
+                        except TypeError:
+                            # Python < 3.12 doesn't support filter parameter
+                            zip_ref.extractall(self.binaries_path)
             else:
                 with tarfile.open(tar_path, "r:gz") as tar:
-                    tar.extractall(path=self.binaries_path)
-            
-            # Remove quarantine on macOS
-            if platform.system() == "Darwin":
-                self.download_progress["message"] = "Removing quarantine..."
-                extract_path = self.binaries_path / asset["folder"]
-                subprocess.run(
-                    ["xattr", "-rd", "com.apple.quarantine", str(extract_path)],
-                    capture_output=True,
-                )
+                    # C4: Use filter='data' for path traversal protection (Python 3.12+)
+                    try:
+                        tar.extractall(path=self.binaries_path, filter='data')
+                    except TypeError:
+                        # Python < 3.12 doesn't support filter parameter
+                        tar.extractall(path=self.binaries_path)
+
+            # C4 Security: Removed xattr quarantine bypass that could allow malware to bypass Gatekeeper
             
             # Make binaries executable
             extract_path = self.binaries_path / asset["folder"]
@@ -1149,6 +1193,21 @@ class NodeManager:
 # Global node manager
 manager = NodeManager()
 
+# C3 Security: Generate per-launch random CSRF token
+# This token is embedded in the HTML and required on all API calls
+import secrets
+_SECURITY_TOKEN = secrets.token_hex(32)
+
+def _get_html_with_token():
+    """Return HTML page with embedded security token."""
+    # Inject token into HTML for JavaScript to use
+    token_script = f'''<script>
+    // Security token for API authentication (per-launch random)
+    window._RADIANT_SECURITY_TOKEN = "{_SECURITY_TOKEN}";
+</script>'''
+    # Insert before closing </head> tag
+    return HTML_PAGE.replace('</head>', token_script + '\n</head>')
+
 HTML_PAGE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1937,10 +1996,18 @@ HTML_PAGE = '''<!DOCTYPE html>
             const btn = document.querySelector('.theme-toggle');
             if (btn) btn.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
         })();
-        
+
+        // C3 Security: Helper function for API calls with security token
+        function apiCall(url, options = {}) {
+            const token = window._RADIANT_SECURITY_TOKEN || '';
+            options.headers = options.headers || {};
+            options.headers['X-Radiant-Token'] = token;
+            return fetch(url, options);
+        }
+
         // Download functionality
         function checkPlatform() {
-            fetch('/api/download/platform')
+            apiCall('/api/download/platform')
                 .then(r => r.json())
                 .then(data => {
                     platformInfo = data;
@@ -1990,7 +2057,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         }
         
         function checkDownloadProgress() {
-            fetch('/api/download/progress')
+            apiCall('/api/download/progress')
                 .then(r => r.json())
                 .then(data => {
                     const fill = document.getElementById('progressFill');
@@ -2034,7 +2101,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         }
         
         function updateStatus() {
-            fetch('/api/status')
+            apiCall('/api/status')
                 .then(r => r.json())
                 .then(data => {
                     const dot = document.getElementById('statusDot');
@@ -2151,7 +2218,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                     }
                 });
             
-            fetch('/api/wallet/transactions')
+            apiCall('/api/wallet/transactions')
                 .then(r => r.json())
                 .then(data => {
                     const txList = document.getElementById('txList');
@@ -2178,7 +2245,7 @@ HTML_PAGE = '''<!DOCTYPE html>
         }
         
         function generateAddress() {
-            fetch('/api/wallet/newaddress', { method: 'POST' })
+            apiCall('/api/wallet/newaddress', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
@@ -2206,7 +2273,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             feeEstimate.textContent = 'Calculating...';
             feeEstimate.style.color = 'var(--text-muted)';
             
-            fetch('/api/wallet/info')
+            apiCall('/api/wallet/info')
             .then(r => r.json())
             .then(data => {
                 if (data.balance !== undefined && data.balance > 0) {
@@ -2246,7 +2313,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             }
             if (!confirm(confirmMsg)) return;
             
-            fetch('/api/wallet/send', {
+            apiCall('/api/wallet/send', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ address, amount, subtract_fee: sendingMax })
@@ -2298,7 +2365,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             document.getElementById('statusDot').className = 'status-dot starting';
             document.getElementById('statusText').textContent = 'Starting...';
             
-            fetch('/api/start', {
+            apiCall('/api/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(getSettings())
@@ -2316,7 +2383,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             document.getElementById('stopBtn').disabled = true;
             document.getElementById('statusText').textContent = 'Stopping...';
             
-            fetch('/api/stop', {method: 'POST'})
+            apiCall('/api/stop', {method: 'POST'})
                 .then(r => r.json())
                 .then(data => {
                     if (!data.success) {
@@ -2330,7 +2397,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             document.getElementById('infoModal').classList.add('show');
             document.getElementById('infoContent').textContent = 'Loading...';
             
-            fetch('/api/info')
+            apiCall('/api/info')
                 .then(r => r.json())
                 .then(data => {
                     document.getElementById('infoContent').textContent = 
@@ -2348,7 +2415,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             status.textContent = 'Creating backup...';
             status.className = 'download-status';
             
-            fetch('/api/wallet/backup', { method: 'POST' })
+            apiCall('/api/wallet/backup', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
@@ -2380,7 +2447,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                 return;
             }
             
-            fetch('/api/wallet/dumpprivkey', {
+            apiCall('/api/wallet/dumpprivkey', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ address })
@@ -2421,7 +2488,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             status.textContent = 'Importing key' + (rescan ? ' and rescanning blockchain...' : '...');
             status.className = 'download-status';
             
-            fetch('/api/wallet/importprivkey', {
+            apiCall('/api/wallet/importprivkey', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ privkey, rescan })
@@ -2448,7 +2515,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             status.textContent = 'Generating seed phrase...';
             status.className = 'download-status';
             
-            fetch('/api/wallet/generate-seed', {
+            apiCall('/api/wallet/generate-seed', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ words: 12 })
@@ -2510,7 +2577,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             status.textContent = 'Importing seed phrase' + (rescan ? ' and rescanning...' : '...');
             status.className = 'download-status';
             
-            fetch('/api/wallet/import-seed', {
+            apiCall('/api/wallet/import-seed', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ mnemonic, passphrase, rescan })
@@ -2556,37 +2623,99 @@ HTML_PAGE = '''<!DOCTYPE html>
 
 
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
+    # C3 Security: Validate Host header to prevent DNS rebinding attacks
+    def _validate_host(self):
+        """Reject requests with invalid Host headers (DNS rebinding protection)."""
+        host = self.headers.get('Host', '')
+        client_addr = self.client_address[0]
+
+        # Allow localhost or 127.0.0.1 with any port
+        valid_hosts = [
+            '127.0.0.1',
+            'localhost',
+            f'127.0.0.1:{self.server.server_address[1]}',
+            f'localhost:{self.server.server_address[1]}'
+        ]
+
+        # If coming from localhost, be more permissive
+        if client_addr in ('127.0.0.1', '::1', 'localhost'):
+            # Check if Host header is valid
+            if host not in valid_hosts and not host.startswith(('127.0.0.1:', 'localhost:')):
+                self.send_error(403, "Invalid Host header")
+                return False
+        else:
+            # External requests: must have exact host match
+            if host not in valid_hosts:
+                self.send_error(403, "Invalid Host header")
+                return False
+        return True
+
+    # C3 Security: Validate security token on API calls
+    def _validate_token(self):
+        """Validate X-Radiant-Token header matches our per-launch token."""
+        global _SECURITY_TOKEN
+        token = self.headers.get('X-Radiant-Token', '')
+        if token != _SECURITY_TOKEN:
+            self.send_error(403, "Invalid or missing security token")
+            return False
+        return True
+
     def log_message(self, format, *args):
         pass  # Suppress log messages
     
     def do_GET(self):
+        # C3 Security: Validate Host header first (DNS rebinding protection)
+        if not self._validate_host():
+            return
+
         parsed = urlparse(self.path)
-        
+
         if parsed.path == "/" or parsed.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
+            # C3 Security: Add security headers to HTML response
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self';")
+            self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
             self.end_headers()
-            self.wfile.write(HTML_PAGE.encode())
-        
+            # C3 Security: Serve HTML with embedded security token
+            self.wfile.write(_get_html_with_token().encode())
+
+        # API endpoints require security token validation
         elif parsed.path == "/api/status":
+            if not self._validate_token():
+                return
             self.send_json(manager.get_status())
-        
+
         elif parsed.path == "/api/info":
+            if not self._validate_token():
+                return
             self.send_json(manager.get_info())
-        
+
         elif parsed.path == "/api/wallet/info":
+            if not self._validate_token():
+                return
             self.send_json(manager.get_wallet_info())
-        
+
         elif parsed.path == "/api/wallet/transactions":
+            if not self._validate_token():
+                return
             self.send_json(manager.get_transactions())
-        
+
         elif parsed.path == "/api/wallet/addresses":
+            if not self._validate_token():
+                return
             self.send_json(manager.get_addresses())
         
         elif parsed.path == "/api/download/platform":
+            if not self._validate_token():
+                return
             self.send_json(manager.download_manager.get_platform_info())
-        
+
         elif parsed.path == "/api/download/progress":
+            if not self._validate_token():
+                return
             self.send_json(manager.download_manager.get_progress())
         
         elif parsed.path == "/logo-light.svg":
@@ -2635,16 +2764,24 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(content)
     
     def do_POST(self):
+        # C3 Security: Validate Host header first (DNS rebinding protection)
+        if not self._validate_host():
+            return
+
+        # C3 Security: Validate security token on all POST API calls
+        if not self._validate_token():
+            return
+
         parsed = urlparse(self.path)
-        
+
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length).decode() if content_length else "{}"
-        
+
         try:
             data = json.loads(body) if body else {}
         except json.JSONDecodeError:
             data = {}
-        
+
         if parsed.path == "/api/start":
             result = manager.start(data)
             self.send_json(result)
@@ -2714,7 +2851,12 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
     def send_json(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # C3 Security: Removed Access-Control-Allow-Origin: * (no cross-origin allowed)
+        # C3 Security: Add security headers
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self';")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 

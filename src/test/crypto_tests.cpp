@@ -1044,6 +1044,38 @@ BOOST_AUTO_TEST_CASE(k12_tests) {
 
         BOOST_CHECK(memcmp(hash_single, hash_chunked, 32) == 0);
     }
+
+    // Test exact MAX_INPUT_LEN boundary (8192 bytes) - maximum supported input
+    {
+        uint8_t hash[32];
+        uint8_t in8191[8191];
+        uint8_t in8192[8192];
+        for (size_t i = 0; i < 8192; i++) {
+            if (i < 8191) in8191[i] = i % 251;
+            in8192[i] = i % 251;
+        }
+
+        // 8191 bytes should succeed (just under limit)
+        bool result8191 = CK12().Write(in8191, 8191).Finalize(hash);
+        BOOST_CHECK(result8191);
+
+        // 8192 bytes should succeed (exactly at limit)
+        bool result8192 = CK12().Write(in8192, 8192).Finalize(hash);
+        BOOST_CHECK(result8192);
+    }
+
+    // Test >8192 bytes fails (single-block mode limit)
+    {
+        uint8_t hash[32];
+        uint8_t in8193[8193];
+        for (size_t i = 0; i < 8193; i++) in8193[i] = i % 251;
+
+        CK12 hasher;
+        hasher.Write(in8193, 8193);
+        // This should fail (exceeds MAX_INPUT_LEN)
+        bool result = hasher.Finalize(hash);
+        BOOST_CHECK(!result);
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -4271,7 +4271,9 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
     // Scan for keys on the alternate derivation path and warn if found
     std::string warning_msg;
     int alternate_coin_type = use_legacy ? 512 : 0;
-    // TODO: Implement dual-path scanning logic (scans m/44'/512'/0'/0/k and m/44'/0'/0'/k)
+    // TODO: Implement full dual-path scanning logic
+    // Legacy path:    m/0'/0'/k  (all levels hardened)
+    // BIP44 path:     m/44'/512'/0'/0/k  (purpose/coin/account hardened, change/index non-hardened)
     // For now, emit a warning that the user should check for funds on the alternate path
     warning_msg = strprintf(
         "Derivation path set to %s (coin_type %d). "

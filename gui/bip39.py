@@ -271,15 +271,15 @@ def generate_mnemonic(strength=128):
     return ' '.join(words)
 
 
-def validate_mnemonic(mnemonic, strict_checksum=False):
+def validate_mnemonic(mnemonic, strict_checksum=True):
     """
     Validate a BIP39 mnemonic phrase.
     
     Args:
         mnemonic: Space-separated mnemonic phrase
-        strict_checksum: If True, verify checksum. If False (default),
-                        only check word count and wordlist membership
-                        for compatibility with various wallet implementations.
+        strict_checksum: If True (default), verify checksum bits.
+                        If False, only check word count and wordlist membership.
+                        Use strict_checksum=True for production wallets.
     
     Returns:
         True if valid, False otherwise
@@ -352,7 +352,7 @@ SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 
 # BIP44 constants
 BIP44_PURPOSE = 44
-BIP44_COIN_TYPE = 0  # Bitcoin/Radiant
+BIP44_COIN_TYPE = 512  # Radiant SLIP-0044 registered coin type
 
 
 def _get_public_key_bytes(private_key_bytes):
