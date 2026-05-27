@@ -166,8 +166,8 @@ ft-tmp/
 test-tmp/
 Testing/
 
-# Release artifacts
-release-*/
+# Release artifacts (top-level build dirs only — don't shadow doc/release-notes/)
+/release-*/
 
 # Blockchain data
 data-*/

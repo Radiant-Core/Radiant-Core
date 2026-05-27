@@ -37,22 +37,20 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 
 ## Radiant Core 3.0.0
 
-**Activation Height:** Block 410,000 (mainnet & testnet3)
+**Release type:** Wallet & security hardening (no consensus change, no hard fork).
+**Status:** Backward-compatible at the network layer with all 2.x nodes already running post-V2-fork (block ≥ 410,000).
 
-Radiant Core 2.1 introduces 6 new and re-enabled opcodes, gated behind the `SCRIPT_ENHANCED_REFERENCES` flag and activated at the V2 hard fork height:
+### What's new in 3.0.0
 
-| Opcode | Hex | Type | Purpose |
-|--------|-----|------|---------|
-| **OP_BLAKE3** | `0xee` | New hash opcode | On-chain Blake3 PoW validation for Glyph v2 dMint tokens |
-| **OP_K12** | `0xef` | New hash opcode | On-chain KangarooTwelve PoW validation |
-| **OP_LSHIFT** | `0x98` | Re-enabled | Bitwise left shift for on-chain ASERT-lite DAA computation |
-| **OP_RSHIFT** | `0x99` | Re-enabled | Bitwise right shift for on-chain DAA computation |
-| **OP_2MUL** | `0x8d` | Re-enabled | Multiply by 2 (numeric) |
-| **OP_2DIV** | `0x8e` | Re-enabled | Divide by 2 with truncation toward zero |
+- **BIP44 SLIP-0044 derivation path** — `m/44'/512'/0'/0/k` is the new default for HD wallets, using Radiant's registered SLIP-0044 coin type (`512`). The legacy derivation path remains available via `WALLET_FLAG_LEGACY_DERIVATION`, the `-derivationtype=radiant|legacy` startup flag, and the `legacy_derivation` parameter on the `createwallet` RPC. Existing wallets continue to load with their original path.
+- **Strict BIP39 checksum validation** is now the default for production wallets, eliminating accidental acceptance of invalid mnemonics.
+- **GUI auto-downloader hardening** — per-launch random CSRF token (`X-Radiant-Token`), Host header validation to prevent DNS-rebinding attacks, and SHA-256 verification on every downloaded release artifact (the GUI refuses to install assets whose hash is missing or unmatched).
+- **Crypto correctness fixes** — BLAKE3 chunk-counter bug fixed (previously used the block counter), and BLAKE3/K12 hashers now enforce input length limits with explicit tracking.
+- **Misc.** — `releases/`, Docker tags, and build scripts updated to `v3.0.0`.
 
-**Why:** These opcodes enable fully on-chain proof-of-work validation for Glyph v2 decentralized minting (dMint) tokens using alternative hash algorithms (Blake3, KangarooTwelve). This eliminates indexer trust dependency and prevents griefing attacks. The shift and arithmetic opcodes enable on-chain difficulty adjustment (ASERT-lite DAA).
+### V2 hard fork (already active — reference)
 
-**Test Coverage:** 14/14 opcode functional tests + 29 integration tests across 7 scenarios (A-G) on 2-node regtest.
+The consensus changes from v2.0.1 / v2.1.0 (mainnet block 410,000) remain in effect. The `SCRIPT_ENHANCED_REFERENCES` flag enables 6 opcodes — `OP_BLAKE3` (`0xee`), `OP_K12` (`0xef`), `OP_LSHIFT` (`0x98`), `OP_RSHIFT` (`0x99`), `OP_2MUL` (`0x8d`), `OP_2DIV` (`0x8e`) — and the post-grace fee floor is 10,000 photons/byte (0.1 RXD/kB) from block 415,000. See [`doc/release-notes/release-notes-2.1.0.md`](doc/release-notes/release-notes-2.1.0.md) for the full opcode reference.
 
 ---
 
