@@ -259,3 +259,7 @@ radiant-core-windows-x64/
 
 # Network monitoring script (local use only)
 network_monitor.py
+
+# Local audit / release-prep working notes
+AUDIT_*.md
+*.LOCAL.md

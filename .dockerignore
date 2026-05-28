@@ -1,5 +1,6 @@
 build/
 build-*/
+macos-arm64-release/
 .git/
 *.o
 *.a
