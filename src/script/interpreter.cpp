@@ -1096,6 +1096,9 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         } else if (opcode == OP_HASH512_256) {
                             CHash512_256().Write(vch).Finalize(vchHash);
                         } else if (opcode == OP_BLAKE3) {
+                            if (vch.size() > CBlake3::CHUNK_LEN) {
+                                return set_error(serror, ScriptError::INVALID_OPERAND_SIZE);
+                            }
                             CBlake3 hasher;
                             hasher.Write(vch.data(), vch.size());
                             if (!hasher.Finalize(vchHash.data())) {
