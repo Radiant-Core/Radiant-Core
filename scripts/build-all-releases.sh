@@ -41,7 +41,7 @@ case $CHOICE in
         ;;
     4)
         echo "Building Windows release (cross-compile)..."
-        bash ./build-windows-cross-release.sh
+        bash ./build-windows-release.sh
         ;;
     5)
         echo "Building all platforms..."
@@ -77,7 +77,7 @@ case $CHOICE in
         echo "Building Windows release..."
         echo "========================================"
         if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            bash ./build-windows-cross-release.sh
+            bash ./build-windows-release.sh
         else
             echo "Skipping Windows cross-compile (not on Linux)"
         fi

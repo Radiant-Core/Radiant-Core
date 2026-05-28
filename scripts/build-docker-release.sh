@@ -1,205 +1,104 @@
-#!/bin/bash
-# Radiant Core Docker Release Build Script
+#!/usr/bin/env bash
+# scripts/build-docker-release.sh — reproducible Docker release build.
+#
+# Builds docker/Dockerfile.linux against a pinned-by-digest Ubuntu base,
+# extracts the deterministic tarball produced inside, and copies it into
+# releases/<version>/. The artifact is byte-identical to what
+# scripts/build-linux-release.sh produces on a host with the same base image
+# and tool versions — running both is a useful cross-check.
+#
+# Usage:
+#   scripts/build-docker-release.sh [version]
+#     version  Tag string (default: v3.0.0).
+#
+# Output:
+#   releases/<version>/radiant-core-linux-x64-<version>.tar.gz
+#   releases/<version>/radiant-core-linux-x64-<version>.tar.gz.sha256
+#   releases/<version>/radiant-core-docker-amd64-<version>.tar           (image)
+#   releases/<version>/radiant-core-docker-amd64-<version>.tar.sha256
 
-set -e
+set -euo pipefail
 
-echo "========================================"
-echo "Radiant Core Docker Release Build"
-echo "========================================"
+VERSION="${1:-v3.0.0}"
+HOST_TRIPLE="x86_64-linux-gnu"
 
-# Check if Docker is available
-if ! command -v docker >/dev/null 2>&1; then
-    echo "ERROR: Docker is required but not installed"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$ROOT_DIR"
+
+# --- determinism baseline -----------------------------------------------------
+export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct HEAD)"
+export LC_ALL=C
+export TZ=UTC
+
+IMAGE_TAG="radiant-core:${VERSION}-amd64"
+
+echo "================================================================"
+echo "Radiant Core Docker release build (reproducible, depends/-based)"
+echo "================================================================"
+echo "Version           : ${VERSION}"
+echo "Image tag         : ${IMAGE_TAG}"
+echo "SOURCE_DATE_EPOCH : ${SOURCE_DATE_EPOCH}"
+
+command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is required." >&2; exit 1; }
+
+# Refuse to build if the Dockerfile still has the digest placeholder. The
+# Dockerfile carries PINNED_DIGEST_PLACEHOLDER until a maintainer rotates the
+# pin, at which point the image is reproducible against a known-good base.
+if grep -q PINNED_DIGEST_PLACEHOLDER docker/Dockerfile.linux; then
+    cat <<EOF >&2
+ERROR: docker/Dockerfile.linux still contains PINNED_DIGEST_PLACEHOLDER.
+
+Reproducible Docker builds require the base image to be pinned by content
+digest, not by floating tag. To set the pin, run:
+
+    docker pull ubuntu:24.04
+    docker inspect --format='{{index .RepoDigests 0}}' ubuntu:24.04
+
+Replace both occurrences of 'sha256:PINNED_DIGEST_PLACEHOLDER' in
+docker/Dockerfile.linux with the resulting digest, commit the change, and
+re-run this script.
+EOF
     exit 1
 fi
 
-# Create Dockerfile for release
-cat > Dockerfile.release << 'EOF'
-# Multi-stage Docker build for Radiant Core releases
-FROM ubuntu:24.04 AS builder
-
-LABEL maintainer="info@radiantfoundation.org"
-LABEL version="3.0.0"
-LABEL description="Radiant Core Node - Release Build"
-
-# Install build dependencies
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    ninja-build \
-    pkg-config \
-    git \
-    libboost-all-dev \
-    libevent-dev \
-    libssl-dev \
-    libdb++-dev \
-    libminiupnpc-dev \
-    libzmq3-dev \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Set working directory
-WORKDIR /root
-
-# Clone and build Radiant Core
-ARG GIT_TAG=main
-ARG BUILD_TYPE=Release
-
-RUN git clone --depth 1 --branch ${GIT_TAG} https://github.com/Radiant-Core/Radiant-Core.git
-
-WORKDIR /root/Radiant-Core
-RUN mkdir -p build
-WORKDIR /root/Radiant-Core/build
-
-RUN cmake -GNinja .. \
-    -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
-    -DBUILD_RADIANT_WALLET=OFF \
-    -DBUILD_RADIANT_ZMQ=OFF \
-    -DBUILD_RADIANT_QT=OFF \
-    -DENABLE_UPNP=OFF
-
-RUN ninja
-
-# Runtime image
-FROM ubuntu:24.04 AS runtime
-
-LABEL maintainer="info@radiantfoundation.org"
-LABEL version="3.0.0"
-LABEL description="Radiant Core Node - Runtime"
-
-# Install runtime dependencies
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
-    libboost-chrono1.83.0 \
-    libboost-filesystem1.83.0 \
-    libboost-thread1.83.0 \
-    libboost-atomic1.83.0 \
-    libevent-2.1-7 \
-    libssl3 \
-    libdb5.3++ \
-    libminiupnpc17 \
-    libzmq5 \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Create radiant user
-RUN useradd -m -s /bin/bash radiant
-
-# Copy binaries from builder
-COPY --from=builder /root/Radiant-Core/build/src/radiantd /usr/local/bin/
-COPY --from=builder /root/Radiant-Core/build/src/radiant-cli /usr/local/bin/
-COPY --from=builder /root/Radiant-Core/build/src/radiant-tx /usr/local/bin/
-
-# Create data directory
-RUN mkdir -p /home/radiant/.radiant && \
-    chown -R radiant:radiant /home/radiant/.radiant
-
-USER radiant
-WORKDIR /home/radiant
-
-# Expose ports
-EXPOSE 7332 7333
-
-# Default command
-ENTRYPOINT ["radiantd"]
-CMD ["-server", "-rest", "-txindex=1"]
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD radiant-cli getblockchaininfo > /dev/null || exit 1
-EOF
-
-# Build arguments
-GIT_TAG=${1:-main}
-BUILD_TYPE=${2:-Release}
-IMAGE_NAME="radiant-core:${GIT_TAG}-${BUILD_TYPE}"
-
-echo "Building Docker image..."
-echo "Git Tag: $GIT_TAG"
-echo "Build Type: $BUILD_TYPE"
-echo "Image Name: $IMAGE_NAME"
-
-# Build the Docker image
-docker build \
-    --build-arg GIT_TAG=$GIT_TAG \
-    --build-arg BUILD_TYPE=$BUILD_TYPE \
-    -f Dockerfile.release \
-    -t $IMAGE_NAME \
+# --- step 1: build the image, passing SOURCE_DATE_EPOCH and VERSION ----------
+echo
+echo ">>> Building Docker image (this also runs depends/ + cmake inside) ..."
+DOCKER_BUILDKIT=1 docker build \
+    --build-arg VERSION="${VERSION}" \
+    --build-arg HOST_TRIPLE="${HOST_TRIPLE}" \
+    --build-arg SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}" \
+    -f docker/Dockerfile.linux \
+    -t "${IMAGE_TAG}" \
     .
 
-# Create a container to extract binaries
-echo "Extracting binaries..."
-docker create --name radiant-temp $IMAGE_NAME
-docker cp radiant-temp:/usr/local/bin/radiantd ./docker-release/
-docker cp radiant-temp:/usr/local/bin/radiant-cli ./docker-release/
-docker cp radiant-temp:/usr/local/bin/radiant-tx ./docker-release/
-docker rm radiant-temp
+# --- step 2: extract the reproducible Linux tarball produced inside ----------
+RELEASE_DIR="${ROOT_DIR}/releases/${VERSION}"
+mkdir -p "${RELEASE_DIR}"
 
-# Create release package
-echo "Creating Docker release package..."
-mkdir -p docker-release
-cp Dockerfile.release docker-release/
+echo
+echo ">>> Extracting Linux tarball from image ..."
+CID="$(docker create "${IMAGE_TAG}")"
+trap 'docker rm -f "${CID}" >/dev/null 2>&1 || true' EXIT
+docker cp "${CID}:/release/radiant-core-linux-x64-${VERSION}.tar.gz" \
+    "${RELEASE_DIR}/radiant-core-linux-x64-${VERSION}.tar.gz"
+docker cp "${CID}:/release/radiant-core-linux-x64-${VERSION}.tar.gz.sha256" \
+    "${RELEASE_DIR}/radiant-core-linux-x64-${VERSION}.tar.gz.sha256"
 
-cat > docker-release/README.txt << EOF
-Radiant Core Docker Release v${GIT_TAG}
-=====================================
+# --- step 3: save the runtime image itself as a release artifact -------------
+IMAGE_ARTIFACT="${RELEASE_DIR}/radiant-core-docker-amd64-${VERSION}.tar"
 
-Docker Image: ${IMAGE_NAME}
+echo
+echo ">>> Saving runtime image to ${IMAGE_ARTIFACT} ..."
+docker save "${IMAGE_TAG}" -o "${IMAGE_ARTIFACT}"
+( cd "${RELEASE_DIR}" && sha256sum "$(basename "${IMAGE_ARTIFACT}")" \
+    > "$(basename "${IMAGE_ARTIFACT}").sha256" )
 
-Quick Start:
------------
-1. Pull the image:
-   docker pull ${IMAGE_NAME}
-
-2. Run the daemon:
-   docker run -d --name radiant-node \
-     -p 7332:7332 -p 7333:7333 \
-     -v radiant-data:/home/radiant/.radiant \
-     ${IMAGE_NAME}
-
-3. Check status:
-   docker exec radiant-node radiant-cli getblockchaininfo
-
-4. Stop the node:
-   docker stop radiant-node
-
-Configuration:
--------------
-You can customize the daemon by adding command-line arguments:
-
-docker run -d --name radiant-node \
-  -p 7332:7332 -p 7333:7333 \
-  -v radiant-data:/home/radiant/.radiant \
-  ${IMAGE_NAME} \
-  -rpcuser=youruser -rpcpassword=yourpass
-
-Data Persistence:
------------------
-The container uses /home/radiant/.radiant for blockchain data.
-Mount a volume to persist data across container restarts.
-
-Build Information:
------------------
-- Base Image: ubuntu:24.04
-- Git Tag: ${GIT_TAG}
-- Build Type: ${BUILD_TYPE}
-- Build Date: $(date)
-
-For more information, visit: https://radiantblockchain.org
-EOF
-
-echo "========================================"
-echo "Docker release build completed!"
-echo "Location: docker-release/"
-echo ""
-echo "Docker image created: $IMAGE_NAME"
-echo ""
-echo "To push to registry:"
-echo "docker tag $IMAGE_NAME your-registry/$IMAGE_NAME"
-echo "docker push your-registry/$IMAGE_NAME"
-echo "========================================"
+echo
+echo "================================================================"
+echo "Docker release build complete."
+echo "Linux tarball : ${RELEASE_DIR}/radiant-core-linux-x64-${VERSION}.tar.gz"
+echo "Docker image  : ${IMAGE_ARTIFACT}"
+echo "Image tag     : ${IMAGE_TAG}"
+echo "================================================================"

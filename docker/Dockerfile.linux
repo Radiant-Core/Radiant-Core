@@ -1,43 +1,129 @@
-# Radiant Core - Linux x64 Build
-FROM ubuntu:24.04
+# docker/Dockerfile.linux — reproducible Linux x86_64 release build.
+#
+# This Dockerfile is the canonical reproducible-build environment for the
+# Radiant Core Linux release artifact. Two important properties:
+#
+#   1. The base image is pinned by digest, not floating tag. Update the
+#      digest deliberately when bumping Ubuntu. The current pin tracks
+#      ubuntu:24.04 — to update, run:
+#          docker pull ubuntu:24.04
+#          docker inspect --format='{{index .RepoDigests 0}}' ubuntu:24.04
+#      and paste the resulting sha256 below.
+#
+#   2. The build invokes depends/ from the source tree. SOURCE_DATE_EPOCH is
+#      derived from the latest git commit timestamp inside the build, so two
+#      `docker build` runs at the same SHA produce a byte-identical tarball.
+#
+# Build invocation lives in scripts/build-docker-release.sh. Output tarball
+# is extracted from the image and placed in releases/<version>/.
+
+# --- pinned base image --------------------------------------------------------
+# ubuntu:24.04 as of 2026-05; replace with the latest immutable digest when
+# rotating. The tag itself is left for human readability only.
+FROM ubuntu:24.04@sha256:PINNED_DIGEST_PLACEHOLDER AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG VERSION=v3.0.0
+ARG HOST_TRIPLE=x86_64-linux-gnu
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    ninja-build \
-    pkg-config \
-    git \
-    libboost-all-dev \
-    libevent-dev \
-    libssl-dev \
-    libdb++-dev \
-    libminiupnpc-dev \
-    libzmq3-dev \
+# --- toolchain only — all C/C++ deps come from depends/ -----------------------
+# We deliberately install only the compiler toolchain plus the depends/-build
+# host requirements (curl, ca-certificates, python3 for the depends machinery,
+# pkg-config for the depends-built .pc files). All linked C/C++ libraries
+# (boost, libevent, openssl, libdb, libzmq, miniupnpc, etc.) are built from
+# pinned source by depends/ — that is what gives us reproducibility against
+# the upstream sha256 hashes in depends/packages/*.mk.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        ninja-build \
+        make \
+        pkg-config \
+        python3 \
+        curl \
+        ca-certificates \
+        git \
+        bsdmainutils \
+        bzip2 \
+        xz-utils \
+        zstd \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build/radiant
 COPY . .
 
-RUN cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_RADIANT_WALLET=OFF \
-    -DBUILD_RADIANT_DAEMON=ON \
-    -DBUILD_RADIANT_CLI=ON \
-    -DBUILD_RADIANT_TX=ON \
-    -DBUILD_RADIANT_QT=OFF \
-    -DENABLE_HARDENING=ON
+# Strip any local build trees that would be COPYed in and inflate the cache.
+RUN rm -rf \
+        build-*-release build-*-stage \
+        macos-arm64-release release-* \
+        depends/work depends/built depends/sources
 
-RUN cmake --build build --target radiantd radiant-cli radiant-tx -j$(nproc)
+# --- determinism --------------------------------------------------------------
+# Pin every embedded timestamp to the commit's author time. The same SHA
+# produces the same epoch deterministically.
+RUN SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct HEAD)" \
+    && echo "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}" >> /etc/environment
+ENV LC_ALL=C
+ENV TZ=UTC
 
-RUN mkdir -p /release/radiant-core-linux-x64 && \
-    cp build/src/radiantd /release/radiant-core-linux-x64/ && \
-    cp build/src/radiant-cli /release/radiant-core-linux-x64/ && \
-    cp build/src/radiant-tx /release/radiant-core-linux-x64/ && \
-    strip /release/radiant-core-linux-x64/*
+# --- step 1: depends/ --------------------------------------------------------
+RUN export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct HEAD)" \
+    && make -C depends HOST=${HOST_TRIPLE} NO_QT=1 -j"$(nproc)"
 
-WORKDIR /release
-RUN tar -czf radiant-core-linux-x64-v3.0.0.tar.gz radiant-core-linux-x64
+# --- step 2: cmake configure + build -----------------------------------------
+RUN export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct HEAD)" \
+    && cmake -S . -B build -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE=cmake/platforms/Linux64.cmake \
+        -DCMAKE_TOOLCHAIN_PREFIX=${HOST_TRIPLE} \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_RADIANT_DAEMON=ON \
+        -DBUILD_RADIANT_CLI=ON \
+        -DBUILD_RADIANT_TX=ON \
+        -DBUILD_RADIANT_WALLET=ON \
+        -DBUILD_RADIANT_QT=OFF \
+        -DBUILD_RADIANT_ZMQ=ON \
+        -DENABLE_HARDENING=ON \
+        -DENABLE_UPNP=OFF \
+    && cmake --build build --target radiantd radiant-cli radiant-tx -j"$(nproc)"
 
-CMD ["/bin/bash"]
+# --- step 3: stage + strip ---------------------------------------------------
+RUN mkdir -p /release/radiant-core-linux-x64 \
+    && cp build/src/radiantd    /release/radiant-core-linux-x64/ \
+    && cp build/src/radiant-cli /release/radiant-core-linux-x64/ \
+    && cp build/src/radiant-tx  /release/radiant-core-linux-x64/ \
+    && (${HOST_TRIPLE}-strip --strip-all --remove-section=.comment --remove-section=.note \
+            /release/radiant-core-linux-x64/* \
+        || strip --strip-all --remove-section=.comment --remove-section=.note \
+            /release/radiant-core-linux-x64/*)
+
+# --- step 4: deterministic tarball -------------------------------------------
+RUN export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct HEAD)" \
+    && cd /release \
+    && tar --sort=name --owner=0 --group=0 --numeric-owner \
+        --mtime="@${SOURCE_DATE_EPOCH}" \
+        --pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime \
+        -cf - radiant-core-linux-x64 \
+        | gzip -9n > "/release/radiant-core-linux-x64-${VERSION}.tar.gz" \
+    && cd /release && sha256sum "radiant-core-linux-x64-${VERSION}.tar.gz" \
+        > "radiant-core-linux-x64-${VERSION}.tar.gz.sha256"
+
+# --- runtime stage (consumers of the docker image, not the release artifact) -
+FROM ubuntu:24.04@sha256:PINNED_DIGEST_PLACEHOLDER AS runtime
+ARG VERSION=v3.0.0
+
+RUN useradd -m -s /bin/bash radiant \
+    && mkdir -p /home/radiant/.radiant \
+    && chown -R radiant:radiant /home/radiant/.radiant
+
+COPY --from=builder /release/radiant-core-linux-x64/radiantd    /usr/local/bin/
+COPY --from=builder /release/radiant-core-linux-x64/radiant-cli /usr/local/bin/
+COPY --from=builder /release/radiant-core-linux-x64/radiant-tx  /usr/local/bin/
+
+USER radiant
+WORKDIR /home/radiant
+EXPOSE 7332 7333
+ENTRYPOINT ["radiantd"]
+CMD ["-server", "-rest", "-txindex=1"]
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD radiant-cli getblockchaininfo > /dev/null || exit 1

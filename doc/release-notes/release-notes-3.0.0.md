@@ -174,7 +174,7 @@ Unchanged. Strong replay protection via `SIGHASH_FORKID` continues; no additiona
 ## Known limitations
 
 - **GUI release-asset manifest** (`gui/radiant_node_web.py:RELEASE_ASSETS`) ships with placeholder SHA-256 values. These **must** be updated to the real per-platform hashes as part of the release build step, per `RELEASE_SECURITY_PROCESS.md` §3. The GUI auto-downloader refuses to install assets with placeholder hashes — this is by design.
-- **Reproducible builds** remain a future goal; current release artifacts are built with system toolchains, not `depends/`.
+- **Reproducible builds (macOS codesign ceiling)**: Linux x86_64, the Docker `radiant-core-docker-amd64` image, and Windows x64 are now built reproducibly from `depends/` — two clean rebuilds from the same commit produce byte-identical artifacts. macOS arm64 is reproducible **up to the codesigning step**; the signed/notarized `radiant-core-macos-arm64-<version>.tar.gz` is intentionally non-deterministic (Apple constraint). For supply-chain audits, verify against the parallel `radiant-core-macos-arm64-<version>-unsigned.tar.gz` artifact, which is byte-reproducible. macOS Intel x86_64 and cross-host (build-from-any-distro) reproducibility remain follow-up work for 3.0.x. See `doc/build-reproducibility.md` for the full workflow and per-platform verification commands.
 
 ---
 
