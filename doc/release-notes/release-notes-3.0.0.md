@@ -13,15 +13,21 @@
 
 Radiant Core 3.0.0 is a wallet and release-engineering hardening release. It introduces Radiant's registered BIP44 / SLIP-0044 derivation path as the default for new HD wallets, tightens BIP39 mnemonic validation, locks down the GUI auto-downloader against DNS-rebinding and CSRF, and fixes two correctness issues in the BLAKE3 / K12 crypto implementations introduced in 2.1.0.
 
-### What's new in 3.0.0
+### What's new since v2.3.0
 
 - **BIP44 SLIP-0044 derivation** — new default path `m/44'/512'/0'/0/k` (`512` is Radiant's registered SLIP-0044 coin type)
 - **Legacy derivation preserved** — `WALLET_FLAG_LEGACY_DERIVATION`, `-derivationtype=radiant|legacy`, and a `legacy_derivation` parameter on `createwallet`
 - **Strict BIP39 checksum** — `validate_mnemonic()` defaults to `strict_checksum=True`
 - **GUI auto-downloader hardening** — per-launch CSRF token, Host header validation, mandatory SHA-256 verification of downloaded artifacts
-- **BLAKE3 counter fix** — now uses the chunk counter, not the block counter (test vectors > 1024 bytes now pass)
-- **Input length limits** on BLAKE3 and K12 hashers
+- **Script-interpreter hash hardening** — OP_BLAKE3 now reports `INVALID_OPERAND_SIZE` symmetrically with OP_K12 when input exceeds the hasher's documented limit, and OP_K12 returns the same error cleanly instead of the previous `assert()` in debug builds / undefined output in release builds. New `script_blake3_k12_tests.cpp` covers these paths through `EvalScript` end-to-end.
 - **Release process** — `RELEASE_SECURITY_PROCESS.md` documents signed-tag / dual-maintainer-signature / signed-checksum requirements
+
+### Carried forward from v2.x (re-stated for operators upgrading from pre-2.3 binaries)
+
+If you are upgrading from a v2.2.x or older binary, the following crypto correctness fixes that first shipped in v2.3.0 are also included:
+
+- **BLAKE3 chunk-counter fix** — `CBlake3::Write` previously incremented the counter parameter per 64-byte compression block; per the BLAKE3 spec the counter is per 1024-byte chunk, constant within a chunk. The bug only affected inputs >64 bytes (multi-block, single-chunk). First shipped in v2.3.0.
+- **Hasher-class input-length limits** — `CBlake3` and `CK12` track input length and refuse to compute a hash above their documented maximum (1024 bytes for BLAKE3, 8192 bytes for K12 in single-leaf mode). First shipped in v2.3.0; 3.0.0 adds the matching interpreter-level enforcement noted above.
 
 ---
 
@@ -53,9 +59,16 @@ Radiant Core 3.0.0 is a wallet and release-engineering hardening release. It int
 
 ### Crypto correctness
 
-- **BLAKE3 counter** (`src/crypto/blake3.cpp`) — fixed to use the per-chunk counter rather than the per-block counter. Inputs larger than one 1024-byte chunk now hash correctly.
-- **BLAKE3 / K12 input length limits** (`src/crypto/k12.{cpp,h}`) — both hashers now track input length and reject inputs above the documented maximum, preventing pathological scripts from accumulating unbounded state in the script interpreter.
-- **Interpreter check** (`src/script/interpreter.cpp`) — additional guard on hash opcode inputs to align with the new hasher limits.
+**New in 3.0.0 — script-interpreter enforcement** (`src/script/interpreter.cpp`):
+
+- OP_BLAKE3 now performs a pre-size check against `CBlake3::CHUNK_LEN` (1024 bytes) before invoking the hasher, returning `INVALID_OPERAND_SIZE`. Previously oversize input fell into the post-`Finalize()` `INVALID_STACK_OPERATION` catch-all; the new error code is symmetric with OP_K12's behavior.
+- OP_K12 now performs the analogous pre-size check against `CK12::MAX_INPUT_LEN` (8192 bytes) and treats `Finalize()` as fallible. Previously v2.3.0 release builds emitted undefined output (`CK12::Finalize` was `void`, asserted in debug, no-op'd in release) above the limit.
+- New `src/test/script_blake3_k12_tests.cpp` exercises both opcodes through `EvalScript` end-to-end, including disabled-flag behavior, spec-vector hashes, the chunk-boundary success cases, the over-limit failure cases with the symmetric error code, and the stack effect.
+
+**Carried forward from 2.3.0 — relevant if upgrading from pre-2.3 binaries:**
+
+- **BLAKE3 chunk-counter fix** (`src/crypto/blake3.cpp`) — first shipped in v2.3.0. Earlier 2.x releases used the per-block counter inside `CBlake3::Write`, producing wrong hashes for any input >64 bytes. Inputs ≤64 bytes were unaffected.
+- **Hasher-class input-length tracking** (`src/crypto/k12.{cpp,h}`, `src/crypto/blake3.{cpp,h}`) — first shipped in v2.3.0. Both hashers track bytes consumed and refuse to compute a hash above their documented maximum (1024 / 8192 bytes).
 
 ### Release engineering
 
@@ -138,11 +151,10 @@ Same procedure as 2.x — replace the binary, restart the node. Wallets created 
 - New `legacy_derivation` parameter on `createwallet` RPC (`src/wallet/rpcwallet.cpp`)
 - New functional test `test/functional/feature_derivation_path.py`
 
-### Crypto
-- BLAKE3 chunk-counter fix (`src/crypto/blake3.cpp`)
-- BLAKE3 + K12 input length tracking and limits (`src/crypto/k12.{cpp,h}`)
-- Script interpreter alignment with new hasher limits (`src/script/interpreter.cpp`)
-- Crypto tests for input length boundaries (`src/test/crypto_tests.cpp`)
+### Crypto (changes between v2.3.0 and v3.0.0)
+- Script interpreter: symmetric `INVALID_OPERAND_SIZE` for OP_BLAKE3 / OP_K12 on oversize input; OP_K12 graceful return path; `CK12::Finalize` returns `bool` (`src/script/interpreter.cpp`, `src/crypto/k12.{cpp,h}`)
+- New end-to-end script tests for OP_BLAKE3 / OP_K12 (`src/test/script_blake3_k12_tests.cpp`)
+- (Carried from v2.3.0, listed for pre-2.3 upgraders: BLAKE3 chunk-counter fix and hasher-class input-length limits in `src/crypto/blake3.{cpp,h}` and `src/crypto/k12.{cpp,h}`.)
 
 ### GUI / release engineering
 - Per-launch CSRF token + Host header validation + SHA-256 download verification (`gui/radiant_node_web.py`)

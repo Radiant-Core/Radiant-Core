@@ -68,6 +68,16 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
     s_rs2 >> rs2;
     m_wallet.AddCScript(rs2);
 
+    // The hard-coded expected PSBT hex below assumes legacy HD derivation
+    // (m/0'/<chain>'/<k>'), under which the seed below happens to derive the
+    // exact pubkeys used in the multisig redeem scripts above. Under the
+    // 3.0.0 default BIP44 SLIP-0044 path (m/44'/512'/0'/0/k) the same seed
+    // derives different pubkeys, so those multisig keys would no longer be
+    // in mapKeyMetadata and FillPSBT would correctly fall back to emitting
+    // a bare-key fingerprint. Set the legacy flag to keep this fixture
+    // exercising the BIP32-derivation-emission path it was written for.
+    m_wallet.SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+
     // Add hd seed
     // Mainnet and uncompressed form of
     // cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T

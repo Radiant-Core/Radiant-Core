@@ -169,6 +169,10 @@ Testing/
 # Release artifacts (top-level build dirs only — don't shadow doc/release-notes/)
 /release-*/
 
+# Local CMake/Ninja build trees (not for source tree). Distributed binaries go in releases/
+# attached to the GitHub Release, not into git.
+/macos-arm64-release/
+
 # Blockchain data
 data-*/
 regtest-data/
