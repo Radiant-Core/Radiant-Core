@@ -44,6 +44,8 @@ bool DoubleSpendProofStorage::add(const DoubleSpendProof &proof)
             if (it->orphan) {
                 // mark it as not an orphan now due to explicit add
                 decrementOrphans(1);
+                // H8: this orphan is no longer counted against its peer.
+                adjustPeerOrphanCount(it->nodeId, -1);
                 m_proofs.modify(it, [](Entry &e) {
                     e.orphan = false;
                     // we must clear the "bannable nodeId" here since we accepted this proof as good (see issue #311)
@@ -67,11 +69,36 @@ bool DoubleSpendProofStorage::addOrphan(const DoubleSpendProof &proof, NodeId no
     if (onlyIfNotExists && algo::contains(m_proofs, hash)) {
         return false;
     }
+
+    // H8: enforce the per-peer orphan cap. If this peer already has the maximum
+    // number of orphan proofs resident, refuse to store this new orphan so a
+    // single peer cannot flood orphan storage and evict other peers' orphans.
+    // (We only gate brand-new orphans from a real peer; existing entries and
+    // internally-generated orphans (nodeId < 0) are unaffected.)
+    const bool willBeNewOrphan = !algo::contains(m_proofs, hash);
+    if (nodeId > -1 && willBeNewOrphan && m_maxOrphansPerPeer > 0) {
+        const auto pit = m_orphansByPeer.find(nodeId);
+        if (pit != m_orphansByPeer.end() && pit->second >= m_maxOrphansPerPeer) {
+            LogPrint(BCLog::DSPROOF,
+                     "DSProof addOrphan: peer %d at per-peer orphan cap (%d), "
+                     "rejecting orphan %s\n",
+                     nodeId, m_maxOrphansPerPeer, hash.ToString());
+            return false;
+        }
+    }
+
     add(proof);
     auto it = m_proofs.find(hash);
     assert(it != m_proofs.end()); // cannot happen since above add() call guarantees it now exists
 
+    const bool wasOrphan = it->orphan;
     incrementOrphans(!it->orphan, hash); // actually increments only if orphan false -- may reap older orphans as a side-effect
+    // Re-find: incrementOrphans -> checkOrphanLimit may have reaped entries
+    // (never this one, due to dontDeleteHash), but iterators can be invalidated.
+    it = m_proofs.find(hash);
+    if (it == m_proofs.end()) {
+        return true;
+    }
     m_proofs.modify(it, [nodeId](Entry &e) {
         if (e.nodeId < 0 && nodeId > -1)
             e.nodeId = nodeId;
@@ -79,6 +106,11 @@ bool DoubleSpendProofStorage::addOrphan(const DoubleSpendProof &proof, NodeId no
             e.timeStamp = GetTime();
         e.orphan = true;
     }, ModFastFail());
+    // H8: account this orphan against its attributed peer (only when it newly
+    // became an orphan, to keep the per-peer map in sync with m_numOrphans).
+    if (!wasOrphan && it->nodeId > -1) {
+        adjustPeerOrphanCount(it->nodeId, +1);
+    }
     return true;
 }
 
@@ -112,6 +144,8 @@ void DoubleSpendProofStorage::claimOrphan(const DspId &hash)
     auto it = m_proofs.find(hash);
     if (it != m_proofs.end() && it->orphan) {
         decrementOrphans(1);
+        // H8: claimed orphans no longer count against their peer.
+        adjustPeerOrphanCount(it->nodeId, -1);
         m_proofs.modify(it, [](Entry &e){ e.orphan = false; }, ModFastFail());
     }
 }
@@ -122,6 +156,13 @@ void DoubleSpendProofStorage::orphanExisting(const DspId &hash)
     auto it = m_proofs.find(hash);
     if (it != m_proofs.end() && !it->orphan) {
         incrementOrphans(1, hash);
+        // Re-find in case checkOrphanLimit() invalidated the iterator (it is
+        // never reaped here due to dontDeleteHash == hash).
+        it = m_proofs.find(hash);
+        if (it == m_proofs.end())
+            return;
+        // H8: account this re-orphaned entry against its attributed peer.
+        adjustPeerOrphanCount(it->nodeId, +1);
         m_proofs.modify(it, [](Entry &e){
             e.orphan = true;
             e.timeStamp = GetTime();
@@ -135,6 +176,9 @@ bool DoubleSpendProofStorage::remove(const DspId &hash)
     auto it = m_proofs.find(hash);
     if (it != m_proofs.end()) {
         decrementOrphans(it->orphan); // actually decrements only if orphan == true
+        // H8: keep the per-peer orphan count in sync on removal.
+        if (it->orphan)
+            adjustPeerOrphanCount(it->nodeId, -1);
         m_proofs.erase(it);
         return true;
     }
@@ -186,6 +230,8 @@ void DoubleSpendProofStorage::clear(bool clearOrphans /*= true*/) {
     if (clearOrphans) {
         m_proofs.clear();
         m_numOrphans = 0;
+        // H8: all orphans are gone; reset the per-peer accounting too.
+        m_orphansByPeer.clear();
     } else {
         // erase everything but orphans
         algo::erase_if(m_proofs, [](const auto &e){ return !e.orphan; });
@@ -198,6 +244,8 @@ void DoubleSpendProofStorage::orphanAll() {
     size_t incrementCtr = 0;
     for (auto it = m_proofs.begin(); it != m_proofs.end() && m_numOrphans + incrementCtr < m_proofs.size(); ++it) {
         if (!it->orphan) {
+            // H8: account each newly-orphaned entry against its attributed peer.
+            adjustPeerOrphanCount(it->nodeId, +1);
             m_proofs.modify(it, [](Entry &e) {
                 e.orphan = true;
                 e.timeStamp = GetTime();
@@ -231,9 +279,36 @@ void DoubleSpendProofStorage::setMaxOrphans(size_t max) {
     m_maxOrphans = max;
 }
 
+size_t DoubleSpendProofStorage::maxOrphansPerPeer() const {
+    LOCK(m_lock);
+    return m_maxOrphansPerPeer;
+}
+void DoubleSpendProofStorage::setMaxOrphansPerPeer(size_t max) {
+    LOCK(m_lock);
+    m_maxOrphansPerPeer = max;
+}
+
 size_t DoubleSpendProofStorage::numOrphans() const {
     LOCK(m_lock);
     return m_numOrphans;
+}
+
+void DoubleSpendProofStorage::adjustPeerOrphanCount(NodeId nodeId, long delta)
+{
+    if (nodeId < 0 || delta == 0)
+        return;
+    if (delta > 0) {
+        m_orphansByPeer[nodeId] += static_cast<size_t>(delta);
+    } else {
+        const auto it = m_orphansByPeer.find(nodeId);
+        if (it != m_orphansByPeer.end()) {
+            const size_t dec = static_cast<size_t>(-delta);
+            if (it->second <= dec)
+                m_orphansByPeer.erase(it);
+            else
+                it->second -= dec;
+        }
+    }
 }
 
 void DoubleSpendProofStorage::decrementOrphans(size_t n)
@@ -264,6 +339,8 @@ void DoubleSpendProofStorage::checkOrphanLimit(const DspId &dontDeleteHash)
         auto &index = m_proofs.get<tag_TimeStamp>(); // ordered by timestamp
         for (auto it = index.begin(); it != index.end() && m_numOrphans > lowWaterMark; ) {
             if (it->orphan && dontDeleteHash != it->proof.GetId()) {
+                // H8: keep the per-peer orphan count in sync on eviction.
+                adjustPeerOrphanCount(it->nodeId, -1);
                 it = index.erase(it);
                 decrementOrphans(1);
                 ++ctr;

@@ -8,7 +8,12 @@
 # For production builds, use: docker/Dockerfile.release
 # ============================================================================
 
-FROM ubuntu:22.04
+# SECURITY (audit N4): pin the base image by immutable digest, not the mutable
+# `ubuntu:22.04` tag. PIN-REQUIRED: replace the placeholder with the digest
+# from `docker pull ubuntu:22.04 && docker inspect \
+#   --format='{{index .RepoDigests 0}}' ubuntu:22.04`. The tag is kept for
+# human readability only.
+FROM ubuntu:22.04@sha256:PINNED_DIGEST_PLACEHOLDER
 
 ARG DEBIAN_FRONTEND=noninteractive
 

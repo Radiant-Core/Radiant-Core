@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="${1:-3.0.0}"
+VERSION="${1:-3.1.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/release-builds"
@@ -36,6 +36,61 @@ get_binary_filename() {
     esac
 }
 
+# SECURITY (audit N3): pin the expected SHA-256 of every binary we download and
+# verify it before repackaging (fail-closed). The previous version fetched
+# binaries over `curl -L` with NO integrity check, so a tampered or
+# MITM'd download would be silently repackaged and shipped to users.
+#
+# RELEASE ENGINEER: update these to the SHA-256 of the v${VERSION} release
+# assets (read them from the GPG-signed SHA256SUMS for that release — see
+# RELEASE_SECURITY_PROCESS.md). Leaving a placeholder makes the build refuse
+# to run, by design.
+PLACEHOLDER_SHA="UPDATE_AT_RELEASE_WITH_SHA256_FROM_SIGNED_SHA256SUMS"
+get_binary_sha256() {
+    case "$1" in
+        macos-arm64) echo "$PLACEHOLDER_SHA" ;;
+        linux-x64)   echo "$PLACEHOLDER_SHA" ;;
+    esac
+}
+
+# Compute the SHA-256 of a file (portable: GNU sha256sum or BSD shasum).
+compute_sha256() {
+    local f="$1"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$f" | awk '{print $1}'
+    else
+        shasum -a 256 "$f" | awk '{print $1}'
+    fi
+}
+
+# Verify a downloaded asset against its pinned SHA-256. Fail-closed.
+verify_binary_sha256() {
+    local platform="$1"
+    local path="$2"
+    local expected
+    expected="$(get_binary_sha256 "$platform")"
+
+    if [ -z "$expected" ] || [ "$expected" = "$PLACEHOLDER_SHA" ]; then
+        echo -e "${RED}✗${NC} No pinned SHA-256 for $platform."
+        echo -e "${RED}  Refusing to repackage an unverified binary.${NC}"
+        echo -e "${YELLOW}  Update get_binary_sha256() with the value from the" \
+                "signed SHA256SUMS for v${VERSION}.${NC}"
+        return 1
+    fi
+
+    local actual
+    actual="$(compute_sha256 "$path")"
+    if [ "$actual" != "$expected" ]; then
+        echo -e "${RED}✗${NC} SHA-256 mismatch for $(basename "$path")"
+        echo -e "${RED}  expected: $expected${NC}"
+        echo -e "${RED}  actual:   $actual${NC}"
+        echo -e "${RED}  Aborting — possible tampering or corrupted download.${NC}"
+        rm -f "$path"
+        return 1
+    fi
+    echo -e "${GREEN}✓${NC} SHA-256 verified: $(basename "$path")"
+}
+
 # Create build directory
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/downloads"
@@ -48,15 +103,22 @@ download_binaries() {
     
     if [ -f "$download_path" ]; then
         echo -e "${GREEN}✓${NC} Using cached: $filename"
+        # SECURITY (audit N3): verify even cached files — the cache could have
+        # been populated by an earlier untrusted run.
+        verify_binary_sha256 "$platform" "$download_path" || return 1
         return 0
     fi
-    
+
     echo -e "${YELLOW}⬇${NC} Downloading: $filename"
-    curl -L -o "$download_path" "$GITHUB_RELEASE_URL/$filename" || {
+    curl --fail -L -o "$download_path" "$GITHUB_RELEASE_URL/$filename" || {
         echo -e "${RED}✗${NC} Failed to download $filename"
         return 1
     }
     echo -e "${GREEN}✓${NC} Downloaded: $filename"
+    # SECURITY (audit N3): verify the SHA-256 before this file is ever extracted
+    # and repackaged. verify_binary_sha256 deletes the file and fails on
+    # mismatch or missing pin.
+    verify_binary_sha256 "$platform" "$download_path" || return 1
 }
 
 # Function to build release package for a platform
@@ -107,8 +169,10 @@ The GUI will open in your default web browser at http://127.0.0.1:8765
 
 FIRST TIME SETUP (macOS)
 ------------------------
-If you see a security warning, run this command first:
-  xattr -rd com.apple.quarantine .
+If macOS blocks the app, right-click "start-gui.command" in Finder and choose
+"Open", then confirm. This keeps Gatekeeper's signature and notarization
+checks in place. Do NOT run "xattr -rd com.apple.quarantine" — that disables
+those checks for the whole package and is a security downgrade.
 
 CONTENTS
 --------
@@ -140,11 +204,10 @@ README_EOF
 #!/bin/bash
 cd "$(dirname "$0")"
 
-# Remove quarantine attribute if present
-if xattr -l . 2>/dev/null | grep -q "com.apple.quarantine"; then
-    echo "Removing macOS quarantine..."
-    xattr -rd com.apple.quarantine .
-fi
+# SECURITY (audit N3): do NOT strip the Gatekeeper quarantine attribute.
+# Removing com.apple.quarantine disables macOS signature/notarization checks
+# for the whole package. Users who trust this build should open it via Finder
+# right-click > Open the first time, which keeps Gatekeeper engaged.
 
 # Make binaries executable
 chmod +x radiantd radiant-cli radiant-tx 2>/dev/null

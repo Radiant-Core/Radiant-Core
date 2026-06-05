@@ -34,7 +34,9 @@ void DoubleSpendProof::checkSanityOrThrow() const
         // Message must contain exactly 1 pushData
         if (pushData->size() != 1)
             throw std::runtime_error("DSProof must contain exactly 1 pushData");
-        // Script data must be within size limits (520 bytes)
+        // Script data must be within size limits (MaxPushDataSize ==
+        // MAX_SCRIPT_ELEMENT_SIZE); NB: this is the Radiant script element cap,
+        // not the historical 520-byte BCH/BTC value.
         if (!pushData->empty() && pushData->front().size() > MaxPushDataSize)
             throw std::runtime_error("DSProof script size limit exceeded");
     }

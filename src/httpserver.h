@@ -78,10 +78,18 @@ struct event_base *EventBase();
 class HTTPRequest {
     struct evhttp_request *req;
     bool replySent;
+    // SECURITY (audit 2026-06, H6): set when the request targets a secret-bearing
+    // RPC method (dumpprivkey, signrawtransaction*, ...). Used to redact the
+    // reply body in httptrace logging so private keys are never written to disk.
+    bool sensitive = false;
 
 public:
     explicit HTTPRequest(struct evhttp_request *req);
     ~HTTPRequest();
+
+    /** Mark/query whether this request carries secret material (H6 redaction). */
+    void SetSensitive(bool s) { sensitive = s; }
+    bool IsSensitive() const { return sensitive; }
 
     enum RequestMethod { UNKNOWN, GET, POST, HEAD, PUT, OPTIONS };
 

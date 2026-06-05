@@ -6,15 +6,16 @@
 # Requirements:
 #   - macOS with Xcode Command Line Tools
 #   - Python 3.9+
-#   - pip install py2app pywebview
+#   - Build deps are pinned/installed by this script (see scripts/
+#     requirements-macos-app.txt). Versions: py2app==0.28.8, pywebview==5.1.
 #
 # Usage: ./scripts/build-macos-app.sh [version]
-# Example: ./scripts/build-macos-app.sh 3.0.0
+# Example: ./scripts/build-macos-app.sh 3.1.0
 #
 
 set -e
 
-VERSION="${1:-3.0.0}"
+VERSION="${1:-3.1.0}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 GUI_DIR="$ROOT_DIR/gui"
@@ -57,8 +58,27 @@ python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 echo "  Installing build dependencies..."
-pip install --upgrade pip > /dev/null
-pip install py2app pywebview > /dev/null
+# SECURITY (audit N5): pin build dependencies to exact versions instead of
+# pulling whatever PyPI serves at build time. Unpinned `pip install py2app
+# pywebview` lets a compromised or yanked-and-replaced release flow into the
+# signed .app we ship.
+#
+# Strongest form: a hash-locked requirements file consumed with
+# --require-hashes (pip then refuses any package whose artifact hash differs).
+# A scaffold lives at scripts/requirements-macos-app.txt. Until its --hash
+# lines are filled in (PIN-REQUIRED, see that file), we fall back to exact
+# version pins, which still removes the "latest floating version" risk.
+REQ_FILE="$SCRIPT_DIR/requirements-macos-app.txt"
+# Pin pip itself too (reproducible resolver behaviour).
+pip install --upgrade 'pip==24.0' > /dev/null
+if [[ -f "$REQ_FILE" ]] && grep -q -- '--hash=' "$REQ_FILE"; then
+    echo "  Using hash-locked $REQ_FILE (--require-hashes)..."
+    pip install --require-hashes -r "$REQ_FILE" > /dev/null
+else
+    echo -e "  ${YELLOW}Note: no hash-locked requirements found; using exact" \
+            "version pins (fill in $REQ_FILE with --hash lines to harden).${NC}"
+    pip install 'py2app==0.28.8' 'pywebview==5.1' > /dev/null
+fi
 echo -e "  ${GREEN}✓${NC} Dependencies installed"
 
 echo ""
@@ -213,8 +233,9 @@ Installation:
   Drag "Radiant Core.app" to the Applications folder.
 
 First Launch:
-  If macOS blocks the app, right-click and select "Open",
-  or run: xattr -rd com.apple.quarantine /Applications/Radiant\ Core.app
+  If macOS blocks the app, right-click "Radiant Core.app" and select "Open",
+  then confirm. This keeps Gatekeeper's signature/notarization checks in place.
+  Do NOT run "xattr -rd com.apple.quarantine" — that disables those checks.
 
 Support: https://radiantblockchain.org
 EOF

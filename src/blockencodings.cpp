@@ -56,6 +56,16 @@ ReadStatus PartiallyDownloadedBlock::InitData(
         (cmpctblock.shorttxids.empty() && cmpctblock.prefilledtxn.empty())) {
         return READ_STATUS_INVALID;
     }
+    // M9: count cap before the txns_available.resize() below. The maximum
+    // possible number of txns in a (compact) block is bounded by the excessive
+    // block size divided by the minimum transaction size, so any cmpctblock
+    // claiming more short-ids + prefilled txns than that is rejected here
+    // before we allocate txns_available. NOTE: by the time InitData() runs, the
+    // caller (net_processing CMPCTBLOCK handler) has already verified the
+    // header proof-of-work (cheap, fixed-size) — see the early CheckProofOfWork
+    // pre-filter there — so this resize is only reached for a header that has
+    // already passed PoW, bounding the work an attacker can induce. This does
+    // not change any wire format.
     if (cmpctblock.shorttxids.size() + cmpctblock.prefilledtxn.size() >
         config->GetExcessiveBlockSize() / MIN_TRANSACTION_SIZE) {
         return READ_STATUS_INVALID;

@@ -28,6 +28,7 @@
 #include <netmessagemaker.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
+#include <pow.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <random.h>
@@ -135,11 +136,73 @@ static const unsigned int MAX_GETDATA_SZ = 1000;
 /// How many non standard orphan do we consider from a node before ignoring it.
 static constexpr uint32_t MAX_NON_STANDARD_ORPHAN_PER_NODE = 5;
 
+/**
+ * H9 (ADDR flood) — per-peer ADDR rate limiting via a token bucket, backported
+ * from Bitcoin Core (PR #18991 / #19724). Each addr received consumes one token;
+ * the bucket refills at MAX_ADDR_RATE_PER_SECOND and is capped at
+ * MAX_ADDR_PROCESSING_TOKEN_BUFFER. Addresses received beyond the available
+ * tokens are silently dropped (not a protocol violation — many honest peers
+ * gossip aggressively), so this does not change the wire protocol. The existing
+ * MAX_ADDR_TO_SEND per-message cap still rejects oversized single messages.
+ */
+static constexpr double MAX_ADDR_RATE_PER_SECOND{0.1};
+static constexpr size_t MAX_ADDR_PROCESSING_TOKEN_BUFFER{MAX_ADDR_TO_SEND};
+
+/**
+ * H10 (INV flood) — per-peer INV processing rate limit via a token bucket.
+ * Each INV entry consumes one token; the bucket refills at
+ * MAX_INV_RATE_PER_SECOND and is capped at MAX_INV_PROCESSING_TOKEN_BUFFER.
+ * Entries received beyond the available tokens are skipped (the per-message
+ * MAX_INV_SZ cap still applies). This bounds the rate at which a peer can force
+ * us through AlreadyHave() etc., independent of how fast it streams max-size
+ * INV messages. Wire format is unchanged.
+ */
+static constexpr double MAX_INV_RATE_PER_SECOND{1000.0};
+static constexpr size_t MAX_INV_PROCESSING_TOKEN_BUFFER{MAX_INV_SZ};
+
+/**
+ * M11 (large TX flood) — per-peer byte-rate limit on incoming TX message bytes.
+ * MAX_TX_MESSAGE_LENGTH (16 MiB) is policy and is intentionally NOT lowered;
+ * instead we cap the sustained rate at which a peer may deliver TX-message
+ * bytes. The bucket refills at MAX_TX_BYTES_PER_SECOND and is capped at
+ * MAX_TX_BYTE_TOKEN_BUFFER. When a peer exceeds the budget it is throttled
+ * (misbehavior + the tx is dropped), coordinating with the orphan byte budget
+ * (N2) to bound total memory pressure. Wire format is unchanged.
+ */
+static constexpr double MAX_TX_BYTES_PER_SECOND{2 * 1024 * 1024}; // 2 MiB/s
+static constexpr size_t MAX_TX_BYTE_TOKEN_BUFFER{32 * 1024 * 1024}; // 32 MiB burst
+
+/**
+ * H8 (orphan DSProof flood) — the per-peer cap on resident orphan double-spend
+ * proofs is enforced in DoubleSpendProofStorage (see
+ * DoubleSpendProofStorage::maxOrphansPerPeer / addOrphan), which is the
+ * authoritative orphan store; there is nothing to enforce here in
+ * net_processing beyond forwarding the peer's NodeId (already done).
+ */
+
+/**
+ * N2 (orphan TX pool byte budget) — in addition to the count cap
+ * (DEFAULT_MAX_ORPHAN_TRANSACTIONS), bound the orphan pool by total serialized
+ * bytes so a small number of very large orphans cannot consume excessive
+ * memory. Eviction (LimitOrphanTxSize) enforces both caps.
+ */
+static constexpr size_t DEFAULT_MAX_ORPHAN_TX_BYTES{100 * 1000 * 1000}; // 100 MB
+
+/**
+ * M10 — per-peer cap on the number of mapBlockSource entries attributed to a
+ * single peer, so a peer cannot grow that map without bound.
+ */
+static constexpr size_t MAX_BLOCK_SOURCE_PER_PEER{16};
+
 namespace internal {
 RecursiveMutex g_cs_orphans;
 MapOrphanTransactions mapOrphanTransactions GUARDED_BY(g_cs_orphans);
 MapOrphanTransactionsByPrev mapOrphanTransactionsByPrev GUARDED_BY(g_cs_orphans);
 }
+
+//! N2: running total of serialized bytes held by mapOrphanTransactions, used to
+//! enforce DEFAULT_MAX_ORPHAN_TX_BYTES in addition to the entry-count cap.
+static size_t g_orphan_tx_bytes GUARDED_BY(internal::g_cs_orphans) = 0;
 
 /**
  * Average delay between local address broadcasts
@@ -349,6 +412,27 @@ struct CNodeState {
     //! Time of last new block announcement
     int64_t m_last_block_announcement;
 
+    //! H9: ADDR rate-limiting token bucket (tokens available + last refill time
+    //! in microseconds). See MAX_ADDR_RATE_PER_SECOND.
+    double m_addr_token_bucket{1.0};
+    int64_t m_addr_token_timestamp{0};
+    //! Total number of addresses that were processed (debug/logging only).
+    uint64_t m_addr_rate_limited{0};
+    uint64_t m_addr_processed{0};
+
+    //! H10: INV processing rate-limiting token bucket. See
+    //! MAX_INV_RATE_PER_SECOND.
+    double m_inv_token_bucket{double(MAX_INV_PROCESSING_TOKEN_BUFFER)};
+    int64_t m_inv_token_timestamp{0};
+
+    //! M11: large-TX byte-rate token bucket (bytes available + last refill time
+    //! in microseconds). See MAX_TX_BYTES_PER_SECOND.
+    double m_tx_byte_bucket{double(MAX_TX_BYTE_TOKEN_BUFFER)};
+    int64_t m_tx_byte_timestamp{0};
+
+    //! M10: number of mapBlockSource entries currently attributed to this peer.
+    size_t m_block_source_count{0};
+
     /*
      * State associated with transaction download.
      *
@@ -436,6 +520,13 @@ struct CNodeState {
         fSupportsDesiredCmpctVersion = false;
         m_chain_sync = {0, nullptr, false, false};
         m_last_block_announcement = 0;
+        // Initialize rate-limit token-bucket timestamps to "now" so that a
+        // freshly connected peer does not start with a spuriously large
+        // refilled budget computed from a zero timestamp.
+        const int64_t nowMicros = GetTimeMicros();
+        m_addr_token_timestamp = nowMicros;
+        m_inv_token_timestamp = nowMicros;
+        m_tx_byte_timestamp = nowMicros;
     }
 };
 
@@ -453,6 +544,51 @@ static CNodeState *State(NodeId pnode) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     }
 
     return &it->second;
+}
+
+/**
+ * M10: insert a mapBlockSource entry while enforcing a per-peer cap
+ * (MAX_BLOCK_SOURCE_PER_PEER). If the source peer already has the maximum
+ * number of attributed entries, the new entry is recorded as non-punishable
+ * (NodeId is preserved for reject routing, but the peer cannot be misbehaved
+ * for it), preventing a single peer from growing mapBlockSource without bound.
+ * Returns true if the entry was newly inserted.
+ */
+static bool AddBlockSource(const uint256 &hash, NodeId nodeId, bool punish)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+    auto existing = mapBlockSource.find(hash);
+    if (existing != mapBlockSource.end()) {
+        return false;
+    }
+    CNodeState *state = State(nodeId);
+    if (state && state->m_block_source_count >= MAX_BLOCK_SOURCE_PER_PEER) {
+        // Over the per-peer cap: still record the source (so reject messages
+        // route correctly) but mark it non-punishable to bound abuse.
+        punish = false;
+    }
+    auto ret = mapBlockSource.emplace(hash, std::make_pair(nodeId, punish));
+    if (ret.second && state) {
+        ++state->m_block_source_count;
+    }
+    return ret.second;
+}
+
+/**
+ * M10: erase a mapBlockSource entry by hash, keeping the per-peer counter in
+ * sync. Safe to call when no entry exists.
+ */
+static void EraseBlockSource(const uint256 &hash)
+    EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+    auto it = mapBlockSource.find(hash);
+    if (it == mapBlockSource.end()) {
+        return;
+    }
+    if (CNodeState *state = State(it->second.first)) {
+        if (state->m_block_source_count > 0) {
+            --state->m_block_source_count;
+        }
+    }
+    mapBlockSource.erase(it);
 }
 
 static void UpdatePreferredDownload(CNode *node, CNodeState *state)
@@ -1013,8 +1149,12 @@ bool internal::AddOrphanTx(const CTransactionRef &tx, NodeId peer)
     // attack. If a peer has a legitimate large transaction with a missing
     // parent then we assume it will rebroadcast it later, after the parent
     // transaction(s) have been mined or received.
-    // 100 orphans, each of which is at most 100,000 bytes big is at most 10
-    // megabytes of orphans and somewhat more byprev index (in the worst case):
+    // N2: the per-orphan size is bounded by MAX_STANDARD_TX_SIZE here, while
+    // the *aggregate* memory used by the orphan pool is independently bounded
+    // by both DEFAULT_MAX_ORPHAN_TRANSACTIONS (count) and
+    // DEFAULT_MAX_ORPHAN_TX_BYTES (total serialized bytes); both are enforced
+    // by LimitOrphanTxSize(). (The old comment here claimed a fixed "100
+    // orphans x 100,000 bytes" budget, which was never actually enforced.)
     unsigned int sz = tx->GetTotalSize();
     if (sz > MAX_STANDARD_TX_SIZE) {
         LogPrint(BCLog::MEMPOOL,
@@ -1028,6 +1168,7 @@ bool internal::AddOrphanTx(const CTransactionRef &tx, NodeId peer)
         /* COrphanTx c'tor: */ tx, peer, GetTime() + ORPHAN_TX_EXPIRE_TIME
     );
     assert(ret.second);
+    g_orphan_tx_bytes += sz; // N2: track aggregate orphan-pool byte usage
     for (const CTxIn &txin : tx->vin) {
         mapOrphanTransactionsByPrev[txin.prevout].insert(ret.first);
     }
@@ -1059,6 +1200,9 @@ static int EraseOrphanTx(const TxId &id) EXCLUSIVE_LOCKS_REQUIRED(internal::g_cs
                 internal::mapOrphanTransactionsByPrev.erase(itPrev);
             }
         }
+        // N2: keep the aggregate byte counter in sync on erase.
+        const size_t sz = it->second.tx->GetTotalSize();
+        g_orphan_tx_bytes -= std::min(g_orphan_tx_bytes, sz);
         internal::mapOrphanTransactions.erase(it);
         return 1;
     }();
@@ -1111,7 +1255,13 @@ unsigned int internal::LimitOrphanTxSize(unsigned int nMaxOrphans) {
         }
     }
     FastRandomContext rng;
-    while (mapOrphanTransactions.size() > nMaxOrphans) {
+    // N2: evict random orphans until BOTH the entry-count cap (nMaxOrphans) and
+    // the aggregate byte budget (DEFAULT_MAX_ORPHAN_TX_BYTES) are satisfied. The
+    // byte budget prevents a small number of very large orphans from consuming
+    // excessive memory even while the count stays under nMaxOrphans.
+    while (!mapOrphanTransactions.empty() &&
+           (mapOrphanTransactions.size() > nMaxOrphans ||
+            g_orphan_tx_bytes > DEFAULT_MAX_ORPHAN_TX_BYTES)) {
         // Evict a random orphan:
         TxId randomTxId{TxId::Uninitialized};
         static_assert (sizeof(uint256) == sizeof(randomTxId),
@@ -1400,6 +1550,12 @@ void PeerLogicValidation::BlockChecked(const CBlock &block,
     }
 
     if (it != mapBlockSource.end()) {
+        // M10: keep the per-peer mapBlockSource counter in sync on erase.
+        if (CNodeState *srcState = State(it->second.first)) {
+            if (srcState->m_block_source_count > 0) {
+                --srcState->m_block_source_count;
+            }
+        }
         mapBlockSource.erase(it);
     }
 }
@@ -2502,10 +2658,53 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         std::vector<CAddress> vAddrOk;
         int64_t nNow = GetAdjustedTime();
         int64_t nSince = nNow - 10 * 60;
+
+        // H9: refill this peer's ADDR token bucket based on elapsed time, then
+        // process at most as many addresses as we have tokens for. Addresses
+        // beyond the budget are dropped (this is not a protocol violation).
+        // Whitelisted/addr-relay peers (e.g. -addnode, seeders) bypass the
+        // limit. See MAX_ADDR_RATE_PER_SECOND. We snapshot the (refilled) token
+        // count once here under cs_main, deduct from a local copy inside the
+        // loop (no per-address locking), and write the remaining tokens back
+        // once after the loop.
+        const bool rate_limited = !pfrom->HasPermission(PF_ADDR);
+        uint64_t num_proc = 0;
+        uint64_t num_rate_limited = 0;
+        double addr_tokens = 0.0;
+        {
+            LOCK(cs_main);
+            CNodeState *state = State(pfrom->GetId());
+            if (state) {
+                const int64_t nowMicros = GetTimeMicros();
+                const double delta_seconds =
+                    (nowMicros - state->m_addr_token_timestamp) / 1000000.0;
+                state->m_addr_token_timestamp = nowMicros;
+                if (delta_seconds > 0) {
+                    state->m_addr_token_bucket =
+                        std::min<double>(state->m_addr_token_bucket +
+                                             MAX_ADDR_RATE_PER_SECOND * delta_seconds,
+                                         double(MAX_ADDR_PROCESSING_TOKEN_BUFFER));
+                }
+                addr_tokens = state->m_addr_token_bucket;
+            }
+        }
+
         for (CAddress &addr : vAddr) {
             if (interruptMsgProc) {
                 return true;
             }
+
+            // H9: enforce the ADDR rate limit. We deduct a token per processed
+            // address; once the local bucket is empty, drop the remaining
+            // addresses.
+            if (rate_limited) {
+                if (addr_tokens < 1.0) {
+                    ++num_rate_limited;
+                    continue;
+                }
+                addr_tokens -= 1.0;
+            }
+            ++num_proc;
 
             // We only bother storing full nodes, though this may include things
             // which we would not make an outbound connection to, in part
@@ -2533,6 +2732,22 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
             // Do not store addresses outside our network
             if (fReachable) {
                 vAddrOk.push_back(addr);
+            }
+        }
+
+        // H9: write the remaining token budget back to the peer state, and
+        // record processed/rate-limited counters.
+        if (rate_limited) {
+            LOCK(cs_main);
+            if (CNodeState *state = State(pfrom->GetId())) {
+                state->m_addr_token_bucket = addr_tokens;
+                state->m_addr_processed += num_proc;
+                state->m_addr_rate_limited += num_rate_limited;
+            }
+            if (num_rate_limited) {
+                LogPrint(BCLog::NET,
+                         "Received addr: %u processed, %u rate-limited from peer=%d\n",
+                         num_proc, num_rate_limited, pfrom->GetId());
             }
         }
 
@@ -2594,9 +2809,45 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
 
         int64_t nNow = GetTimeMicros();
 
+        // H10: refill this peer's INV processing token bucket based on elapsed
+        // time. We deduct a token per INV entry processed below; once the
+        // bucket is empty we stop processing the remainder of this message
+        // (the per-message MAX_INV_SZ cap still applies). This bounds the rate
+        // at which a peer can force us through AlreadyHave() etc. Whitelisted
+        // relay peers bypass the limit. See MAX_INV_RATE_PER_SECOND. cs_main is
+        // held for the whole handler so this state pointer remains valid for
+        // the duration of the loop.
+        const bool inv_rate_limited = !pfrom->HasPermission(PF_RELAY);
+        CNodeState *const inv_state = State(pfrom->GetId());
+        if (inv_state) {
+            const double delta_seconds =
+                (nNow - inv_state->m_inv_token_timestamp) / 1000000.0;
+            inv_state->m_inv_token_timestamp = nNow;
+            if (delta_seconds > 0) {
+                inv_state->m_inv_token_bucket =
+                    std::min<double>(inv_state->m_inv_token_bucket +
+                                         MAX_INV_RATE_PER_SECOND * delta_seconds,
+                                     double(MAX_INV_PROCESSING_TOKEN_BUFFER));
+            }
+        }
+
         for (CInv &inv : vInv) {
             if (interruptMsgProc) {
                 return true;
+            }
+
+            // H10: enforce the INV processing rate limit. Once the token bucket
+            // is exhausted, skip the remaining entries this message. Block INVs
+            // are exempt (important for sync, and bounded by other mechanisms).
+            if (inv_rate_limited && inv_state && inv.type != MSG_BLOCK) {
+                if (inv_state->m_inv_token_bucket < 1.0) {
+                    LogPrint(BCLog::NET,
+                             "inv rate-limit hit, dropping remaining invs "
+                             "from peer=%d\n",
+                             pfrom->GetId());
+                    break;
+                }
+                inv_state->m_inv_token_bucket -= 1.0;
             }
 
             bool fAlreadyHave = AlreadyHave(inv);
@@ -2923,6 +3174,37 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
         nodestate->m_tx_download.m_tx_in_flight.erase(txid);
         EraseTxRequest(txid);
 
+        // M11: per-peer byte-rate limit on incoming TX-message bytes. We do not
+        // lower MAX_TX_MESSAGE_LENGTH (16 MiB is policy); instead we bound the
+        // sustained rate at which a peer can deliver TX bytes so that streaming
+        // back-to-back large transactions cannot exhaust memory (coordinates
+        // with the orphan byte budget, N2). Whitelisted relay peers are exempt.
+        // See MAX_TX_BYTES_PER_SECOND. Wire format is unchanged.
+        if (nodestate && !pfrom->HasPermission(PF_RELAY)) {
+            const int64_t nowMicros = GetTimeMicros();
+            const double delta_seconds =
+                (nowMicros - nodestate->m_tx_byte_timestamp) / 1000000.0;
+            nodestate->m_tx_byte_timestamp = nowMicros;
+            if (delta_seconds > 0) {
+                nodestate->m_tx_byte_bucket = std::min<double>(
+                    nodestate->m_tx_byte_bucket +
+                        MAX_TX_BYTES_PER_SECOND * delta_seconds,
+                    double(MAX_TX_BYTE_TOKEN_BUFFER));
+            }
+            const double txBytes = double(tx.GetTotalSize());
+            if (nodestate->m_tx_byte_bucket < txBytes) {
+                // Over budget: throttle this peer. Drop the tx (it can be
+                // re-requested later) and apply a small misbehavior penalty.
+                Misbehaving(pfrom, 1, "tx-byte-rate-limit");
+                LogPrint(BCLog::NET,
+                         "tx byte-rate limit hit, dropping tx %s (%u bytes) "
+                         "from peer=%d\n",
+                         txid.ToString(), tx.GetTotalSize(), pfrom->GetId());
+                return true;
+            }
+            nodestate->m_tx_byte_bucket -= txBytes;
+        }
+
         if (!AlreadyHave(inv) &&
             AcceptToMemoryPool(config, g_mempool, state, ptx, &fMissingInputs,
                                false /* bypass_limits */,
@@ -3145,6 +3427,24 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
 
         CBlockHeaderAndShortTxIDs cmpctblock;
         vRecv >> cmpctblock;
+
+        // M9: validate the (cheap, fixed-size) header proof-of-work as early as
+        // possible — immediately after deserialization and before any of the
+        // expensive short-ID / reconstruction work below — so a peer cannot
+        // make us do per-shorttxid work for a header that fails PoW. The wire
+        // format is unchanged; the cmpctblock vectors are already deserialized
+        // in bounded, incremental chunks by VectorFormatter, so this does not
+        // change allocation behavior, only validation ordering.
+        // ProcessNewBlockHeaders() below still performs the authoritative
+        // contextual header checks; this is a cheap pre-filter only.
+        if (!CheckProofOfWork(cmpctblock.header.GetHash(),
+                              cmpctblock.header.nBits,
+                              config.GetChainParams().GetConsensus())) {
+            LOCK(cs_main);
+            Misbehaving(pfrom, 100, "invalid-cmpctblock-pow");
+            return error("cmpctblock with invalid PoW from peer=%d",
+                         pfrom->GetId());
+        }
 
         bool received_new_header = false;
 
@@ -3381,8 +3681,8 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
             // block that is in flight from some other peer.
             {
                 LOCK(cs_main);
-                mapBlockSource.emplace(pblock->GetHash(),
-                                       std::make_pair(pfrom->GetId(), false));
+                AddBlockSource(pblock->GetHash(), pfrom->GetId(),
+                               /*punish=*/false);
             }
             bool fNewBlock = false;
             // Setting fForceProcessing to true means that we bypass some of
@@ -3400,7 +3700,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                 pfrom->nLastBlockTime = GetTime();
             } else {
                 LOCK(cs_main);
-                mapBlockSource.erase(pblock->GetHash());
+                EraseBlockSource(pblock->GetHash());
             }
 
             // hold cs_main for CBlockIndex::IsValid()
@@ -3490,8 +3790,8 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                 // ProcessNewBlock is fine. BIP 152 permits peers to relay
                 // compact blocks after validating the header only; we should
                 // not punish peers if the block turns out to be invalid.
-                mapBlockSource.emplace(resp.blockhash,
-                                       std::make_pair(pfrom->GetId(), false));
+                AddBlockSource(resp.blockhash, pfrom->GetId(),
+                               /*punish=*/false);
             }
         } // Don't hold cs_main when we call into ProcessNewBlock
         if (fBlockRead) {
@@ -3509,7 +3809,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
                 pfrom->nLastBlockTime = GetTime();
             } else {
                 LOCK(cs_main);
-                mapBlockSource.erase(pblock->GetHash());
+                EraseBlockSource(pblock->GetHash());
             }
         }
         return true;
@@ -3580,7 +3880,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
             // mapBlockSource is only used for sending reject messages and DoS
             // scores, so the race between here and cs_main in ProcessNewBlock
             // is fine.
-            mapBlockSource.emplace(hash, std::make_pair(pfrom->GetId(), true));
+            AddBlockSource(hash, pfrom->GetId(), /*punish=*/true);
         }
         bool fNewBlock = false;
         ProcessNewBlock(config, pblock, forceProcessing, &fNewBlock);
@@ -3588,7 +3888,7 @@ static bool ProcessMessage(const Config &config, CNode *pfrom,
             pfrom->nLastBlockTime = GetTime();
         } else {
             LOCK(cs_main);
-            mapBlockSource.erase(pblock->GetHash());
+            EraseBlockSource(pblock->GetHash());
         }
         return true;
     }

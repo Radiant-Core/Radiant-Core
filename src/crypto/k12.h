@@ -19,13 +19,17 @@ class CK12 {
 public:
     static const size_t OUTPUT_SIZE = 32;
     static const size_t RATE = 168; // bytes (1344 bits, capacity = 256 bits)
-    // Maximum input length for single-block mode (no tree hashing)
-    static const size_t MAX_INPUT_LEN = 8192;
+    // Maximum raw input length for single-node mode (no tree hashing).
+    // K12 single-node mode is only valid while the padded absorbed length is
+    // < 8192. Finalize() appends K12 length_encode(0) = 1 byte before padding,
+    // so the true maximum raw input is 8191 (8191 + 1 < 8192).
+    static const size_t MAX_INPUT_LEN = 8191;
 
     CK12();
     CK12 &Write(const uint8_t *data, size_t len);
     // Finalize computation and write 32-byte hash to output.
-    // Returns false if input exceeded MAX_INPUT_LEN (8192 bytes), true on success.
+    // Returns false if raw input exceeded MAX_INPUT_LEN (8191 bytes; padded
+    // length must stay < 8192 in single-node mode), true on success.
     // Note: Now returns bool like CBlake3::Finalize() to allow graceful handling
     // of oversized inputs in single-block mode.
     bool Finalize(uint8_t *output);

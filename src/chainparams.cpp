@@ -18,6 +18,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -101,6 +102,12 @@ public:
         consensus.ERHeight = 62000;
         consensus.PushTXStateHeight = 214555;
         consensus.radiantCore2UpgradeHeight = 410000;
+        // v3.1.0 security upgrade: OP_K12 8191-byte single-node bound, per-script
+        // memory budget (64 MB), opcode cost cap. Activated at block 444444 (~225
+        // days from the v3.0.1 audit baseline at block ~412000). Chain-scan via
+        // contrib/audit/scan-hash-opcode-usage.py confirmed no historical usage
+        // in the tightened ranges before this height was set.
+        consensus.SecurityUpgradeHeight = 444444;
         consensus.powLimit = uint256S(
             "00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         // one week
@@ -238,6 +245,8 @@ public:
         consensus.ERHeight = 10;
         consensus.PushTXStateHeight = 20;
         consensus.radiantCore2UpgradeHeight = 1000;
+        // Activate immediately on testnet so v3.1.0 rules are always exercised.
+        consensus.SecurityUpgradeHeight = 1;
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         // one weeks
         consensus.nPowTargetTimespan = 7 * 24 * 60 * 60;
@@ -337,6 +346,8 @@ public:
         consensus.ERHeight = 10;
         consensus.PushTXStateHeight = 20;
         consensus.radiantCore2UpgradeHeight = 410000;
+        // Activate immediately on scalenet so v3.1.0 rules are always exercised.
+        consensus.SecurityUpgradeHeight = 1;
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         // one weeks
         consensus.nPowTargetTimespan = 7 * 24 * 60 * 60;
@@ -439,6 +450,9 @@ public:
         consensus.ERHeight = 100;
         consensus.PushTXStateHeight = 110;
         consensus.radiantCore2UpgradeHeight = 200;
+        // Active from genesis on regtest so tests/regtest exercise the
+        // security-upgrade rules (K12 <8192 bound, memory/opcode budgets).
+        consensus.SecurityUpgradeHeight = 0;
         consensus.powLimit = uint256S(
             "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         // one weeks

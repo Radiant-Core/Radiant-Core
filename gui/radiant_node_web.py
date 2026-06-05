@@ -6,10 +6,12 @@ Uses only Python standard library - no external dependencies required.
 """
 
 import argparse
+import hmac
 import http.server
 import json
 import os
 import platform
+import re
 import subprocess
 import threading
 import time
@@ -77,8 +79,92 @@ RELEASE_ASSETS = {
         "filename": "radiant-core-windows-x64.zip",
         "folder": "radiant-core-windows-x64",
         "display": "Windows (x64)",
+        # N1: empty hash is rejected (fail-closed) until configured at release time
+        "sha256": "",
     },
 }
+
+
+def _release_hash_configured(asset):
+    """N1: Return True only if the asset carries a real, usable SHA-256 hash.
+
+    Fail-closed: a missing key, an empty value, or a PLACEHOLDER value means
+    the release hash has not been pinned yet and the binary MUST NOT be run.
+    """
+    h = asset.get("sha256", "")
+    if not h or h.startswith("PLACEHOLDER"):
+        return False
+    return True
+
+
+# New-4: Strict input validation for values that are passed to CLI subprocess
+# calls. The goal is to prevent argv-flag smuggling (a value starting with "-"
+# being parsed by radiant-cli as an option) and to reject obviously malformed
+# inputs before they ever reach the subprocess.
+_ADDRESS_RE = re.compile(r'^[1-9A-HJ-NP-Za-km-z]{25,80}$')  # base58 address
+_LABEL_RE = re.compile(r'^[\w \-]{0,100}$')                 # wallet label
+
+
+def _reject_flag(value):
+    """Return True if the value would be interpreted as a CLI flag (argv smuggling)."""
+    return isinstance(value, str) and value.startswith('-')
+
+
+def _validate_address(address):
+    """Validate a base58 address. Returns (ok, error)."""
+    if not isinstance(address, str) or _reject_flag(address):
+        return False, "Invalid address"
+    if not _ADDRESS_RE.match(address):
+        return False, "Invalid address format"
+    return True, None
+
+
+def _validate_label(label):
+    """Validate an optional wallet label. Returns (ok, error)."""
+    if label is None:
+        return True, None
+    if not isinstance(label, str) or _reject_flag(label):
+        return False, "Invalid label"
+    if not _LABEL_RE.match(label):
+        return False, "Invalid label format"
+    return True, None
+
+
+def _validate_backup_destination(destination):
+    """Validate a wallet backup destination path. Returns (ok, error).
+
+    Rejects argv-flag smuggling, NUL bytes, and confines the backup to a known
+    safe directory (~/Documents/RadiantBackups) to avoid arbitrary file writes.
+    """
+    if not isinstance(destination, str) or not destination:
+        return False, "Invalid backup destination"
+    if _reject_flag(destination) or '\x00' in destination:
+        return False, "Invalid backup destination"
+    try:
+        backup_dir = (Path.home() / "Documents" / "RadiantBackups").resolve()
+        dest = Path(destination).resolve()
+    except Exception:
+        return False, "Invalid backup destination"
+    # Confine to the known backups directory (no path traversal escape).
+    if backup_dir not in dest.parents and dest != backup_dir:
+        return False, "Backup destination must be inside the RadiantBackups directory"
+    return True, None
+
+
+def _validate_privkey(privkey):
+    """Validate a WIF private key. Returns (ok, error).
+
+    Only structural checks here -- the daemon does cryptographic validation.
+    The key point is rejecting argv-flag smuggling; the secret itself is fed
+    via stdin (H13) rather than argv.
+    """
+    if not isinstance(privkey, str) or not privkey:
+        return False, "Private key is required"
+    if _reject_flag(privkey):
+        return False, "Invalid private key"
+    if not _ADDRESS_RE.match(privkey):
+        return False, "Invalid private key format"
+    return True, None
 
 # Fallback logo SVG (simple R icon) used when logo files can't be found
 FALLBACK_LOGO_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
@@ -176,6 +262,16 @@ class DownloadManager:
             return False
         
         asset = RELEASE_ASSETS[platform_key]
+
+        # N1: Fail-closed. Refuse to download/install any binary whose release
+        # SHA-256 hash has not been pinned (missing/empty/PLACEHOLDER).
+        if not _release_hash_configured(asset):
+            self.download_progress = {
+                "status": "error",
+                "percent": 0,
+                "message": "auto-download disabled: release hash not configured",
+            }
+            return False
 
         # Create binaries directory
         self.binaries_path.mkdir(parents=True, exist_ok=True)
@@ -279,16 +375,24 @@ class DownloadManager:
             computed_hash = sha256_hash.hexdigest()
 
             expected_hash = asset.get("sha256", "")
-            # Skip verification if hash is placeholder (must be updated at release time)
-            if expected_hash and not expected_hash.startswith("PLACEHOLDER"):
-                if computed_hash != expected_hash:
-                    tar_path.unlink()  # Delete the bad file
-                    self.download_progress = {
-                        "status": "error",
-                        "percent": 0,
-                        "message": "Download verification failed: SHA-256 mismatch. File may be corrupted or tampered with.",
-                    }
-                    return False
+            # N1: Fail-closed. A missing/empty/PLACEHOLDER hash means the release
+            # hash was never pinned -- refuse rather than running unverified code.
+            if not _release_hash_configured(asset):
+                tar_path.unlink()  # Delete the unverifiable file
+                self.download_progress = {
+                    "status": "error",
+                    "percent": 0,
+                    "message": "auto-download disabled: release hash not configured",
+                }
+                return False
+            if computed_hash != expected_hash:
+                tar_path.unlink()  # Delete the bad file
+                self.download_progress = {
+                    "status": "error",
+                    "percent": 0,
+                    "message": "Download verification failed: SHA-256 mismatch. File may be corrupted or tampered with.",
+                }
+                return False
         except Exception as e:
             self.download_progress = {
                 "status": "error",
@@ -541,13 +645,34 @@ class NodeManager:
                 return str(p)
         return None
     
-    def _run_cli(self, *args, timeout=10):
-        """Run a radiant-cli command and return the result."""
+    def _run_cli(self, *args, timeout=10, stdin_args=None):
+        """Run a radiant-cli command and return the result.
+
+        H13: When ``stdin_args`` is provided (a list of strings), radiant-cli is
+        invoked with ``-stdin`` and those values are fed via standard input,
+        one per line. radiant-cli appends stdin args *after* the argv args, so
+        callers should pass only the non-sensitive command name (and any
+        leading positionals) in ``args`` and put sensitive values (e.g. WIF
+        private keys) in ``stdin_args``. This keeps secrets out of the process
+        argv where they would otherwise be visible to ``ps``/other users.
+        """
         cli = self._find_binary("radiant-cli")
         if not cli:
             return None, "CLI not found"
+        cmd = [cli]
+        stdin_data = None
+        if stdin_args:
+            cmd.append("-stdin")
+        cmd.extend(args)
+        if stdin_args:
+            # One argument per line; radiant-cli reads until EOF and appends
+            # these to the positional args after those given on argv.
+            stdin_data = "\n".join(str(a) for a in stdin_args) + "\n"
         try:
-            result = subprocess.run([cli] + list(args), capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+                input=stdin_data,
+            )
             if result.returncode == 0:
                 return result.stdout.strip(), None
             return None, result.stderr.strip() or f"Command failed with code {result.returncode}"
@@ -834,11 +959,16 @@ class NodeManager:
     def get_new_address(self, label=""):
         if not self._is_node_available():
             return {"error": "Node not running"}
-        
+
+        # New-4: validate label before passing to subprocess
+        ok, verr = _validate_label(label)
+        if not ok:
+            return {"success": False, "error": verr}
+
         args = ["getnewaddress"]
         if label:
             args.append(label)
-        
+
         address, err = self._run_cli(*args)
         if address:
             return {"success": True, "address": address}
@@ -1010,11 +1140,19 @@ class NodeManager:
         """Export private key for a specific address."""
         if not self._is_node_available():
             return {"success": False, "error": "Node not running"}
-        
+
         if not address:
             return {"success": False, "error": "Address is required"}
-        
-        privkey, err = self._run_cli("dumpprivkey", address)
+
+        # New-4: validate the address before passing to subprocess
+        ok, verr = _validate_address(address)
+        if not ok:
+            return {"success": False, "error": verr}
+
+        # H13: the *input* (address) is not secret; the returned WIF is. Feed
+        # the address via stdin anyway so it stays out of argv for consistency
+        # with importprivkey.
+        privkey, err = self._run_cli("dumpprivkey", stdin_args=[address])
         if privkey:
             self._log(f"Exported private key for {address[:16]}...")
             return {"success": True, "privkey": privkey, "address": address}
@@ -1025,18 +1163,32 @@ class NodeManager:
         """Import a private key into the wallet."""
         if not self._is_node_available():
             return {"success": False, "error": "Node not running"}
-        
+
         if not privkey:
             return {"success": False, "error": "Private key is required"}
-        
+
+        # New-4: validate inputs before passing to subprocess
+        ok, verr = _validate_privkey(privkey)
+        if not ok:
+            return {"success": False, "error": verr}
+        ok, verr = _validate_label(label)
+        if not ok:
+            return {"success": False, "error": verr}
+
         self._log(f"Importing private key (rescan={rescan})...")
-        
-        args = ["importprivkey", privkey]
+
+        # H13: keep the WIF out of argv. radiant-cli -stdin appends stdin args
+        # after argv args, so ALL positionals (privkey, [label], rescan) are
+        # fed via stdin in order; argv carries only the command name. The label
+        # is omitted when empty so 'rescan' keeps its positional slot (matching
+        # the original argv-based behavior).
+        stdin_args = [privkey]
         if label:
-            args.append(label)
-        args.append(str(rescan).lower())
-        
-        result, err = self._run_cli(*args, timeout=300)  # Rescan can take a while
+            stdin_args.append(label)
+        stdin_args.append(str(rescan).lower())
+        result, err = self._run_cli(
+            "importprivkey", timeout=300, stdin_args=stdin_args
+        )  # Rescan can take a while
         if err:
             return {"success": False, "error": err}
         
@@ -1048,13 +1200,20 @@ class NodeManager:
         if not self._is_node_available():
             return {"success": False, "error": "Node not running"}
         
+        backup_dir = Path.home() / "Documents" / "RadiantBackups"
         if not destination:
             # Default backup location
-            backup_dir = Path.home() / "Documents" / "RadiantBackups"
             backup_dir.mkdir(parents=True, exist_ok=True)
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             destination = str(backup_dir / f"wallet_backup_{timestamp}.dat")
-        
+        else:
+            # New-4: validate caller-supplied destination (reject flag smuggling,
+            # NUL bytes, and confine to the RadiantBackups directory).
+            ok, verr = _validate_backup_destination(destination)
+            if not ok:
+                return {"success": False, "error": verr}
+            backup_dir.mkdir(parents=True, exist_ok=True)
+
         result, err = self._run_cli("backupwallet", destination)
         if err:
             return {"success": False, "error": err}
@@ -1135,12 +1294,12 @@ class NodeManager:
             wif = mnemonic_to_wif(mnemonic, passphrase)
             
             self._log(f"Importing seed phrase (rescan={rescan})...")
-            
-            # Import the derived private key
-            args = ["importprivkey", wif, "seed-phrase-import"]
-            args.append(str(rescan).lower())
-            
-            result, err = self._run_cli(*args, timeout=300)
+
+            # H13: feed the derived WIF via stdin so it never appears in argv.
+            stdin_args = [wif, "seed-phrase-import", str(rescan).lower()]
+            result, err = self._run_cli(
+                "importprivkey", timeout=300, stdin_args=stdin_args
+            )
             if err:
                 return {"success": False, "error": err}
             
@@ -2036,7 +2195,7 @@ HTML_PAGE = '''<!DOCTYPE html>
             progress.style.display = 'block';
             downloadInProgress = true;
             
-            fetch('/api/download/start', {
+            apiCall('/api/download/start', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ platform_key: platformInfo?.platform_key })
@@ -2194,8 +2353,8 @@ HTML_PAGE = '''<!DOCTYPE html>
         
         function updateWallet() {
             if (!nodeRunning) return;
-            
-            fetch('/api/wallet/info')
+
+            apiCall('/api/wallet/info')
                 .then(r => r.json())
                 .then(data => {
                     if (data.wallet_disabled) {
@@ -2625,29 +2784,25 @@ HTML_PAGE = '''<!DOCTYPE html>
 class RequestHandler(http.server.SimpleHTTPRequestHandler):
     # C3 Security: Validate Host header to prevent DNS rebinding attacks
     def _validate_host(self):
-        """Reject requests with invalid Host headers (DNS rebinding protection)."""
+        """Reject requests with invalid Host headers (DNS rebinding protection).
+
+        New-2: Only the loopback hostnames bound to the *configured* port are
+        accepted -- exact match, no prefix matching. Everything else (e.g.
+        evil.com, or loopback on a different port) is rejected.
+        """
         host = self.headers.get('Host', '')
-        client_addr = self.client_address[0]
+        port = self.server.server_address[1]
 
-        # Allow localhost or 127.0.0.1 with any port
-        valid_hosts = [
-            '127.0.0.1',
-            'localhost',
-            f'127.0.0.1:{self.server.server_address[1]}',
-            f'localhost:{self.server.server_address[1]}'
-        ]
+        # Exact allow-list: loopback host:port for IPv4, name, and IPv6.
+        valid_hosts = (
+            f'127.0.0.1:{port}',
+            f'localhost:{port}',
+            f'[::1]:{port}',
+        )
 
-        # If coming from localhost, be more permissive
-        if client_addr in ('127.0.0.1', '::1', 'localhost'):
-            # Check if Host header is valid
-            if host not in valid_hosts and not host.startswith(('127.0.0.1:', 'localhost:')):
-                self.send_error(403, "Invalid Host header")
-                return False
-        else:
-            # External requests: must have exact host match
-            if host not in valid_hosts:
-                self.send_error(403, "Invalid Host header")
-                return False
+        if host not in valid_hosts:
+            self.send_error(403, "Invalid Host header")
+            return False
         return True
 
     # C3 Security: Validate security token on API calls
@@ -2655,7 +2810,8 @@ class RequestHandler(http.server.SimpleHTTPRequestHandler):
         """Validate X-Radiant-Token header matches our per-launch token."""
         global _SECURITY_TOKEN
         token = self.headers.get('X-Radiant-Token', '')
-        if token != _SECURITY_TOKEN:
+        # New-3: constant-time comparison to avoid timing side-channel.
+        if not hmac.compare_digest(str(token), str(_SECURITY_TOKEN)):
             self.send_error(403, "Invalid or missing security token")
             return False
         return True

@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <new>
 #include <type_traits>
 
 /**
@@ -281,19 +282,27 @@ private:
             }
         } else {
             if (!is_direct()) {
-                // FIXME: Because malloc/realloc here won't call new_handler if
-                // allocation fails, assert success. These should instead use an
-                // allocator or new/delete so that handlers are called as
-                // necessary, but performance would be slightly degraded by
-                // doing so.
-                _union.indirect = static_cast<char *>(realloc(
+                // H12: malloc/realloc do not invoke the C++ new_handler on
+                // failure. Previously this asserted success, which is compiled
+                // out under NDEBUG and would lead to a NULL-deref (UB / crash)
+                // in release builds on OOM. Throw std::bad_alloc() instead so
+                // allocation failure fails safely and is unwound like any other
+                // bad_alloc. On the realloc-failure path the original block is
+                // left intact (and freed by the destructor), so it is not
+                // leaked.
+                char *new_indirect = static_cast<char *>(realloc(
                     _union.indirect, ((size_t)sizeof(T)) * new_capacity));
-                assert(_union.indirect);
+                if (!new_indirect) {
+                    throw std::bad_alloc();
+                }
+                _union.indirect = new_indirect;
                 _union.capacity = new_capacity;
             } else {
                 char *new_indirect = static_cast<char *>(
                     malloc(((size_t)sizeof(T)) * new_capacity));
-                assert(new_indirect);
+                if (!new_indirect) {
+                    throw std::bad_alloc();
+                }
                 T *src = direct_ptr(0);
                 T *dst = reinterpret_cast<T *>(new_indirect);
                 memcpy(dst, src, size() * sizeof(T));

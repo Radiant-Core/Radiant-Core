@@ -46,6 +46,29 @@ inline constexpr int COINBASE_MATURITY = 100;
 /** Coinbase scripts have their own script size limit. */
 inline constexpr int MAX_COINBASE_SCRIPTSIG_SIZE = 2048;
 
+/**
+ * Per-script peak memory budget (bytes) enforced only when the 2026-06
+ * SCRIPT_SECURITY_UPGRADE flag is active. Caps the cumulative byte size of all
+ * elements held across the main stack + altstack at any instant, so a script
+ * cannot balloon to multiple GB via repeated OP_DUP/OP_CAT/etc. of a large
+ * element. Chosen at 64 MB = 2x MAX_SCRIPT_ELEMENT_SIZE (32 MB), comfortably
+ * above any realistic legitimate script (a single max element is 32 MB; this
+ * permits two of them simultaneously plus headroom) while rejecting a memory
+ * bomb that would otherwise consume up to MAX_STACK_SIZE * MAX_SCRIPT_ELEMENT_SIZE
+ * (~1 PB) of address space.
+ */
+inline constexpr uint64_t MAX_SCRIPT_STACK_MEMORY_USAGE = uint64_t(64) * ONE_MEGABYTE;
+
+/**
+ * Per-script opcode-cost budget for hashing / bytewise opcodes, enforced only
+ * when SCRIPT_SECURITY_UPGRADE is active. Each such opcode accrues cost
+ * proportional to the size of the data it processes; the running total may not
+ * exceed this budget. Chosen at 1 GB-equivalent of processed bytes — far above
+ * any plausible legitimate script (e.g. tens of MB-class hashes) but bounding
+ * the total CPU a single script can demand from hashing/bytewise primitives.
+ */
+inline constexpr uint64_t MAX_SCRIPT_OPCODE_COST = uint64_t(1000) * ONE_MEGABYTE;
+
 /** Flags for nSequence and nLockTime locks */
 /** Interpret sequence numbers as relative lock-time constraints. */
 inline constexpr unsigned int LOCKTIME_VERIFY_SEQUENCE = (1 << 0);

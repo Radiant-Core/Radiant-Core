@@ -116,5 +116,12 @@ enum {
     SCRIPT_ENHANCED_REFERENCES = (1U << 26),
 
     // Added OP_PUSH_TX_STATE
-    SCRIPT_PUSH_TX_STATE = (1U << 27)
+    SCRIPT_PUSH_TX_STATE = (1U << 27),
+
+    // 2026-06 security-audit hardening upgrade. When set, tightens the K12
+    // single-node bound to <8192 bytes and enforces per-script peak-stack
+    // memory and hashing/bytewise opcode-cost budgets. Gated behind the
+    // future SecurityUpgradeHeight activation so it never tightens
+    // currently-valid scripts retroactively.
+    SCRIPT_SECURITY_UPGRADE = (1U << 28)
 };

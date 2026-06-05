@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <fstream>
+#include <system_error>
 
 /**
  * JSON-RPC protocol.  Bitcoin speaks version 1.0 for maximum compatibility, but
@@ -95,6 +96,22 @@ bool GenerateAuthCookie(std::string *cookie_out) {
     }
     file << cookie;
     file.close();
+
+    // SECURITY (audit 2026-06, M6): do not rely on the process umask for the
+    // cookie file permissions. The cookie grants full RPC access, so force it
+    // to owner-only read/write (0600) explicitly before exposing it under its
+    // final name. We set perms on the temp file; RenameOver preserves them.
+    {
+        std::error_code ec;
+        fs::permissions(filepath_tmp,
+                        fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, ec);
+        if (ec) {
+            LogPrintf("Warning: unable to set restrictive permissions on RPC "
+                      "cookie file %s: %s\n",
+                      filepath_tmp.string(), ec.message());
+        }
+    }
 
     fs::path filepath = GetAuthCookieFile(false);
     if (!RenameOver(filepath_tmp, filepath)) {

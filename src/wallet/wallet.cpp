@@ -586,8 +586,13 @@ bool CWallet::ChangeWalletPassphrase(
                      double(GetTimeMillis() - nStartTime))) /
                 2;
 
-            if (pMasterKey.second.nDeriveIterations < 25000) {
-                pMasterKey.second.nDeriveIterations = 25000;
+            // SECURITY (audit 2026-06, M3): raise the minimum KDF iteration
+            // floor. Only affects new encryptions / passphrase changes;
+            // existing wallets keep their stored nDeriveIterations.
+            if (pMasterKey.second.nDeriveIterations <
+                WALLET_CRYPTO_KDF_MIN_ITERATIONS) {
+                pMasterKey.second.nDeriveIterations =
+                    WALLET_CRYPTO_KDF_MIN_ITERATIONS;
             }
 
             WalletLogPrintf(
@@ -831,8 +836,11 @@ bool CWallet::EncryptWallet(const SecureString &strWalletPassphrase) {
                                    double(GetTimeMillis() - nStartTime))) /
         2;
 
-    if (kMasterKey.nDeriveIterations < 25000) {
-        kMasterKey.nDeriveIterations = 25000;
+    // SECURITY (audit 2026-06, M3): raise the minimum KDF iteration floor for
+    // newly-encrypted wallets. Backward-compatible (existing wallets reuse
+    // their own stored nDeriveIterations on unlock).
+    if (kMasterKey.nDeriveIterations < WALLET_CRYPTO_KDF_MIN_ITERATIONS) {
+        kMasterKey.nDeriveIterations = WALLET_CRYPTO_KDF_MIN_ITERATIONS;
     }
 
     WalletLogPrintf("Encrypting Wallet with an nDeriveIterations of %i\n",

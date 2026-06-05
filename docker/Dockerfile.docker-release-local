@@ -1,5 +1,10 @@
 # Radiant Core - Docker Release Build (Local Source)
-FROM ubuntu:24.04 AS builder
+# SECURITY (audit N4): pin the base image by immutable digest, not the mutable
+# `ubuntu:24.04` tag. PIN-REQUIRED: replace the placeholder with the digest
+# from `docker pull ubuntu:24.04 && docker inspect \
+#   --format='{{index .RepoDigests 0}}' ubuntu:24.04`. Use the SAME digest for
+# the builder and runtime stages below. The tag is kept for readability only.
+FROM ubuntu:24.04@sha256:PINNED_DIGEST_PLACEHOLDER AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BUILD_TYPE=Release
@@ -36,7 +41,9 @@ RUN cmake -B build -G Ninja \
 RUN cmake --build build --target radiantd radiant-cli radiant-tx -j$(nproc)
 
 # Runtime image
-FROM ubuntu:24.04 AS runtime
+# SECURITY (audit N4): pin by the SAME immutable digest as the builder stage.
+# PIN-REQUIRED: replace the placeholder with the ubuntu:24.04 digest.
+FROM ubuntu:24.04@sha256:PINNED_DIGEST_PLACEHOLDER AS runtime
 
 LABEL maintainer="info@radiantfoundation.org"
 LABEL version="3.0.0"

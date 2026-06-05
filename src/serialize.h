@@ -845,10 +845,21 @@ void Serialize(Stream &os, const std::basic_string<C> &str) {
 
 template <typename Stream, typename C>
 void Unserialize(Stream &is, std::basic_string<C> &str) {
-    size_t nSize = ReadCompactSize(is);
-    str.resize(nSize);
-    if (nSize != 0) {
-        is.read((char *)str.data(), nSize * sizeof(C));
+    // H11: Read incrementally in bounded chunks so a tiny message announcing a
+    // huge size cannot force a single up-front allocation of up to MAX_SIZE.
+    // The string grows only as bytes actually arrive from the stream (the
+    // underlying stream read enforces availability), mirroring the batched
+    // strategy used by Unserialize_vector for uint8_t. Result is identical.
+    const size_t nSize = ReadCompactSize(is);
+    str.clear();
+    size_t i = 0;
+    while (i < nSize) {
+        // Limit per-iteration growth so a bogus size value won't cause OOM.
+        const size_t blk =
+            std::min(nSize - i, 1 + (MAX_VECTOR_ALLOCATE - 1) / sizeof(C));
+        str.resize(i + blk);
+        is.read((char *)(str.data() + i), blk * sizeof(C));
+        i += blk;
     }
 }
 

@@ -19,8 +19,10 @@
 #include <streams.h>
 #include <sync.h>
 #include <txmempool.h>
+#include <logging.h>
 #include <util/strencodings.h>
 #include <util/string.h>
+#include <util/system.h>
 #include <validation.h>
 #include <version.h>
 
@@ -665,6 +667,22 @@ static const struct {
 };
 
 void StartREST() {
+    // SECURITY (audit 2026-06, H4): the REST interface is intentionally
+    // UNAUTHENTICATED by design (read-only public chain data) and is opt-in
+    // (-rest, off by default). It shares the single HTTP listener with RPC, so
+    // it only ever binds where RPC binds (see HTTPBindAddresses) and is gated by
+    // the same -rpcallowip ACL. However, because it has no per-request auth, an
+    // operator who exposes the RPC port beyond loopback also exposes REST. Emit
+    // a loud startup warning in that case so it is never enabled accidentally on
+    // a public interface.
+    if (gArgs.IsArgSet("-rpcallowip")) {
+        LogPrintf("WARNING: the REST interface (-rest) is ENABLED and is "
+                  "UNAUTHENTICATED. Because -rpcallowip is set, REST may be "
+                  "reachable from non-loopback addresses. Anyone able to reach "
+                  "the RPC port can read chain/mempool data via /rest/*. "
+                  "Restrict access with -rpcallowip/-rpcbind and/or front it "
+                  "with an authenticating reverse proxy.\n");
+    }
     for (size_t i = 0; i < std::size(uri_prefixes); ++i) {
         RegisterHTTPHandler(uri_prefixes[i].prefix, false,
                             uri_prefixes[i].handler);

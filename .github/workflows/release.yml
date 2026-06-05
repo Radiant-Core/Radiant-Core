@@ -14,12 +14,22 @@ on:
 env:
   BUILD_TYPE: Release
 
+# SECURITY (audit H18): default to least privilege for every job. Only the
+# release-publishing job is granted `contents: write` (see create-release).
+permissions:
+  contents: read
+
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # SECURITY (audit H18): pin actions to a full commit SHA, not a
+        # floating tag. A mutable tag like @v4 lets the action owner (or anyone
+        # who compromises the repo/tag) ship new code into our release pipeline.
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install dependencies
         run: |
@@ -71,7 +81,7 @@ jobs:
           zip -r radiant-${VERSION}-linux-x64.zip radiant-${VERSION}-linux-x64
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
           name: radiant-linux-x64
           path: |
@@ -80,9 +90,11 @@ jobs:
 
   build-macos:
     runs-on: macos-14
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install dependencies
         run: |
@@ -141,7 +153,7 @@ jobs:
             radiant-${VERSION}-macos.dmg || true
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
           name: radiant-macos
           path: |
@@ -152,18 +164,20 @@ jobs:
   build-gui-packages:
     needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
           name: radiant-linux-x64
           path: binaries/linux
 
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
           name: radiant-macos
           path: binaries/macos
@@ -227,29 +241,32 @@ jobs:
           cat > radiant-core-gui-macos-v${VERSION}/start-gui.command << 'EOF'
           #!/bin/bash
           cd "$(dirname "$0")"
-          if xattr -l . 2>/dev/null | grep -q "com.apple.quarantine"; then
-              echo "Removing macOS quarantine..."
-              xattr -rd com.apple.quarantine .
-          fi
+          # SECURITY (audit N3): do NOT strip the Gatekeeper quarantine flag.
+          # Removing com.apple.quarantine disables macOS code-signature and
+          # notarization checks for the whole package — a downgrade we must not
+          # automate. Users who trust this build should open it via Finder's
+          # right-click > Open the first time, which keeps Gatekeeper engaged.
           chmod +x radiantd radiant-cli radiant-tx 2>/dev/null
           echo "Starting Radiant Core GUI..."
           python3 radiant_node_web.py
           EOF
           chmod +x radiant-core-gui-macos-v${VERSION}/start-gui.command
-          
+
           # Create README
           cat > radiant-core-gui-macos-v${VERSION}/README.txt << 'EOF'
           Radiant Core GUI - All-in-One Package
           =====================================
-          
+
           Quick Start:
             Double-click "start-gui.command"
-          
-          First time: If blocked by Gatekeeper, run:
-            xattr -rd com.apple.quarantine .
-          
+
+          First time: if macOS blocks the app, right-click "start-gui.command"
+          in Finder and choose "Open", then confirm. This keeps Gatekeeper's
+          signature/notarization checks in place. Do NOT run
+          "xattr -rd com.apple.quarantine" — that disables those checks.
+
           The GUI opens at http://127.0.0.1:8765
-          
+
           Support: https://radiantblockchain.org
           EOF
           
@@ -261,7 +278,7 @@ jobs:
           sha256sum radiant-core-gui-macos-v${VERSION}.zip > radiant-core-gui-macos-v${VERSION}.zip.sha256
 
       - name: Upload GUI packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
           name: radiant-gui-packages
           path: |
@@ -276,7 +293,7 @@ jobs:
       contents: write
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
           path: artifacts
 
@@ -284,7 +301,8 @@ jobs:
         run: find artifacts -type f
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        # SECURITY (audit H18): pinned to a full commit SHA. v2.0.4 release SHA.
+        uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
