@@ -296,7 +296,10 @@ include(InstallationHelper)
 install_target(radiant-qt)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-	set(BITCOINQT_BUNDLE_ICON "res/icons/bitcoin.icns")
+	# Use the high-resolution Radiant branded icon instead of the upstream
+	# Bitcoin/BCH placeholder.  The file lives at the repo root under
+	# doc/images/ so we reference it via CMAKE_SOURCE_DIR.
+	set(BITCOINQT_BUNDLE_ICON "${CMAKE_SOURCE_DIR}/doc/images/RXDCore.icns")
 	get_filename_component(BITCOINQT_BUNDLE_ICON_NAME
 		"${BITCOINQT_BUNDLE_ICON}"
 		NAME
@@ -329,7 +332,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/share/qt/Info.plist.cmake.in"
 		MACOSX_BUNDLE_BUNDLE_NAME "${BITCOIN_QT_OSX_BUNDLE_NAME}"
 		MACOSX_BUNDLE_BUNDLE_VERSION "${radiant-node_VERSION}"
-		MACOSX_BUNDLE_GUI_IDENTIFIER "org.bitcoincashnode.${BITCOIN_QT_OSX_BUNDLE_NAME}"
+		MACOSX_BUNDLE_GUI_IDENTIFIER "org.radiantblockchain.${BITCOIN_QT_OSX_BUNDLE_NAME}"
 		MACOSX_BUNDLE_ICON_FILE "${BITCOINQT_BUNDLE_ICON_NAME}"
 		MACOSX_BUNDLE_INFO_STRING "${radiant-node_VERSION}, Copyright © 2009-${COPYRIGHT_YEAR} ${COPYRIGHT_HOLDERS_FINAL}"
 		MACOSX_BUNDLE_LONG_VERSION_STRING "${radiant-node_VERSION}"

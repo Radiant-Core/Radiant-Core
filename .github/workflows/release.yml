@@ -128,31 +128,51 @@ jobs:
       - name: Build
         run: cmake --build build --config ${{ env.BUILD_TYPE }} -j$(sysctl -n hw.ncpu)
 
+      - name: Build fancy DMG (macdeployqtplus)
+        # Runs the cmake osx-dmg target which:
+        #   1. Strips the app bundle
+        #   2. Calls macdeployqtplus to bundle Qt frameworks + plugins into the .app
+        #   3. Generates the SVG background → multi-res TIFF
+        #   4. Creates a drag-to-Applications DMG with the custom layout defined in
+        #      contrib/macdeploy/fancy.plist (background image, icon positions)
+        run: |
+          cmake --build build --target osx-dmg -j$(sysctl -n hw.ncpu)
+
       - name: Create release packages
         run: |
           VERSION=${{ github.event.inputs.version || github.ref_name }}
-          
-          # Create package with standard naming (radiant-core-macos-arm64)
+
+          # Locate the fancy DMG produced by macdeployqtplus and give it the
+          # canonical release name.  The exact filename macdeployqtplus uses
+          # depends on the bundle name; find it rather than hardcode it.
+          DMG_SRC=$(find build -maxdepth 1 -name "*.dmg" | head -1)
+          if [ -n "$DMG_SRC" ]; then
+            cp "$DMG_SRC" "radiant-${VERSION}-macos.dmg"
+            echo "DMG: $DMG_SRC -> radiant-${VERSION}-macos.dmg"
+          else
+            echo "WARNING: osx-dmg target produced no .dmg; falling back to hdiutil"
+          fi
+
+          # Package the Qt-bundled .app from build/dist/ (macdeployqtplus output).
+          # Fall back to the raw build-tree app if the dist dir is absent.
+          DIST_APP=$(find build/dist -maxdepth 1 -name "*.app" 2>/dev/null | head -1)
+          if [ -z "$DIST_APP" ]; then
+            echo "WARNING: build/dist has no .app; using build-tree app (Qt not bundled)"
+            DIST_APP="build/src/qt/RadiantCore-Qt.app"
+          fi
+
+          # Assemble the macOS binary package
           mkdir -p radiant-core-macos-arm64
-          cp build/src/radiantd radiant-core-macos-arm64/ || true
-          cp build/src/radiant-cli radiant-core-macos-arm64/ || true
-          cp build/src/radiant-tx radiant-core-macos-arm64/ || true
+          cp -R "$DIST_APP"           radiant-core-macos-arm64/ || true
+          cp build/src/radiantd       radiant-core-macos-arm64/ || true
+          cp build/src/radiant-cli    radiant-core-macos-arm64/ || true
+          cp build/src/radiant-tx     radiant-core-macos-arm64/ || true
           cp build/src/radiant-wallet radiant-core-macos-arm64/ || true
-          cp -R build/src/qt/Radiant-Qt.app radiant-core-macos-arm64/ || true
-          cp README.md radiant-core-macos-arm64/ || true
-          cp COPYING radiant-core-macos-arm64/ || true
-          
-          # Create .tar.gz
+          cp README.md                radiant-core-macos-arm64/ || true
+          cp COPYING                  radiant-core-macos-arm64/ || true
+
           tar -czvf radiant-core-macos-arm64.tar.gz radiant-core-macos-arm64
-          
-          # Create .zip (preferred for macOS users)
-          zip -r radiant-core-macos-arm64.zip radiant-core-macos-arm64
-          
-          # Create DMG (optional)
-          hdiutil create -volname "Radiant-${VERSION}" \
-            -srcfolder radiant-core-macos-arm64 \
-            -ov -format UDZO \
-            radiant-${VERSION}-macos.dmg || true
+          zip -r    radiant-core-macos-arm64.zip    radiant-core-macos-arm64
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
@@ -231,8 +251,8 @@ jobs:
           echo "Building macOS GUI package..."
           mkdir -p radiant-core-gui-macos-v${VERSION}
           
-          # Extract macOS binaries
-          unzip -o binaries/macos/radiant-*-macos.zip -d temp-macos 2>/dev/null && \
+          # Extract macOS binaries (zip from the build-macos job)
+          unzip -o binaries/macos/radiant-core-macos-arm64.zip -d temp-macos 2>/dev/null && \
           cp temp-macos/*/radiantd temp-macos/*/radiant-cli temp-macos/*/radiant-tx radiant-core-gui-macos-v${VERSION}/ 2>/dev/null || true
           
           # Copy GUI files
