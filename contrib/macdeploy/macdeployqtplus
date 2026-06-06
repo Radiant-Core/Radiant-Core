@@ -16,11 +16,57 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-import subprocess, sys, re, os, shutil, stat, os.path, time
+import subprocess, sys, re, os, shutil, stat, os.path, time, glob
 from string import Template
 from argparse import ArgumentParser
 
 # This is ported from the original macdeployqt with modifications
+
+def resolveRpathRef(rpath_ref, declaring_binary):
+    """Resolve an @rpath/<libname> reference to an absolute file path.
+
+    macOS resolves @rpath at runtime using LC_RPATH entries embedded in the
+    binary that links against the library.  This function replicates that
+    logic for deployment purposes:
+      1. Parse LC_RPATH entries from *declaring_binary* via `otool -l`.
+      2. Check each rpath / libname combination and return the first hit.
+      3. Fall back to a broad search of /opt/homebrew/opt/*/lib so that
+         brew-installed keg-only libraries are always found on CI runners.
+    """
+    if not rpath_ref.startswith("@rpath/"):
+        return None
+    libname = rpath_ref[len("@rpath/"):]
+
+    # --- Step 1: LC_RPATH entries from the declaring binary ---
+    rpaths = []
+    try:
+        otool_out = subprocess.check_output(
+            ["otool", "-l", declaring_binary], stderr=subprocess.DEVNULL
+        ).decode(errors="replace")
+        for m in re.finditer(r"LC_RPATH.*?path\s+(\S+)", otool_out, re.DOTALL):
+            rpaths.append(m.group(1))
+    except Exception:
+        pass
+
+    # --- Step 2: search rpaths ---
+    for rp in rpaths:
+        # Replace @loader_path / @executable_path with the binary's dir
+        rp = rp.replace("@loader_path", os.path.dirname(declaring_binary))
+        rp = rp.replace("@executable_path", os.path.dirname(declaring_binary))
+        candidate = os.path.join(rp, libname)
+        if os.path.exists(candidate):
+            return os.path.realpath(candidate)
+
+    # --- Step 3: broad brew opt search (CI fallback) ---
+    for candidate in glob.glob("/opt/homebrew/opt/*/lib/" + libname):
+        if os.path.exists(candidate):
+            return os.path.realpath(candidate)
+    # Also check the main brew lib dir (non-keg-only installs)
+    candidate = os.path.join("/opt/homebrew/lib", libname)
+    if os.path.exists(candidate):
+        return os.path.realpath(candidate)
+
+    return None
 
 class FrameworkInfo(object):
     def __init__(self):
@@ -338,10 +384,27 @@ def deployFrameworks(frameworks, bundlePath, binaryPath, strip, verbose, deploym
             if verbose >= 2:
                 print(framework.frameworkName, "already deployed, skipping.")
             continue
-        
+
+        # Resolve @rpath references to absolute paths.  macdeployqtplus stores
+        # the raw otool -L output; @rpath is not a real file path and must be
+        # expanded before we can copy the library into the bundle.
+        if framework.sourceFilePath.startswith("@rpath/"):
+            resolved = resolveRpathRef(framework.sourceFilePath, binaryPath)
+            if resolved is None:
+                raise RuntimeError(
+                    "Could not resolve @rpath reference: %s (declared by %s)"
+                    % (framework.sourceFilePath, binaryPath)
+                )
+            if verbose >= 2:
+                print("Resolved", framework.sourceFilePath, "->", resolved)
+            framework.sourceFilePath = resolved
+            framework.frameworkPath = resolved
+            framework.binaryPath = resolved
+            framework.frameworkDirectory = os.path.dirname(resolved)
+
         # install_name_tool the new id into the binary
         changeInstallName(framework.installName, framework.deployedInstallName, binaryPath, verbose)
-        
+
         # Copy framework to app bundle.
         deployedBinaryPath = copyFramework(framework, bundlePath, verbose)
         # Skip the rest if already was deployed.
