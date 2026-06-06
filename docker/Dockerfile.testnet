@@ -15,7 +15,12 @@
 # P2P Port: 27333, RPC Port: 27332
 # ============================================================================
 
-FROM ubuntu:24.04
+# SECURITY (audit N4): pin the base image by immutable digest, not the mutable
+# `ubuntu:24.04` tag. PIN-REQUIRED: replace the placeholder with the digest
+# from `docker pull ubuntu:24.04 && docker inspect \
+#   --format='{{index .RepoDigests 0}}' ubuntu:24.04`. The tag is kept for
+# human readability only.
+FROM ubuntu:24.04@sha256:PINNED_DIGEST_PLACEHOLDER
 
 LABEL maintainer="info@radiantfoundation.org"
 LABEL description="Radiant Core Node - Testnet Configuration (LOCAL BUILD)"

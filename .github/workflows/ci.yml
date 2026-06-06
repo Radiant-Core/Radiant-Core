@@ -9,11 +9,16 @@ on:
 env:
   BUILD_TYPE: Release
 
+# SECURITY (audit H18): least privilege — CI only reads the repo.
+permissions:
+  contents: read
+
 jobs:
   build-ubuntu:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      # SECURITY (audit H18): pin actions to a full commit SHA, not @v4.
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install dependencies
         run: |
@@ -53,7 +58,7 @@ jobs:
   build-macos-14:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install dependencies
         run: |
@@ -75,7 +80,7 @@ jobs:
   build-macos-15:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Install dependencies
         run: |

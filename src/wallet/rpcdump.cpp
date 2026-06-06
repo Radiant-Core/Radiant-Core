@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <fstream>
 #include <optional>
+#include <system_error>
 
 static std::string EncodeDumpString(const std::string &str) {
     std::stringstream ret;
@@ -53,6 +54,52 @@ static std::string DecodeDumpString(const std::string &str) {
         ret << c;
     }
     return ret.str();
+}
+
+// SECURITY (audit 2026-06, H7/M7/M8): wallet dump/import operates on a
+// server-side path supplied over RPC. Guard against (a) following symlinks --
+// an attacker who can create a symlink at the target could redirect a write to
+// an arbitrary file, or trick an import into reading an unintended file -- and
+// (b) operating on FIFOs/devices. We also avoid leaking the full absolute path
+// back to the RPC caller (only the basename is returned; the full path stays in
+// the debug log).
+
+/** Throw an RPC error if the final component of `p` is a symbolic link. */
+static void RefuseIfSymlink(const fs::path &p, const char *what) {
+    std::error_code ec;
+    const fs::file_status st = fs::symlink_status(p, ec);
+    if (!ec && fs::is_symlink(st)) {
+        // Do not echo the full path back to the caller (M8).
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("%s path '%s' is a symbolic link; refusing "
+                                     "for security reasons",
+                                     what, p.filename().string()));
+    }
+}
+
+/** Throw if `p` exists and is not a regular file (e.g. FIFO, device, socket). */
+static void RefuseIfNotRegularFile(const fs::path &p, const char *what) {
+    std::error_code ec;
+    const fs::file_status st = fs::status(p, ec);
+    if (!ec && fs::exists(st) && !fs::is_regular_file(st)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("%s path '%s' is not a regular file; "
+                                     "refusing for security reasons",
+                                     what, p.filename().string()));
+    }
+}
+
+/** Best-effort tighten a just-created dump file to owner read/write (0600). */
+static void RestrictDumpFilePermissions(const fs::path &p) {
+    std::error_code ec;
+    fs::permissions(p, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+    if (ec) {
+        // Log full path here; this is the trusted server-side log.
+        LogPrintf("dumpwallet: warning: unable to set 0600 permissions on %s: "
+                  "%s\n",
+                  p.string(), ec.message());
+    }
 }
 
 bool GetWalletAddressesForKey(const Config &config, CWallet *const pwallet,
@@ -610,9 +657,15 @@ UniValue importwallet(const Config &config, const JSONRPCRequest &request) {
 
         EnsureWalletIsUnlocked(pwallet);
 
+        // SECURITY (audit 2026-06, M7): the import path is supplied by the RPC
+        // caller. Refuse symlinks (so we cannot be redirected to read an
+        // unintended file) and non-regular files (FIFOs/devices/sockets).
+        const fs::path importpath(request.params[0].get_str());
+        RefuseIfSymlink(importpath, "import");
+        RefuseIfNotRegularFile(importpath, "import");
+
         std::ifstream file;
-        file.open(request.params[0].get_str().c_str(),
-                  std::ios::in | std::ios::ate);
+        file.open(importpath, std::ios::in | std::ios::ate);
         if (!file.is_open()) {
             throw JSONRPCError(RPC_INVALID_PARAMETER,
                                "Cannot open wallet dump file");
@@ -852,6 +905,12 @@ UniValue dumpwallet(const Config &config, const JSONRPCRequest &request) {
     fs::path filepath = request.params[0].get_str();
     filepath = fs::absolute(filepath);
 
+    // SECURITY (audit 2026-06, H7): refuse to write through a symlink. Without
+    // this, an attacker (or a careless symlink in the datadir) could redirect a
+    // dump -- which contains every private key in the wallet -- to an arbitrary
+    // location or onto a file the node would not otherwise overwrite.
+    RefuseIfSymlink(filepath, "dump");
+
     /**
      * Prevent arbitrary files from being overwritten. There have been reports
      * that users have overwritten wallet files this way:
@@ -859,10 +918,15 @@ UniValue dumpwallet(const Config &config, const JSONRPCRequest &request) {
      * It may also avoid other security issues.
      */
     if (fs::exists(filepath)) {
+        // SECURITY (audit 2026-06, M8): do not leak the absolute server path
+        // back to the RPC caller; the basename is enough to identify the file.
+        // The full path is still available in the debug log below.
+        LogPrintf("dumpwallet: refusing to overwrite existing file %s\n",
+                  filepath.string());
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-                           filepath.string() + " already exists. If you are "
-                                               "sure this is what you want, "
-                                               "move it out of the way first");
+                           "File '" + filepath.filename().string() +
+                               "' already exists. If you are sure this is what "
+                               "you want, move it out of the way first");
     }
 
     std::ofstream file;
@@ -871,6 +935,12 @@ UniValue dumpwallet(const Config &config, const JSONRPCRequest &request) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
                            "Cannot open wallet dump file");
     }
+
+    // SECURITY (audit 2026-06, H7): the dump contains every private key in the
+    // wallet. Restrict it to owner read/write (0600) instead of inheriting the
+    // process umask. Done immediately after creation, before any secret bytes
+    // are written.
+    RestrictDumpFilePermissions(filepath);
 
     std::map<CTxDestination, int64_t> mapKeyBirth;
     const std::map<CKeyID, int64_t> &mapKeyPool = pwallet->GetAllReserveKeys();

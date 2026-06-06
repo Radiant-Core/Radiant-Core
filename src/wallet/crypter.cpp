@@ -80,6 +80,16 @@ bool CCrypter::SetKey(const CKeyingMaterial &chNewKey,
     return true;
 }
 
+// SECURITY (audit 2026-06, M4): wallet secrets are encrypted with AES-256-CBC
+// and NO message authentication code (no MAC / authenticated encryption). The
+// ciphertext is therefore malleable and tamper-detection relies solely on the
+// downstream CKey::VerifyPubKey() check in DecryptKey(). This is a known
+// limitation inherited from the upstream wallet format. Adding authenticated
+// encryption (e.g. AES-GCM or encrypt-then-MAC) cannot be done in place because
+// it changes the on-disk ciphertext layout and would brick every existing
+// wallet; it requires a versioned wallet-format migration, which is tracked
+// separately and intentionally DEFERRED here. Do not silently "upgrade" the
+// format without a migration path.
 bool CCrypter::Encrypt(const CKeyingMaterial &vchPlaintext,
                        std::vector<uint8_t> &vchCiphertext) const {
     if (!fKeySet) {
@@ -101,6 +111,11 @@ bool CCrypter::Encrypt(const CKeyingMaterial &vchPlaintext,
     return true;
 }
 
+// SECURITY (audit 2026-06, M4): see the note on CCrypter::Encrypt. This CBC
+// decryption is UNAUTHENTICATED -- it cannot detect ciphertext tampering by
+// itself. Integrity currently depends on the caller (DecryptKey verifies the
+// recovered private key against its known public key). Authenticated decryption
+// is DEFERRED pending a versioned wallet-format migration.
 bool CCrypter::Decrypt(const std::vector<uint8_t> &vchCiphertext,
                        CKeyingMaterial &vchPlaintext) const {
     if (!fKeySet) {

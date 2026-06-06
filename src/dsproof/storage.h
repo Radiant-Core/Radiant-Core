@@ -16,6 +16,7 @@
 #include <boost/multi_index_container.hpp>
 
 #include <list>
+#include <map>
 #include <utility>
 
 class COutPoint;
@@ -45,6 +46,20 @@ public:
     static constexpr size_t defaultMaxOrphans() { return 65535; }
     size_t maxOrphans() const;
     void setMaxOrphans(size_t max);
+
+    // H8: per-peer orphan cap. Bounds how many orphan proofs a single peer may
+    // have resident in storage, so one peer cannot fill the entire orphan pool
+    // and drive eviction churn of other peers' (possibly honest) orphans.
+    //
+    // The default is a generous fraction (25%) of the global orphan limit:
+    // large enough never to interfere with honest peers (a single peer would
+    // need thousands of simultaneous unconfirmed double spends to hit it), but
+    // small enough that no single peer can monopolize the pool — at least 4
+    // distinct peers are required to fill it. A value of 0 disables the
+    // per-peer cap entirely.
+    static constexpr size_t defaultMaxOrphansPerPeer() { return defaultMaxOrphans() / 4; }
+    size_t maxOrphansPerPeer() const;
+    void setMaxOrphansPerPeer(size_t max);
 
     // --- Main Methods
 
@@ -156,6 +171,12 @@ private:
     int m_secondsToKeepOrphans GUARDED_BY(m_lock) = defaultSecondsToKeepOrphans();
     size_t m_maxOrphans GUARDED_BY(m_lock) = defaultMaxOrphans();
     size_t m_numOrphans GUARDED_BY(m_lock) = 0;
+    //! H8: per-peer orphan cap, and a per-peer orphan count map kept in sync
+    //! with the orphan entries in m_proofs.
+    size_t m_maxOrphansPerPeer GUARDED_BY(m_lock) = defaultMaxOrphansPerPeer();
+    std::map<NodeId, size_t> m_orphansByPeer GUARDED_BY(m_lock);
+    //! H8: adjust the per-peer orphan count map (n may be negative to decrement).
+    void adjustPeerOrphanCount(NodeId nodeId, long delta) EXCLUSIVE_LOCKS_REQUIRED(m_lock);
     //! may throw std::runtime_error if number would go below 0
     void decrementOrphans(size_t n) EXCLUSIVE_LOCKS_REQUIRED(m_lock);
     //! implicitly calls checkOrphanLimit()

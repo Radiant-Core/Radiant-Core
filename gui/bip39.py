@@ -611,28 +611,32 @@ def _base58_decode(s):
     return b'\x00' * leading_ones + bytes(reversed(result))
 
 
-def mnemonic_to_wif(mnemonic, passphrase="", testnet=False, use_bip44=True):
+def mnemonic_to_wif(mnemonic, passphrase="", testnet=False, use_bip44=True, address_index=0):
     """
     Convert mnemonic directly to WIF private key using BIP44 derivation.
-    
+
     Args:
         mnemonic: Space-separated mnemonic phrase
         passphrase: Optional passphrase
         testnet: Use testnet prefix
-        use_bip44: If True (default), use BIP44 derivation path m/44'/0'/0'/0/0
+        use_bip44: If True (default), use BIP44 derivation path
+                   m/44'/512'/0'/0/<address_index> (Radiant coin type)
                    If False, use master key directly (legacy behavior)
-    
+        address_index: BIP44 address index (default 0)
+
     Returns:
         WIF-encoded private key
     """
     if not validate_mnemonic(mnemonic):
         raise ValueError("Invalid mnemonic phrase")
-    
+
     seed = mnemonic_to_seed(mnemonic, passphrase)
-    
+
     if use_bip44:
-        # Use BIP44 derivation: m/44'/0'/0'/0/0
-        derived_key, _ = derive_bip44_key(seed, account=0, change=0, address_index=0)
+        # Use BIP44 derivation: m/44'/512'/0'/0/<address_index> (Radiant coin type)
+        derived_key, _ = derive_bip44_key(
+            seed, account=0, change=0, address_index=address_index,
+            coin_type=BIP44_COIN_TYPE)
         return private_key_to_wif(derived_key, compressed=True, testnet=testnet)
     else:
         # Legacy: use master key directly
@@ -680,13 +684,13 @@ if __name__ == "__main__":
     print(f"Test mnemonic: {test_mnemonic}")
     print(f"Valid: {validate_mnemonic(test_mnemonic)}")
     
-    # Test BIP44 derivation (m/44'/0'/0'/0/0)
+    # Test BIP44 derivation (m/44'/512'/0'/0/0)
     wif = mnemonic_to_wif(test_mnemonic)
-    print(f"WIF (m/44'/0'/0'/0/0): {wif}")
-    
+    print(f"WIF (m/44'/512'/0'/0/0): {wif}")
+
     # Generate new mnemonic
     mnemonic = generate_mnemonic(128)
     print(f"\nGenerated mnemonic: {mnemonic}")
     print(f"Valid: {validate_mnemonic(mnemonic)}")
     wif = mnemonic_to_wif(mnemonic)
-    print(f"WIF (m/44'/0'/0'/0/0): {wif}")
+    print(f"WIF (m/44'/512'/0'/0/0): {wif}")

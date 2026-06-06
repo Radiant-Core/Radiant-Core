@@ -1,11 +1,40 @@
 *.tar.gz
+*.zip
+*.dmg
 
 *.exe
 
-# Allow release binaries and archives to be committed
-!releases/**/*.exe
-!releases/**/*.zip
-!releases/**/*.tar.gz
+# SECURITY (audit C5): NEVER commit compiled binaries / release archives to git.
+# Distributed binaries belong on the GitHub Release, verified via a GPG-signed
+# SHA256SUMS manifest — not in the source tree. The previous re-include
+# allow-list (!releases/**/*.{exe,zip,tar.gz}) tracked ~800MB of binaries and
+# is intentionally removed. See RELEASE_SECURITY_PROCESS.md.
+releases/**/*.exe
+releases/**/*.zip
+releases/**/*.tar.gz
+releases/**/*.dmg
+releases/**/*.dylib
+# Bare unpacked executables and the macOS resource-fork sidecars that have
+# leaked into releases/ (radiantd, radiant-cli, radiant-tx, radiant-wallet,
+# radiant-qt, ._* AppleDouble files).
+releases/**/radiantd
+releases/**/radiant-cli
+releases/**/radiant-tx
+releases/**/radiant-wallet
+releases/**/radiant-qt
+releases/**/._*
+
+# SECURITY (audit C5/N1/C4): GUI-executed node binaries must NOT be vendored.
+# The GUI downloads + verifies them at runtime against the signed SHA256SUMS
+# manifest (fail-closed on placeholder/missing hashes). Keep only source under
+# gui/; never the compiled radiantd/radiant-cli/radiant-tx or their dylibs.
+gui/binaries/**/*.dylib
+gui/binaries/**/radiantd
+gui/binaries/**/radiant-cli
+gui/binaries/**/radiant-tx
+gui/binaries/**/radiant-wallet
+gui/binaries/**/radiant-qt
+gui/binaries/**/._*
 src/radiant
 src/radiantd
 src/radiant-cli

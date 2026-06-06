@@ -35,13 +35,13 @@ docker build -f docker/Dockerfile.release -t radiant-core:latest .
 **Example:**
 ```bash
 # Build specific version
-docker build -f docker/Dockerfile.release --build-arg GIT_TAG=v3.0.0 -t radiant-core:v3.0.0 .
+docker build -f docker/Dockerfile.release --build-arg GIT_TAG=v3.1.0 -t radiant-core:v3.1.0 .
 
 # Run
 docker run -d --name radiant-node \
   -p 7332:7332 -p 7333:7333 \
   -v radiant-data:/home/radiant/.radiant \
-  radiant-core:v3.0.0
+  radiant-core:v3.1.0
 ```
 
 ### `Dockerfile.seeder`

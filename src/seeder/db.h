@@ -60,7 +60,29 @@ static inline int ParseSubVersionNumber(const std::string &subVer) {
     std::string ver = subVer.substr(colon + 1, slash - colon - 1);
     // Parse major.minor.revision
     int major = 0, minor = 0, revision = 0;
-    if (std::sscanf(ver.c_str(), "%d.%d.%d", &major, &minor, &revision) < 2) {
+    // SECURITY (audit M14): the subversion string is attacker-controlled (it
+    // comes off the wire in a peer's version message). We must (1) require at
+    // least major.minor to be parsed, and (2) bound each component before the
+    // multiply below, otherwise a crafted string like "999999999.0.0" causes
+    // signed-integer overflow (undefined behaviour) in
+    // 1000000*major + 10000*minor + 100*revision.
+    const int nparsed =
+        std::sscanf(ver.c_str(), "%d.%d.%d", &major, &minor, &revision);
+    if (nparsed < 2) {
+        return 0;
+    }
+    // Reject implausible / out-of-range version components. Real version
+    // numbers are tiny; anything larger is malformed or hostile. The bounds
+    // are deliberately chosen so the weighted sum below CANNOT overflow a
+    // signed int: the max possible value is
+    //   1000000*999 + 10000*9999 + 100*9999 = 1,099,989,900 < INT_MAX.
+    // (Capping every component at 9999 would NOT be safe — 1000000*9999
+    // already exceeds INT_MAX and is undefined behaviour.)
+    constexpr int MAX_MAJOR = 999;
+    constexpr int MAX_MINOR_REV = 9999;
+    if (major < 0 || major > MAX_MAJOR ||
+        minor < 0 || minor > MAX_MINOR_REV ||
+        revision < 0 || revision > MAX_MINOR_REV) {
         return 0;
     }
     return 1000000 * major + 10000 * minor + 100 * revision;

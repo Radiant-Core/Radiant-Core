@@ -31,6 +31,15 @@ public:
 };
 
 /**
+ * SECURITY (audit 2026-06, H3): check whether an HTTP request carries valid RPC
+ * credentials (the same single-user/multi-user/cookie check used by the JSON-RPC
+ * endpoint). Used to gate auxiliary endpoints such as /metrics. Returns true iff
+ * the request's Authorization header authenticates successfully. Safe to call
+ * after StartHTTPRPC() (which initializes the credential state).
+ */
+bool RPCAuthorizedRequest(HTTPRequest *req);
+
+/**
  * Start HTTP RPC subsystem.
  * Precondition; HTTP and RPC has been started.
  */

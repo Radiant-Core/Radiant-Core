@@ -4,11 +4,32 @@ This document outlines the security-hardened release engineering process for Rad
 
 ## Security Requirements
 
-All releases must meet the following security standards:
+All releases **must** meet the following security standards. These are
+**mandatory and CI-enforced** — the release workflow
+(`.github/workflows/release.yml`) refuses to publish (the GitHub Release is
+left as a `draft`) until every requirement below is satisfied:
+
+- The pushed tag is an **annotated, GPG-signed** git tag (`git tag -s`); the
+  release job verifies `git tag -v` and fails the pipeline on an unsigned or
+  unverifiable tag.
+- A **GPG-signed `SHA256SUMS`** manifest covering **every** release artifact is
+  present and verifies; the release job fails if it is missing or the signature
+  does not verify.
+- The GUI auto-downloader hashes have been updated from their placeholder
+  values (see §3); the GUI itself **fails closed** at runtime if they have not.
+
+> **Why signatures, not just hashes?** A `SHA256SUMS` file alone provides *no*
+> security if it travels down the same channel as the binaries (the GitHub
+> Release). An attacker who can swap a binary can equally swap the hash file.
+> Integrity therefore comes from the **detached GPG signature** over
+> `SHA256SUMS`, anchored to a maintainer key that users obtain out-of-band.
+> Hashes are a convenience for `sha256sum -c`; the signature is the trust root.
 
 ### 1. Signed Git Tags
 
-**Requirement:** Every release must have a GPG-signed git tag.
+**Requirement (MANDATORY / CI-ENFORCED):** Every release must have an
+annotated, GPG-signed git tag. Lightweight or unsigned tags are rejected by the
+release workflow.
 
 **Process:**
 ```bash
@@ -29,7 +50,12 @@ git push origin v3.0.1
 
 ### 2. Signed Release Artifacts
 
-**Requirement:** All release artifacts must have SHA-256 checksums and GPG signatures.
+**Requirement (MANDATORY / CI-ENFORCED):** Every release artifact must be
+covered by a `SHA256SUMS` manifest, and that manifest must carry a **detached
+GPG signature**. A hash without a signature is **not** acceptable: the hash
+rides the same distribution channel as the binary and provides no protection
+against a tampered release. The release workflow blocks publication
+(keeps the release a `draft`) until a verifiable `SHA256SUMS.asc` is present.
 
 **Process:**
 ```bash
@@ -52,7 +78,11 @@ gpg --verify SHA256SUMS.txt.maintainer1.asc SHA256SUMS.txt
 
 ### 3. SHA-256 Manifest for GUI Auto-Downloader
 
-**Requirement:** Update SHA-256 hashes in `gui/radiant_node_web.py` for each release.
+**Requirement:** Update SHA-256 hashes in `gui/radiant_node_web.py` for each
+release. Because the GUI ships *without* vendored node binaries (see §5 and
+audit findings N1/C4), the auto-downloader is now the only path by which the
+GUI obtains `radiantd`/`radiant-cli`/`radiant-tx`, so correct, pinned hashes
+are a hard requirement for every release.
 
 **Process:**
 ```bash
@@ -66,7 +96,19 @@ sha256sum radiant-core-windows-x64.zip
 # Change to:   "sha256": "<computed_hash>"
 ```
 
-**Important:** The GUI will refuse to auto-download if SHA-256 hashes are not updated from placeholder values.
+**Fail-closed behaviour (audit N6 — now TRUE in code):** The GUI auto-downloader
+**fails closed**. It refuses to download or execute any binary when the pinned
+`sha256` is still a placeholder (`PLACEHOLDER_SHA256_UPDATE_AT_RELEASE`),
+empty, or missing, and it aborts if a downloaded asset's computed SHA-256 does
+not match the pinned value. There is no "download anyway" fallback. This makes
+the previous documentation claim accurate rather than aspirational.
+
+> **Limitation — hashes are not a trust root.** These pinned hashes are
+> fetched/shipped over the same channel as the GUI and the release. They
+> protect against accidental corruption and detect a mismatched download, but
+> they are **not** a substitute for the GPG-signed `SHA256SUMS` manifest (§2).
+> Wherever feasible, operators and packagers should additionally verify the
+> detached GPG signature before trusting an artifact.
 
 ### 4. Reproducible Builds (Future Goal)
 
@@ -82,11 +124,28 @@ sha256sum radiant-core-windows-x64.zip
 **Prohibited:**
 - Never commit compiled binaries to the git repository
 - Never commit CMake build directories (`macos-arm64-release/`, etc.)
-- Never commit `releases/` directory contents
+- Never commit `releases/` directory binary contents (`.exe`, `.zip`,
+  `.tar.gz`, `.dmg`, `.dylib`, bare executables, `._*` AppleDouble sidecars)
+- Never vendor node binaries under `gui/binaries/**` (see below)
 
 **Alternative:**
 - Use GitHub Releases for binary distribution
 - Store release artifacts in separate storage (not in repo)
+
+**`.gitignore` enforcement (audit C5):** The earlier `.gitignore` *re-included*
+release binaries with `!releases/**/*.{exe,zip,tar.gz}`, causing ~800 MB of
+compiled artifacts to be tracked. That allow-list has been removed and the
+binary patterns are now ignored. Text metadata kept in `releases/`
+(`RELEASE_NOTES.md`, `SHA256SUMS.txt`, `*.sha256`) is still tracked.
+
+**GUI no longer ships node binaries (depends on N1/C4):** The macOS node
+binaries and dylibs that were tracked under
+`gui/binaries/radiant-core-macos-arm64/` are removed from the repo and ignored.
+Consequently the GUI **must download and verify** `radiantd`, `radiant-cli`,
+and `radiant-tx` at runtime via the auto-downloader, which fails closed on
+placeholder/missing/mismatched hashes (§3, audit N6/C4). Release engineers
+**must** keep the GUI's pinned `RELEASE_ASSETS` hashes current for every
+release or the GUI will be unable to obtain its binaries.
 
 ## Pre-Release Checklist
 
@@ -99,9 +158,14 @@ Before tagging a release:
   - [ ] Host header validation
   - [ ] Security headers present
   - [ ] SHA-256 verification on auto-download
-- [ ] SHA-256 hashes updated in `gui/radiant_node_web.py`
-- [ ] GitHub Actions workflows use pinned commit SHAs (not floating tags)
+- [ ] SHA-256 hashes updated in `gui/radiant_node_web.py` (GUI fails closed on
+      placeholders — required because the GUI no longer vendors node binaries)
+- [ ] GitHub Actions workflows use pinned commit SHAs (not floating tags), and
+      every workflow scopes `permissions:` to least privilege
 - [ ] GPG key available and listed in `contrib/gitian-signing/keys.txt`
+- [ ] Annotated, GPG-signed tag pushed; `git tag -v` verifies (CI re-checks)
+- [ ] GPG-signed `SHA256SUMS` for ALL artifacts present; `gpg --verify` passes
+      (CI re-checks and keeps the GitHub Release a draft until satisfied)
 
 ## Release Checklist
 

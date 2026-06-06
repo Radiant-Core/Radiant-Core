@@ -40,7 +40,16 @@ struct Params {
     int PushTXStateHeight;
     /** Block height at which Radiant Core 2.0 upgrade activates (fee policy, ASERT tuning) */
     int radiantCore2UpgradeHeight;
-    
+    /**
+     * Block height at which the 2026-06 security-audit hardening upgrade
+     * activates (SCRIPT_SECURITY_UPGRADE). Tightens K12 single-node bound to
+     * <8192 and adds per-script memory / opcode-cost budgets. Because these
+     * rules TIGHTEN acceptance of currently-valid scripts they are a hard-fork
+     * and must never be applied retroactively — gate strictly behind this
+     * future activation height.
+     */
+    int SecurityUpgradeHeight;
+
     /** Default blocksize limit -- can be overridden with the -excessiveblocksize= command-line switch */
     uint64_t nDefaultExcessiveBlockSize;
     /**

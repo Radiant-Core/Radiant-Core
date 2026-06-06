@@ -15,6 +15,22 @@ const unsigned int WALLET_CRYPTO_KEY_SIZE = 32;
 const unsigned int WALLET_CRYPTO_SALT_SIZE = 8;
 const unsigned int WALLET_CRYPTO_IV_SIZE = 16;
 
+// SECURITY (audit 2026-06, M3): minimum EVP_BytesToKey(SHA512) iteration count
+// for NEWLY encrypted wallets. The historical floor of 25000 rounds was tuned
+// for ~2009 hardware (under 0.1s on a 1.86 GHz Pentium M) and is far too weak
+// against modern offline brute-forcing of the wallet passphrase.
+//
+// This floor applies ONLY to new encryptions / passphrase changes: existing
+// wallets persist and reuse their own per-wallet nDeriveIterations (see
+// CMasterKey), so raising the floor is fully backward compatible -- old wallets
+// still decrypt with their stored, lower iteration count. WALLET_CRYPTO_SALT_SIZE
+// is deliberately left unchanged (changing it would break existing wallets).
+//
+// NOTE: the effective clamp for new encryptions is also enforced in
+// CWallet::EncryptWallet / ChangeWalletPassphrase (wallet.cpp); that clamp must
+// use this same constant for the floor to take effect end-to-end.
+const unsigned int WALLET_CRYPTO_KDF_MIN_ITERATIONS = 200000;
+
 /**
  * Private key encryption is done based on a CMasterKey, which holds a salt and
  * random encryption key.
@@ -47,9 +63,11 @@ public:
     }
 
     CMasterKey() {
-        // 25000 rounds is just under 0.1 seconds on a 1.86 GHz Pentium M
-        // ie slightly lower than the lowest hardware we need bother supporting
-        nDeriveIterations = 25000;
+        // SECURITY (audit 2026-06, M3): default iteration floor for new master
+        // keys raised from the legacy 25000 (tuned for a 1.86 GHz Pentium M) to
+        // WALLET_CRYPTO_KDF_MIN_ITERATIONS. Existing wallets are unaffected:
+        // they deserialize their own stored nDeriveIterations over this default.
+        nDeriveIterations = WALLET_CRYPTO_KDF_MIN_ITERATIONS;
         nDerivationMethod = 0;
         vchOtherDerivationParameters = std::vector<uint8_t>(0);
     }

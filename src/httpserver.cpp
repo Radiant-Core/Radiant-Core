@@ -146,6 +146,12 @@ static struct event_base *eventBase = nullptr;
 struct evhttp *eventHTTP = nullptr;
 //! List of subnets to allow RPC connections from
 static std::vector<CSubNet> rpc_allow_subnets;
+//! SECURITY (audit 2026-06, H5): allowlist of acceptable HTTP Host header
+//! hostnames (lower-cased, port stripped). Used as a DNS-rebinding defense.
+//! Empty disables the check (e.g. when the operator opts out).
+static std::vector<std::string> rpc_allow_hosts;
+//! Whether Host-header validation is enabled.
+static bool rpc_validate_host = true;
 //! Work queue for handling longer requests off the event loop thread
 static WorkQueue<HTTPClosure> *workQueue = nullptr;
 //! Handlers for (sub)paths
@@ -200,6 +206,127 @@ static bool InitHTTPAllowList() {
     return true;
 }
 
+/**
+ * SECURITY (audit 2026-06, H5): normalize a Host header value for comparison.
+ * Strips an optional port and surrounding brackets (for IPv6 literals) and
+ * lower-cases the result.
+ */
+static std::string NormalizeHostValue(const std::string &host) {
+    std::string h = TrimString(host);
+    if (h.empty()) {
+        return h;
+    }
+    // Bracketed IPv6 literal, optionally followed by :port -> strip brackets/port.
+    if (h.front() == '[') {
+        const size_t close = h.find(']');
+        if (close != std::string::npos) {
+            return ToLower(h.substr(1, close - 1));
+        }
+    }
+    // host:port -> host. Only treat the last ':' as a port separator when there
+    // is a single colon (bare IPv6 literals contain multiple colons and have no
+    // port here).
+    const size_t firstColon = h.find(':');
+    const size_t lastColon = h.rfind(':');
+    if (firstColon != std::string::npos && firstColon == lastColon) {
+        h = h.substr(0, firstColon);
+    }
+    return ToLower(h);
+}
+
+/**
+ * SECURITY (audit 2026-06, H5): build the allowlist of acceptable HTTP Host
+ * header values. This is the standard DNS-rebinding defense: a browser tricked
+ * into resolving an attacker-controlled hostname to 127.0.0.1 will still send
+ * that hostname in the Host header, which we reject.
+ *
+ * The allowlist always includes loopback names plus every host that RPC binds
+ * to (-rpcbind) and any operator-supplied -rpcallowhost entries. Operators who
+ * front the node with a reverse proxy that rewrites Host can disable the check
+ * with -rpcallowhost=*.
+ */
+static void InitHostAllowList() {
+    rpc_allow_hosts.clear();
+    rpc_validate_host = true;
+
+    auto add = [](const std::string &h) {
+        const std::string n = NormalizeHostValue(h);
+        if (!n.empty()) {
+            rpc_allow_hosts.push_back(n);
+        }
+    };
+
+    // Always-allowed loopback identities.
+    add("localhost");
+    add("127.0.0.1");
+    add("[::1]");
+    add("::1");
+
+    // Hosts that RPC is bound to.
+    for (const std::string &strRPCBind : gArgs.GetArgs("-rpcbind")) {
+        int port = 0;
+        std::string host;
+        SplitHostPort(strRPCBind, port, host);
+        add(host);
+    }
+
+    // Operator-supplied extra hostnames (DNS names a reverse proxy may use).
+    for (const std::string &strHost : gArgs.GetArgs("-rpcallowhost")) {
+        if (strHost == "*") {
+            // Explicit opt-out: operator takes responsibility for Host filtering
+            // (e.g. a trusted reverse proxy in front of the node).
+            rpc_validate_host = false;
+            LogPrintf("WARNING: -rpcallowhost=* disables HTTP Host-header "
+                      "validation (DNS-rebinding protection). Only use this "
+                      "when a trusted proxy enforces Host filtering.\n");
+            return;
+        }
+        add(strHost);
+    }
+}
+
+/**
+ * SECURITY (audit 2026-06, H5): validate the HTTP Host header against the
+ * allowlist. Returns true if the request should be allowed.
+ *
+ * Compatibility notes (kept permissive enough not to break normal -rpcbind /
+ * -rpcallowip setups):
+ *  - A missing Host header is allowed (HTTP/1.0 clients and many RPC libraries
+ *    omit it).
+ *  - A Host that is a numeric IP literal (IPv4 or IPv6) is always allowed: DNS
+ *    rebinding fundamentally requires a *DNS name* in the Host header, so an IP
+ *    literal cannot be a rebinding vector. This also means a client connecting
+ *    to the node's bound IP (incl. the bind-to-any 0.0.0.0/:: case where there
+ *    is no explicit -rpcbind host) is never blocked.
+ *  - Only a present, non-numeric (DNS-name) Host that is not in the allowlist
+ *    is rejected, which is exactly the rebinding case.
+ */
+static bool CheckHostHeader(HTTPRequest *req) {
+    if (!rpc_validate_host) {
+        return true;
+    }
+    const auto hostOpt = req->GetHeader("host");
+    if (!hostOpt) {
+        // No Host header: not a browser rebinding attack vector.
+        return true;
+    }
+    const std::string host = NormalizeHostValue(*hostOpt);
+    if (host.empty()) {
+        return true;
+    }
+    // Numeric IP literals cannot be used for DNS rebinding; always allow them.
+    CNetAddr addr;
+    if (LookupHost(host, addr, false /* fAllowLookup */) && addr.IsValid()) {
+        return true;
+    }
+    for (const std::string &allowed : rpc_allow_hosts) {
+        if (host == allowed) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** HTTP request method as string - use for logging only */
 static std::string RequestMethodString(HTTPRequest::RequestMethod m) {
     switch (m) {
@@ -216,6 +343,66 @@ static std::string RequestMethodString(HTTPRequest::RequestMethod m) {
         default:
             return "unknown";
     }
+}
+
+// SECURITY (audit 2026-06, H6): when -debug=httptrace is enabled we must never
+// log secret credentials or secret RPC payloads verbatim. The helpers below
+// redact the Authorization/Cookie header values and the request/response bodies
+// of RPC methods that carry private keys, seeds or passphrases.
+
+/** Returns true if a header name carries a credential that must not be logged. */
+static bool IsSensitiveHeaderName(const std::string &name) {
+    std::string lower = ToLower(name);
+    return lower == "authorization" || lower == "cookie" ||
+           lower == "set-cookie" || lower == "proxy-authorization";
+}
+
+/**
+ * Returns true if the given (already lower-cased) JSON-RPC method name carries
+ * secret material in its request and/or response body and should be redacted
+ * in httptrace logging.
+ */
+static bool IsSensitiveRPCMethod(const std::string &methodLower) {
+    static const char *const kSensitive[] = {
+        "dumpprivkey",     "dumpwallet",         "importprivkey",
+        "signrawtransaction", "signrawtransactionwithkey",
+        "signrawtransactionwithwallet", "walletpassphrase",
+        "walletpassphrasechange", "encryptwallet", "sethdseed", "importwallet",
+        "importmulti",     "signmessagewithprivkey",
+    };
+    for (const char *m : kSensitive) {
+        // Match the method name even when it is wrapped in JSON quotes.
+        if (methodLower.find(m) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Scan an HTTP body for a JSON-RPC "method" value and return true if it names a
+ * method whose body must be redacted. Best-effort textual scan (the body is not
+ * yet parsed at trace time).
+ */
+static bool BodyHasSensitiveMethod(const std::string &body) {
+    const std::string lower = ToLower(body);
+    const size_t pos = lower.find("\"method\"");
+    if (pos == std::string::npos) {
+        // No method field visible (e.g. non-JSON). Be conservative and treat
+        // any body that mentions a sensitive keyword as secret.
+        return IsSensitiveRPCMethod(lower);
+    }
+    return IsSensitiveRPCMethod(lower.substr(pos));
+}
+
+/** Join headers for logging, redacting any credential-bearing header value. */
+static std::string JoinHeadersRedacted(
+    const std::vector<HTTPRequest::NameValuePair> &headersVec) {
+    return Join(headersVec, "\n", [](const auto &nvp) {
+        const std::string value =
+            IsSensitiveHeaderName(nvp.first) ? "[redacted]" : nvp.second;
+        return strprintf("%s: %s", nvp.first, value);
+    });
 }
 
 /** HTTP request callback */
@@ -240,21 +427,41 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
     // Note: Unlike with regular HTTP logging, we *don't* sanitize any strings
     // coming from the user. HTTPTRACE is an advanced debugging option not
     // intended for general use, so it is felt that this is acceptable.
+    // SECURITY (audit 2026-06, H6): even so, credential headers and the bodies
+    // of secret-bearing RPC methods (dumpprivkey/dumpwallet/importprivkey/
+    // signrawtransaction*/walletpassphrase/encryptwallet/sethdseed/...) are
+    // redacted so that enabling httptrace never writes private keys, seeds or
+    // passphrases to the log.
     if (LogAcceptCategory(BCLog::HTTPTRACE)) {
         const auto headersVec = hreq->GetAllInputHeaders();
-        const std::string headers = Join(headersVec, "\n", [] (const auto &nvp) {
-            return strprintf("%s: %s", nvp.first, nvp.second);
-        });
+        const std::string headers = JoinHeadersRedacted(headersVec);
         const std::string content = hreq->ReadBody(false);
+        const bool redactBody = BodyHasSensitiveMethod(content);
+        // Remember so the reply body for the same request is redacted too.
+        hreq->SetSensitive(redactBody);
+        const std::string loggedContent =
+            redactBody ? std::string("[redacted: sensitive RPC method]")
+                       : content;
         LogPrintf("<httptrace> Request from %s, method: \"%s\", URI: \"%s\", headers: %u, content: %u bytes\n"
                   "--- HEADERS ---\n%s\n--- CONTENT ---\n%s\n",
                   peer.ToString(), RequestMethodString(hreq->GetRequestMethod()), hreq->GetURI(),
-                  headersVec.size(), content.size(), headers, content);
+                  headersVec.size(), content.size(), headers, loggedContent);
     }
 
     // Early address-based allow check
     if (!ClientAllowed(peer)) {
         LogPrint(BCLog::HTTP, "HTTP request from %s rejected: Client network is not allowed RPC access\n",
+                 peer.ToString());
+        hreq->WriteReply(HTTP_FORBIDDEN);
+        return;
+    }
+
+    // SECURITY (audit 2026-06, H5): DNS-rebinding defense. Reject requests whose
+    // Host header is not an allowlisted hostname (loopback, -rpcbind hosts, or
+    // -rpcallowhost entries).
+    if (!CheckHostHeader(hreq.get())) {
+        LogPrint(BCLog::HTTP,
+                 "HTTP request from %s rejected: disallowed Host header\n",
                  peer.ToString());
         hreq->WriteReply(HTTP_FORBIDDEN);
         return;
@@ -399,6 +606,9 @@ bool InitHTTPServer(Config &config) {
     if (!InitHTTPAllowList()) {
         return false;
     }
+    // SECURITY (audit 2026-06, H5): build the Host-header allowlist used for
+    // DNS-rebinding protection.
+    InitHostAllowList();
 
     // Redirect libevent's logging to our own log
     event_set_log_callback(&libevent_log_cb);
@@ -641,15 +851,17 @@ void HTTPRequest::WriteReply(int nStatus, const std::string &strReply) {
     }
 
     // If HTTPTRACE is enabled, log what we are replying with
+    // SECURITY (audit 2026-06, H6): redact credential headers and, for requests
+    // flagged as secret-bearing (e.g. dumpprivkey), the reply body too.
     if (LogAcceptCategory(BCLog::HTTPTRACE)) {
         const auto headersVec = GetAllOutputHeaders();
         bool isBinary = false;
-        const std::string headers = Join(headersVec, "\n", [&isBinary] (const auto &nvp) {
+        for (const auto &nvp : headersVec) {
             const auto & [name, value] = nvp;
             // Set the isBinary flag if we are outputting binary (this is for REST .bin output mode)
             if (!isBinary && name == "Content-Type" && value == "application/octet-stream") isBinary = true;
-            return strprintf("%s: %s", nvp.first, nvp.second);
-        });
+        }
+        const std::string headers = JoinHeadersRedacted(headersVec);
         const char *content_desc = "";
         std::string hexStrReply;
         if (isBinary) {
@@ -658,7 +870,13 @@ void HTTPRequest::WriteReply(int nStatus, const std::string &strReply) {
             content_desc = " (binary data, hex encoded)";
             hexStrReply = HexStr(strReply);
         }
-        const std::string &content = isBinary ? hexStrReply : strReply;
+        std::string redactedReply;
+        if (sensitive) {
+            content_desc = " (redacted: sensitive RPC method)";
+            redactedReply = "[redacted]";
+        }
+        const std::string &content =
+            sensitive ? redactedReply : (isBinary ? hexStrReply : strReply);
         LogPrintf("<httptrace> Writing reply to %s, status: %d, headers: %u, content: %u bytes\n"
                   "--- HEADERS ---\n%s\n--- CONTENT%s ---\n%s\n",
                   GetPeer().ToString(), nStatus, headersVec.size(), strReply.size(), headers, content_desc, content);

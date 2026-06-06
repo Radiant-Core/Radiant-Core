@@ -96,6 +96,24 @@ public:
     const Spender & spender1() const { return m_spender1; }
     const Spender & spender2() const { return m_spender2; }
 
+    // M13: helper that enforces the sane per-spender pushData bounds DURING
+    // deserialization (called via SER_READ immediately after a spender's
+    // pushData vector is read), rather than waiting for the post-hoc
+    // checkSanityOrThrow(). This rejects malformed/oversized proofs as early as
+    // possible. The byte layout is unchanged — this only adds validation. A
+    // DSProof must carry exactly one pushData element per spender, and that
+    // element must not exceed MaxPushDataSize (== MAX_SCRIPT_ELEMENT_SIZE).
+    static void CheckSpenderPushDataOrThrow(const Spender &sp) {
+        if (sp.pushData.size() != 1) {
+            throw std::ios_base::failure(
+                "DSProof must contain exactly 1 pushData per spender");
+        }
+        if (sp.pushData.front().size() > MaxPushDataSize) {
+            throw std::ios_base::failure(
+                "DSProof script size limit exceeded");
+        }
+    }
+
     // new fashioned serialization.
     SERIALIZE_METHODS(DoubleSpendProof, obj) {
         READWRITE(obj.m_outPoint);
@@ -108,6 +126,8 @@ public:
         READWRITE(obj.m_spender1.hashOutputHashes);
         READWRITE(obj.m_spender1.hashOutputs);
         READWRITE(obj.m_spender1.pushData);
+        // M13: enforce the spender-1 pushData bounds as soon as they are read.
+        SER_READ(obj, CheckSpenderPushDataOrThrow(obj.m_spender1));
 
         READWRITE(obj.m_spender2.txVersion);
         READWRITE(obj.m_spender2.outSequence);
@@ -117,6 +137,8 @@ public:
         READWRITE(obj.m_spender2.hashOutputHashes);
         READWRITE(obj.m_spender2.hashOutputs);
         READWRITE(obj.m_spender2.pushData);
+        // M13: enforce the spender-2 pushData bounds as soon as they are read.
+        SER_READ(obj, CheckSpenderPushDataOrThrow(obj.m_spender2));
 
         // Calculate and save hash (only necessary to do if we are deserializing)
         SER_READ(obj, obj.setHash());
@@ -152,7 +174,10 @@ private:
     /// Throws std::runtime_error if the proof breaks the sanity of:
     /// - isEmpty()
     /// - does not have exactly 1 pushData per spender vector
-    /// - any pushData size >520 bytes
+    /// - any pushData size > MaxPushDataSize (== MAX_SCRIPT_ELEMENT_SIZE)
+    /// Note: for deserialized proofs these same bounds are now also enforced
+    /// during deserialization (see CheckSpenderPushDataOrThrow in
+    /// SERIALIZE_METHODS); this remains for proofs constructed via create().
     /// Called from: `create()` and `validate()` (`validate()` won't throw but will return Invalid)
     void checkSanityOrThrow() const;
 

@@ -6,10 +6,23 @@
 
 #include <banman.h>
 
+#include <clientversion.h>
 #include <netaddress.h>
+#include <streams.h>
 #include <ui_interface.h>
 #include <util/system.h>
 #include <util/time.h>
+
+#include <cstdio>
+#include <stdexcept>
+#include <string>
+
+namespace {
+//! M12: filename for the persisted discouragement side-set.
+const char *const DISCOURAGED_FILENAME = "discouraged.dat";
+//! M12: on-disk format version for discouraged.dat.
+static constexpr int DISCOURAGED_DUMP_VERSION = 1;
+} // namespace
 
 BanMan::BanMan(fs::path ban_file, const CChainParams &chainparams,
                CClientUIInterface *client_interface, int64_t default_ban_time)
@@ -40,10 +53,18 @@ BanMan::BanMan(fs::path ban_file, const CChainParams &chainparams,
         SetBannedSetDirty(true);
         DumpBanlist();
     }
+
+    // M12: load any persisted discouraged addresses into the rolling filter.
+    {
+        LOCK(m_cs_banned);
+        LoadDiscouraged();
+    }
 }
 
 BanMan::~BanMan() {
     DumpBanlist();
+    // M12: persist the discouragement side-set on shutdown.
+    DumpDiscouraged();
 }
 
 void BanMan::DumpBanlist() {
@@ -65,6 +86,11 @@ void BanMan::DumpBanlist() {
     LogPrint(BCLog::NET,
              "Flushed %d banned node ips/subnets to banlist.dat  %dms\n",
              banmap.size(), GetTimeMillis() - n_start);
+
+    // M12: piggyback the discouragement-filter flush onto the periodic banlist
+    // dump so accrued discouragement survives an unclean shutdown too. This is
+    // a no-op when persistence is disabled or nothing changed.
+    DumpDiscouraged();
 }
 
 void BanMan::ClearBanned() {
@@ -82,8 +108,21 @@ void BanMan::ClearBanned() {
 
 void BanMan::ClearDiscouraged()
 {
-    LOCK(m_cs_banned);
-    m_discouraged.reset();
+    bool persist;
+    {
+        LOCK(m_cs_banned);
+        m_discouraged.reset();
+        // M12: also clear the persisted side-set so cleared discouragement does
+        // not get re-loaded on the next restart.
+        if (!m_discouraged_keys.empty()) {
+            m_discouraged_keys.clear();
+            m_discouraged_dirty = true;
+        }
+        persist = m_persist_discouraged;
+    }
+    if (persist) {
+        DumpDiscouraged();
+    }
 }
 
 bool BanMan::IsBanned(const CNetAddr &net_addr) const
@@ -196,7 +235,16 @@ void BanMan::Ban(const CSubNet &sub_net, int64_t ban_time_offset, bool since_uni
 void BanMan::Discourage(const CNetAddr &net_addr)
 {
     LOCK(m_cs_banned);
-    m_discouraged.insert(net_addr.GetAddrBytes());
+    const auto key = net_addr.GetAddrBytes();
+    m_discouraged.insert(key);
+    // M12: record the raw address bytes for persistence (the rolling bloom
+    // filter itself cannot be enumerated). Bounded by MaxPersistedDiscouraged().
+    if (m_persist_discouraged &&
+        m_discouraged_keys.size() < MaxPersistedDiscouraged()) {
+        if (m_discouraged_keys.insert(key).second) {
+            m_discouraged_dirty = true;
+        }
+    }
 }
 
 bool BanMan::Unban(const CNetAddr &net_addr) {
@@ -313,4 +361,88 @@ void BanMan::SetBannedSetDirty(bool dirty) {
     // reuse m_banned lock for the m_is_dirty flag
     LOCK(m_cs_banned);
     m_is_dirty = dirty;
+}
+
+// --- M12: discouragement filter persistence ---
+
+void BanMan::SetPersistDiscouraged(bool enabled) {
+    LOCK(m_cs_banned);
+    m_persist_discouraged = enabled;
+}
+
+void BanMan::LoadDiscouraged() {
+    // m_cs_banned must be held by caller.
+    if (!m_persist_discouraged) {
+        return;
+    }
+    const fs::path path = GetDataDir() / DISCOURAGED_FILENAME;
+    FILE *file = fsbridge::fopen(path, "rb");
+    CAutoFile filein(file, SER_DISK, CLIENT_VERSION);
+    if (filein.IsNull()) {
+        // No file yet (first run) — not an error.
+        return;
+    }
+    try {
+        int version = 0;
+        filein >> version;
+        if (version != DISCOURAGED_DUMP_VERSION) {
+            LogPrintf("Ignoring %s: unexpected version %d\n",
+                      DISCOURAGED_FILENAME, version);
+            return;
+        }
+        std::vector<std::vector<uint8_t>> keys;
+        filein >> keys;
+        size_t loaded = 0;
+        for (auto &key : keys) {
+            if (m_discouraged_keys.size() >= MaxPersistedDiscouraged()) {
+                break;
+            }
+            m_discouraged.insert(key);
+            m_discouraged_keys.insert(std::move(key));
+            ++loaded;
+        }
+        LogPrint(BCLog::NET,
+                 "M12: loaded %d discouraged addresses from %s\n", loaded,
+                 DISCOURAGED_FILENAME);
+    } catch (const std::exception &e) {
+        LogPrintf("Failed to read %s (%s); ignoring\n", DISCOURAGED_FILENAME,
+                  e.what());
+    }
+}
+
+void BanMan::DumpDiscouraged() {
+    std::vector<std::vector<uint8_t>> keys;
+    {
+        LOCK(m_cs_banned);
+        if (!m_persist_discouraged || !m_discouraged_dirty) {
+            return;
+        }
+        keys.assign(m_discouraged_keys.begin(), m_discouraged_keys.end());
+    }
+
+    const fs::path path = GetDataDir() / DISCOURAGED_FILENAME;
+    const fs::path pathTmp = GetDataDir() / (std::string(DISCOURAGED_FILENAME) + ".new");
+    FILE *file = fsbridge::fopen(pathTmp, "wb");
+    CAutoFile fileout(file, SER_DISK, CLIENT_VERSION);
+    if (fileout.IsNull()) {
+        LogPrintf("Failed to open %s for writing\n", pathTmp.string());
+        return;
+    }
+    try {
+        fileout << DISCOURAGED_DUMP_VERSION;
+        fileout << keys;
+        if (!FileCommit(fileout.Get())) {
+            throw std::runtime_error("FileCommit failed");
+        }
+        fileout.fclose();
+        if (!RenameOver(pathTmp, path)) {
+            throw std::runtime_error("Rename-over failed");
+        }
+        LOCK(m_cs_banned);
+        m_discouraged_dirty = false;
+        LogPrint(BCLog::NET, "M12: flushed %d discouraged addresses to %s\n",
+                 keys.size(), DISCOURAGED_FILENAME);
+    } catch (const std::exception &e) {
+        LogPrintf("Failed to write %s (%s)\n", DISCOURAGED_FILENAME, e.what());
+    }
 }

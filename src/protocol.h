@@ -32,6 +32,13 @@ static const unsigned int MAX_PROTOCOL_MESSAGE_LENGTH = 2 * 1024 * 1024;
  * Maximum length of TX messages (16MB).
  * This is larger than MAX_TX_SIZE to allow headroom for future increases.
  * TX messages exceeding MAX_TX_SIZE will still be rejected at validation.
+ *
+ * M11: this is a policy/consensus-adjacent cap and is intentionally NOT
+ * lowered. Memory-exhaustion via streaming many large TX messages is mitigated
+ * instead by a per-peer byte-rate limit in net_processing.cpp (see
+ * MAX_TX_BYTES_PER_SECOND), which throttles peers without changing the wire
+ * limit. Do not reduce this value to "fix" a DoS — coordinate with the
+ * net_processing rate limiter and the orphan byte budget (N2) instead.
  */
 static const unsigned int MAX_TX_MESSAGE_LENGTH = 16 * 1024 * 1024;
 

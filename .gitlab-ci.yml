@@ -23,7 +23,16 @@ code_quality:
     artifacts:
         paths: [gl-code-quality-report.json]
 
-image: $CI_REGISTRY_IMAGE/buildenv:latest
+# SECURITY (audit H17): the build environment base image must be pinned by
+# immutable digest, NOT the mutable `:latest` tag. A `:latest` tag silently
+# re-points whenever build-ci-image pushes, so any compromise of that push (or
+# of the registry) flows straight into every build/test job here. After the
+# next `build-ci-image` run, capture the pushed digest and pin it:
+#     docker inspect --format='{{index .RepoDigests 0}}' \
+#         $CI_REGISTRY_IMAGE/buildenv:latest
+# then replace the tag below with `buildenv@sha256:<digest>`.
+# PIN-REQUIRED: replace `:latest` with `@sha256:<digest>` once known.
+image: $CI_REGISTRY_IMAGE/buildenv:latest  # PIN-REQUIRED (H17): pin by @sha256 digest
 
 stages:
     - prepare
@@ -50,10 +59,23 @@ cache: &global_cache_settings
 # Build the CI Docker image if docker/Dockerfile.ci changes
 build-ci-image:
     stage: prepare
-    image: docker:24
+    # SECURITY (audit H17): pin the docker engine images by digest. The tags
+    # below are for readability only.
+    # PIN-REQUIRED: replace with the immutable digests for docker:24 /
+    # docker:24-dind, e.g. `docker:24@sha256:<digest>`. Obtain via:
+    #     docker pull docker:24 && \
+    #     docker inspect --format='{{index .RepoDigests 0}}' docker:24
+    image: docker:24  # PIN-REQUIRED (H17): pin by @sha256 digest
     services:
-        - docker:24-dind
+        - docker:24-dind  # PIN-REQUIRED (H17): pin by @sha256 digest
     before_script:
+        # SECURITY (audit H17): $CI_REGISTRY_USER/$CI_REGISTRY_PASSWORD are the
+        # project's broad registry credentials. Scope them to the minimum: use
+        # a CI/CD Deploy Token (or per-job job token, $CI_JOB_TOKEN) that has
+        # ONLY read_registry + write_registry on THIS project — not a personal
+        # access token and not a group-wide token. OPERATOR ACTION: rotate any
+        # broad credentials currently configured and replace with a scoped
+        # deploy token in the project's CI/CD variables.
         - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
     script:
         - docker build -f docker/Dockerfile.ci -t $CI_REGISTRY_IMAGE/buildenv:latest .
@@ -81,7 +103,17 @@ static-checks-master:
         GIT_LFS_SKIP_SMUDGE: 1
     script:
         - pip3 install -r .static-checks-python-requirements.txt
-        - git clone https://github.com/ekho/checkstyle2junit.git --branch master --single-branch --depth=1 build-aux/checkstyle2junit
+        # SECURITY (audit H16): do NOT track a third party's `master`. The repo
+        # below is `php`-executed on every pipeline (see the
+        # checkstyle2junit.php invocation later in this job), so a malicious or
+        # compromised upstream commit would run arbitrary PHP in CI with our
+        # tokens. Pin to a reviewed, immutable commit and verify it after clone.
+        # PIN-REQUIRED: set CHECKSTYLE2JUNIT_SHA to a reviewed full commit SHA.
+        # Better: vendor checkstyle2junit.php into contrib/ and drop the clone.
+        - CHECKSTYLE2JUNIT_SHA="PIN-REQUIRED_REPLACE_WITH_REVIEWED_COMMIT_SHA"
+        - git clone https://github.com/ekho/checkstyle2junit.git build-aux/checkstyle2junit
+        - git -C build-aux/checkstyle2junit checkout "$CHECKSTYLE2JUNIT_SHA"
+        - git -C build-aux/checkstyle2junit rev-parse HEAD  # log the exact pinned SHA
         - echo "running static checks for CI_COMMIT_REF_NAME $CI_COMMIT_REF_NAME"
         - arc lint --outfile $CI_PROJECT_DIR/arc_lint-checkstyle.xml --output xml --everything && true; arc_lint_exit_code=$?
         - if [ $arc_lint_exit_code -ne 0 ]; then echo "arc lint command returned non-zero - please inspect the linting report / artifacts"; fi;
@@ -114,7 +146,14 @@ static-checks-branch:
         # MR's should not have merges within them.
         - export MR_START=`git show :/^Merge --format=format:%H`
         - pip3 install -r .static-checks-python-requirements.txt
-        - git clone https://github.com/ekho/checkstyle2junit.git --branch master --single-branch --depth=1 build-aux/checkstyle2junit
+        # SECURITY (audit H16): pin checkstyle2junit to a reviewed immutable
+        # commit (it is php-executed in CI). See static-checks-master for the
+        # rationale and the preferred vendoring alternative.
+        # PIN-REQUIRED: set CHECKSTYLE2JUNIT_SHA to a reviewed full commit SHA.
+        - CHECKSTYLE2JUNIT_SHA="PIN-REQUIRED_REPLACE_WITH_REVIEWED_COMMIT_SHA"
+        - git clone https://github.com/ekho/checkstyle2junit.git build-aux/checkstyle2junit
+        - git -C build-aux/checkstyle2junit checkout "$CHECKSTYLE2JUNIT_SHA"
+        - git -C build-aux/checkstyle2junit rev-parse HEAD  # log the exact pinned SHA
         - echo "running static checks for CI_COMMIT_REF_NAME $CI_COMMIT_REF_NAME from $MR_START"
         - arc lint --outfile $CI_PROJECT_DIR/arc_lint-checkstyle.xml --output xml --rev $MR_START^ && true; arc_lint_exit_code=$?
         - if [ $arc_lint_exit_code -ne 0 ]; then echo "arc lint command returned non-zero - please inspect the linting report / artifacts"; fi;
@@ -811,7 +850,15 @@ fuzz-libfuzzer:
     rules:
         - if: $CI_COMMIT_BRANCH == "master"
     script:
-        - git clone --branch master --single-branch --depth=1 https://gitlab.com/radiant-node/radn-sw/qa-assets
+        # SECURITY (audit H16): pin the fuzz seed corpus to a reviewed commit
+        # instead of tracking `master`. The corpus is consumed by the fuzzers;
+        # pinning makes runs reproducible and prevents an upstream change from
+        # silently altering CI inputs.
+        # PIN-REQUIRED: set QA_ASSETS_SHA to a reviewed full commit SHA.
+        - QA_ASSETS_SHA="PIN-REQUIRED_REPLACE_WITH_REVIEWED_COMMIT_SHA"
+        - git clone https://gitlab.com/radiant-node/radn-sw/qa-assets
+        - git -C qa-assets checkout "$QA_ASSETS_SHA"
+        - git -C qa-assets rev-parse HEAD  # log the exact pinned SHA
         - mkdir buildFuzzer
         - cd buildFuzzer
         - cmake -GNinja .. -DENABLE_MAN=OFF -DCCACHE=OFF -DENABLE_SANITIZERS="fuzzer;address"

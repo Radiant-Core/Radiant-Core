@@ -1107,6 +1107,20 @@ void SetupServerArgs() {
                  "Location of the auth cookie. Relative paths will be prefixed "
                  "by a net-specific datadir location. (default: data dir)",
                  ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-rpcallowhost=<host>",
+                 "Allowlist a Host header value for HTTP RPC (DNS-rebinding "
+                 "protection). Loopback and -rpcbind hosts are always allowed. "
+                 "Use -rpcallowhost=* to disable Host validation. This option "
+                 "can be specified multiple times.",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-metricsauth",
+                 "Require RPC authentication for the /metrics endpoint "
+                 "(default: 1)",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-persistdiscouraged",
+                 "Persist the peer discouragement filter across restarts "
+                 "(default: 1)",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     gArgs.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections",
                  ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     gArgs.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections",

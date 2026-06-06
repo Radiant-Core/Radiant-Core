@@ -36,11 +36,11 @@
 #
 # Usage:
 #   scripts/build-macos-release.sh [version]
-#     version  Tag string (default: v3.0.0).
+#     version  Tag string (default: v3.1.0).
 
 set -euo pipefail
 
-VERSION="${1:-v3.0.0}"
+VERSION="${1:-v3.1.0}"
 HOST_TRIPLE="aarch64-apple-darwin"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -160,7 +160,10 @@ System requirements:
   macOS 11 (Big Sur) or later, Apple Silicon (M1+) only.
 
 Quick start:
-  xattr -rd com.apple.quarantine .          # if blocked by Gatekeeper
+  # If macOS Gatekeeper blocks these binaries, right-click each in Finder and
+  # choose "Open" the first time (this keeps signature/notarization checks
+  # engaged). Do NOT run "xattr -rd com.apple.quarantine" — that disables
+  # Gatekeeper's verification for these files, a security downgrade.
   ./radiantd -server -txindex=1
   ./radiant-cli getblockchaininfo
 

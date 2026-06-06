@@ -12,6 +12,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <set>
+#include <vector>
 
 // Default 24-hour ban on manual bans. Automatic bans for misbehavior are always
 // "discouraged" until restart and/or ClearDiscouraged() is called.
@@ -88,6 +90,16 @@ public:
     void GetBanned(BanTables &banmap);
     void DumpBanlist();
 
+    //! M12: enable/disable persistence of the discouragement filter across
+    //! restarts. Default-on; controllable via -persistdiscouraged at startup
+    //! (wired in init.cpp). When enabled, discouraged addresses are persisted
+    //! to discouraged.dat alongside banlist.dat, and reloaded into the rolling
+    //! bloom filter on startup so a restart does not wipe accrued penalties.
+    void SetPersistDiscouraged(bool enabled);
+    //! M12: flush the persisted discouraged set to disk (no-op if persistence
+    //! is disabled or nothing changed).
+    void DumpDiscouraged();
+
     //! The discourage set is guaranteed to be able to store at least this many IP addresses
     static constexpr uint32_t DiscourageFilterSize() noexcept { return 50000; }
     //! The discourage set has this probability of false positives
@@ -104,6 +116,9 @@ private:
     CBanEntry CreateBanEntry(int64_t ban_time_offset, bool since_unix_epoch) const;
     void UnbanCommon();
 
+    //! M12: load the persisted discouraged set (if any) into m_discouraged.
+    void LoadDiscouraged() EXCLUSIVE_LOCKS_REQUIRED(m_cs_banned);
+
     mutable RecursiveMutex m_cs_banned;
     BanTables m_banned GUARDED_BY(m_cs_banned);
     bool m_is_dirty GUARDED_BY(m_cs_banned);
@@ -111,6 +126,17 @@ private:
     CBanDB m_ban_db;
     const int64_t m_default_ban_time;
     CRollingBloomFilter m_discouraged GUARDED_BY(m_cs_banned) {DiscourageFilterSize(), DiscourageFalsePositiveRate()};
+
+    //! M12: persistence of the discouragement filter. We keep a bounded
+    //! side-set of the raw address-bytes we have discouraged (the rolling
+    //! bloom filter itself cannot be enumerated), persist it to disk, and
+    //! re-insert it into m_discouraged on startup.
+    bool m_persist_discouraged GUARDED_BY(m_cs_banned) = true;
+    bool m_discouraged_dirty GUARDED_BY(m_cs_banned) = false;
+    std::set<std::vector<uint8_t>> m_discouraged_keys GUARDED_BY(m_cs_banned);
+    //! Cap on the persisted side-set so it cannot grow without bound; matches
+    //! the rolling filter's guaranteed capacity.
+    static constexpr size_t MaxPersistedDiscouraged() noexcept { return DiscourageFilterSize(); }
 };
 
 extern std::unique_ptr<BanMan> g_banman;

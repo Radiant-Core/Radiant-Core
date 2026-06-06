@@ -1,0 +1,19 @@
+# Build dependencies for scripts/build-macos-app.sh (audit N5).
+#
+# This file pins the EXACT versions of the Python packages used to assemble and
+# sign the macOS .app bundle. Pinning prevents an unexpected/compromised
+# upstream release from being pulled into a signed artifact at build time.
+#
+# HARDENING (PIN-REQUIRED): append a `--hash=sha256:<digest>` line for every
+# wheel/sdist (including transitive deps) so the build can use
+# `pip install --require-hashes -r requirements-macos-app.txt`. Generate with:
+#
+#     pip install pip-tools
+#     pip-compile --generate-hashes --output-file=scripts/requirements-macos-app.txt \
+#         <(printf 'py2app==0.28.8\npywebview==5.1\n')
+#
+# Until the --hash lines are present, build-macos-app.sh falls back to these
+# exact version pins (still safe from "latest" drift, but not artifact-hash
+# verified).
+py2app==0.28.8
+pywebview==5.1

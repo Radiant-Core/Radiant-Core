@@ -35,10 +35,21 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 
 ---
 
-## Radiant Core 3.0.0
+## Radiant Core 3.1.0
 
-**Release type:** Wallet & security hardening (no consensus change, no hard fork).
-**Status:** Backward-compatible at the network layer with all 2.x nodes already running post-V2-fork (block ≥ 410,000).
+**Release type:** Security hardening + consensus soft fork. GUI, RPC, wallet, P2P, and build/supply-chain patches from 3.0.1 are included. The new consensus rules (`SCRIPT_SECURITY_UPGRADE`) activate on **mainnet at block 444444** (~225 days from the v3.0.x audit baseline), testnet/scalenet from block 1, regtest from genesis.
+**Upgrade window:** All node operators should upgrade before block 444444. 3.0.x nodes remain consensus-compatible until that height (the new rules only *tighten* script acceptance — a clean soft fork).
+**Status:** Backward-compatible with 3.0.x and 2.x nodes until block 444444.
+
+### What's new in 3.1.0
+
+- **Wallet coin-type fix** — GUI `mnemonic_to_wif` now correctly derives with SLIP-0044 coin type 512 (`m/44'/512'/0'/0/0`) instead of Bitcoin's coin type 0. Closes the silent wallet-loss bug introduced in 3.0.0 when restoring a GUI-generated seed in any standards-compliant wallet.
+- **Consensus correctness (future-gated)** — `OP_K12` off-spec digest at exactly 8192-byte input corrected to single-node bound of 8191 bytes. Per-script peak-stack-memory budget (64 MB) and per-opcode cost accounting added to eliminate the P2SH memory-bomb DoS vector. All changes ride the new `SCRIPT_SECURITY_UPGRADE` flag; `SecurityUpgradeHeight` is set to disabled sentinel on mainnet/testnet — **no behavior change until a future 3.1.0 activation**.
+- **RPC/wallet hardening** — `/metrics` endpoint now requires RPC authentication (`-metricsauth`, default on); Host-header allowlist for DNS-rebinding defense (`-rpcallowhost`); `Authorization` headers and sensitive RPC bodies (dumpprivkey, walletpassphrase, etc.) redacted from `-debug=httptrace` logs; `dumpwallet`/`importwallet` refuse symlinks and force 0600 file permissions; RPC cookie forced 0600; wallet KDF iteration floor raised to 200,000 (new encryptions only, backward-compatible).
+- **P2P DoS hardening** — per-peer rate limits for ADDR, INV, and large-TX messages; orphan-tx pool byte budget (100 MB); DSProof per-peer orphan cap and early sanity validation; `prevector` OOM replaced with `bad_alloc`; compact-block early PoW pre-check; peer discouragement persisted across restarts (`-persistdiscouraged`).
+- **GUI security** — auto-download now **fail-closed** on placeholder or missing hashes; WIF/private-key arguments routed via `radiant-cli -stdin` (never visible in `ps`); backup/import arg validation; constant-time token comparison; two previously-broken `apiCall` paths fixed.
+- **Supply chain** — ~805 MB of release and GUI binaries removed from git tracking (now gitignored); all GitHub Action tags SHA-pinned with least-privilege permissions; release process updated to require signed git tags and GPG-signed SHA256SUMS.
+- **New tooling** — `contrib/audit/scan-hash-opcode-usage.py`: scans chain ≥ block 62000 for any OP_BLAKE3 > 1024 B / OP_K12 ≥ 8192 B / opcode 0xd4 or 0xd5 usage. Must run CLEAN before `SecurityUpgradeHeight` is activated.
 
 ### What's new in 3.0.0
 

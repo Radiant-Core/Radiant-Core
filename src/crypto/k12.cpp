@@ -143,9 +143,23 @@ CK12 &CK12::Write(const uint8_t *data, size_t len) {
 }
 
 bool CK12::Finalize(uint8_t *output) {
-    // Enforce single-block mode limit (no tree hashing support)
-    // Return false instead of crashing if the caller exceeds this.
-    if (m_bytes_consumed > MAX_INPUT_LEN) {
+    // Single-node mode limit (no tree hashing support).
+    //
+    // SPEC NOTE (F1): the spec-correct raw maximum is MAX_INPUT_LEN = 8191,
+    // because this Finalize() appends length_encode(0) = 1 framing byte below,
+    // and single-node mode requires the padded absorbed length to stay < 8192.
+    // A raw input of exactly 8192 pushes the framed length to 8193 — off-spec.
+    //
+    // CONSENSUS NOTE: OP_K12 has been live on mainnet since ERHeight=62000.
+    // Before the 2026-06 security upgrade the interpreter accepted up to 8192
+    // raw bytes and this Finalize() produced a (deterministic, off-spec) hash
+    // for an 8192-byte input. That value is part of historical consensus, so we
+    // MUST keep reproducing it here: the hard limit below stays at 8192 so the
+    // pre-activation (flag-off) interpreter path is byte-identical. The tighter
+    // 8191 (MAX_INPUT_LEN) bound is enforced by EvalScript only when
+    // SCRIPT_SECURITY_UPGRADE is active, which is a future-gated hard-fork.
+    static const size_t SINGLE_NODE_HARD_LIMIT = 8192;
+    if (m_bytes_consumed > SINGLE_NODE_HARD_LIMIT) {
         return false;
     }
 

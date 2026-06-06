@@ -9,7 +9,7 @@
 #
 # Usage:
 #   scripts/build-docker-release.sh [version]
-#     version  Tag string (default: v3.0.0).
+#     version  Tag string (default: v3.1.0).
 #
 # Output:
 #   releases/<version>/radiant-core-linux-x64-<version>.tar.gz
@@ -19,7 +19,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-v3.0.0}"
+VERSION="${1:-v3.1.0}"
 HOST_TRIPLE="x86_64-linux-gnu"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

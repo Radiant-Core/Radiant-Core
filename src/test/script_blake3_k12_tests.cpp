@@ -57,6 +57,11 @@ static void RunErr(const stacktype &original_stack, const CScript &script,
 static constexpr uint32_t ER_FLAGS =
     STANDARD_SCRIPT_VERIFY_FLAGS | SCRIPT_ENHANCED_REFERENCES;
 
+// Same as ER_FLAGS but with the 2026-06 security-audit hardening active. Under
+// this flag the K12 single-node bound tightens to <8192 (raw max 8191) and the
+// per-script memory / opcode-cost budgets are enforced.
+static constexpr uint32_t SECURITY_FLAGS = ER_FLAGS | SCRIPT_SECURITY_UPGRADE;
+
 BOOST_AUTO_TEST_CASE(blake3_disabled_without_er_flag) {
     // Without SCRIPT_ENHANCED_REFERENCES, OP_BLAKE3 must behave as a disabled
     // opcode: script fails with DISABLED_OPCODE before consuming the input.
@@ -125,19 +130,44 @@ BOOST_AUTO_TEST_CASE(blake3_over_chunk_boundary_fails_with_operand_size) {
 }
 
 BOOST_AUTO_TEST_CASE(k12_at_max_input_boundary_succeeds) {
-    // 8192-byte input (MAX_INPUT_LEN) must succeed.
+    // 8191-byte input (MAX_INPUT_LEN) must succeed under both flag sets.
+    BOOST_CHECK_EQUAL(size_t{CK12::MAX_INPUT_LEN}, size_t{8191});
     valtype input(size_t{CK12::MAX_INPUT_LEN});
     for (size_t i = 0; i < input.size(); ++i) {
         input[i] = static_cast<uint8_t>(i % 251);
     }
     stacktype result = RunOk({input}, CScript() << OP_K12, ER_FLAGS);
     BOOST_CHECK_EQUAL(result.back().size(), size_t{CK12::OUTPUT_SIZE});
+    result = RunOk({input}, CScript() << OP_K12, SECURITY_FLAGS);
+    BOOST_CHECK_EQUAL(result.back().size(), size_t{CK12::OUTPUT_SIZE});
+}
+
+BOOST_AUTO_TEST_CASE(k12_at_8192_symmetric_across_security_flag) {
+    // F1 (K12 off-spec at exactly 8192): the spec-correct raw maximum is 8191
+    // because Finalize() appends a 1-byte length_encode(0) so the padded length
+    // must stay < 8192. An 8192-byte raw input is therefore off-spec.
+    //
+    //  - Pre-activation (ER_FLAGS, no SecurityUpgrade): EXACT historical mainnet
+    //    behavior is preserved. The size guard rejects only >8192, and CK12's
+    //    hard limit is still 8192, so an 8192-byte input still produces its
+    //    historical (off-spec) 32-byte hash and the script SUCCEEDS. Tightening
+    //    this would be a retroactive hard fork.
+    //  - Post-activation (SECURITY_FLAGS): the size guard rejects >8191, so 8192
+    //    is rejected up front with INVALID_OPERAND_SIZE.
+    valtype input(size_t{8192}, 0xcd);
+    stacktype result = RunOk({input}, CScript() << OP_K12, ER_FLAGS);
+    BOOST_CHECK_EQUAL(result.back().size(), size_t{CK12::OUTPUT_SIZE});
+    RunErr({input}, CScript() << OP_K12, SECURITY_FLAGS,
+           ScriptError::INVALID_OPERAND_SIZE);
 }
 
 BOOST_AUTO_TEST_CASE(k12_over_max_input_fails_with_operand_size) {
-    // 8193-byte input — one past MAX_INPUT_LEN.
-    valtype input(size_t{CK12::MAX_INPUT_LEN} + 1, 0xcd);
+    // 8193-byte input — past every bound; rejected with INVALID_OPERAND_SIZE
+    // under both flag sets (legacy guard rejects >8192, security guard >8191).
+    valtype input(size_t{8193}, 0xcd);
     RunErr({input}, CScript() << OP_K12, ER_FLAGS,
+           ScriptError::INVALID_OPERAND_SIZE);
+    RunErr({input}, CScript() << OP_K12, SECURITY_FLAGS,
            ScriptError::INVALID_OPERAND_SIZE);
 }
 
@@ -169,6 +199,49 @@ BOOST_AUTO_TEST_CASE(k12_consumes_one_pushes_one) {
     BOOST_CHECK_EQUAL(result.size(), 2);
     BOOST_CHECK(result[0] == other);
     BOOST_CHECK_EQUAL(result[1].size(), size_t{CK12::OUTPUT_SIZE});
+}
+
+// ---------------------------------------------------------------------------
+// HIGH-1: the UTXO twins 0xd4/0xd5 must be DISABLED when
+// SCRIPT_ENHANCED_REFERENCES is off, aligning with their OUTPUT twins
+// 0xd6/0xd7. Before the fix only 0xd6/0xd7 were in the disabled list.
+// ---------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(refhash_utxo_twins_disabled_without_er_flag) {
+    // 0xd4 = OP_REFHASHDATASUMMARY_UTXO
+    RunErr({}, CScript() << OP_REFHASHDATASUMMARY_UTXO, 0,
+           ScriptError::DISABLED_OPCODE);
+    RunErr({}, CScript() << OP_REFHASHDATASUMMARY_UTXO,
+           STANDARD_SCRIPT_VERIFY_FLAGS, ScriptError::DISABLED_OPCODE);
+    // 0xd5 = OP_REFHASHVALUESUM_UTXOS
+    RunErr({}, CScript() << OP_REFHASHVALUESUM_UTXOS, 0,
+           ScriptError::DISABLED_OPCODE);
+    RunErr({}, CScript() << OP_REFHASHVALUESUM_UTXOS,
+           STANDARD_SCRIPT_VERIFY_FLAGS, ScriptError::DISABLED_OPCODE);
+}
+
+// ---------------------------------------------------------------------------
+// H1/M1: per-script peak stack-memory budget. A script that repeatedly OP_DUPs
+// a large element balloons stack bytes far past any legitimate use. With
+// SCRIPT_SECURITY_UPGRADE active this is rejected (STACK_SIZE) before it
+// exhausts memory; without the flag the historical behavior (no byte budget)
+// is preserved and the same script succeeds.
+// MAX_SCRIPT_STACK_MEMORY_USAGE is 64 MB; we use a 1 MB element and 70 dups so
+// total bytes (~71 MB) crosses the budget while keeping the test lightweight.
+// ---------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(stack_memory_bomb_rejected_under_security_upgrade) {
+    valtype big(size_t{1} * 1000 * 1000, 0x00); // 1 MB element
+    CScript script;
+    for (int i = 0; i < 70; ++i) {
+        script << OP_DUP;
+    }
+
+    // With the security upgrade active, the byte budget rejects the bomb.
+    RunErr({big}, script, SECURITY_FLAGS, ScriptError::STACK_SIZE);
+
+    // Without the flag, the historical element-count limit (MAX_STACK_SIZE) is
+    // not exceeded by 71 elements, so the same script still succeeds.
+    stacktype result = RunOk({big}, script, ER_FLAGS);
+    BOOST_CHECK_EQUAL(result.size(), size_t{71});
 }
 
 BOOST_AUTO_TEST_SUITE_END()

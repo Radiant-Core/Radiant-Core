@@ -7,19 +7,44 @@
 #include <chainparams.h>
 #include <clientversion.h>
 #include <config.h>
+#include <httprpc.h>
 #include <httpserver.h>
 #include <net.h>
+#include <rpc/protocol.h> // For HTTP status codes
 #include <rpc/server.h>
 #include <txmempool.h>
+#include <util/system.h>
 #include <validation.h>
 
 #include <sstream>
+
+/**
+ * SECURITY (audit 2026-06, H3): default on. When true, the /metrics endpoint
+ * requires the same authentication as the JSON-RPC interface. Operators who
+ * front /metrics with their own authentication (e.g. a reverse proxy) can opt
+ * out with -metricsauth=0.
+ */
+static const bool DEFAULT_METRICS_AUTH = true;
+/** WWW-Authenticate header presented with a 401 from /metrics. */
+static const char *METRICS_WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
 
 static bool MetricsHandler(Config &config, HTTPRequest *req,
                            const std::string &strURI) {
     // Only allow GET requests
     if (req->GetRequestMethod() != HTTPRequest::GET) {
         req->WriteReply(HTTP_BAD_METHOD, "Metrics endpoint only supports GET");
+        return false;
+    }
+
+    // SECURITY (audit 2026-06, H3): require RPC authentication for /metrics
+    // unless explicitly opted out. Previously this endpoint was unauthenticated
+    // and exposed node internals (height, peer count, mempool) to anyone able to
+    // reach the RPC port. Prometheus scraping keeps working by supplying the
+    // same Basic-auth credentials as RPC.
+    if (gArgs.GetBoolArg("-metricsauth", DEFAULT_METRICS_AUTH) &&
+        !RPCAuthorizedRequest(req)) {
+        req->WriteHeader("WWW-Authenticate", METRICS_WWW_AUTH_HEADER_DATA);
+        req->WriteReply(HTTP_UNAUTHORIZED, "");
         return false;
     }
 

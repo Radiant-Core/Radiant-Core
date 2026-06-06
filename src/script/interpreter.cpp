@@ -8,6 +8,7 @@
 
 #include <script/interpreter.h>
 
+#include <consensus/consensus.h>
 #include <crypto/blake3.h>
 #include <crypto/k12.h>
 #include <crypto/ripemd160.h>
@@ -150,9 +151,15 @@ static bool IsOpcodeDisabled(opcodetype opcode, uint32_t flags) {
         case OP_K12:
             // Enabled with enhanced references (post-fork)
             return (flags & SCRIPT_ENHANCED_REFERENCES) == 0;
+        // Align the UTXO twins (0xd4/0xd5) with their OUTPUT twins
+        // (0xd6/0xd7) below: all four must be gated by SCRIPT_ENHANCED_REFERENCES.
+        // Only affects flag-OFF behavior (no mainnet effect post-ERHeight=62000),
+        // so applied unconditionally.
+        case OP_REFHASHDATASUMMARY_UTXO:
+        case OP_REFHASHVALUESUM_UTXOS:
         case OP_REFHASHDATASUMMARY_OUTPUT:
         case OP_REFHASHVALUESUM_OUTPUTS:
-        case OP_PUSHINPUTREFSINGLETON: 
+        case OP_PUSHINPUTREFSINGLETON:
         case OP_REFTYPE_UTXO:
         case OP_REFTYPE_OUTPUT:
         case OP_STATESEPARATOR:
@@ -274,6 +281,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
     bool const enhancedReferences = (flags & SCRIPT_ENHANCED_REFERENCES) != 0;
     bool const pushTxState = (flags & SCRIPT_PUSH_TX_STATE) != 0;
     bool const integers64Bit = (flags & SCRIPT_64_BIT_INTEGERS) != 0;
+
+    // 2026-06 security-audit hardening: when active, enforce per-script peak
+    // stack-memory and hashing/bytewise opcode-cost budgets (see consensus.h).
+    // Gated so it never tightens scripts valid before the activation height.
+    bool const securityUpgrade = (flags & SCRIPT_SECURITY_UPGRADE) != 0;
+    // Running accumulator of hashing/bytewise opcode cost (bytes processed).
+    uint64_t opcodeCost = 0;
 
     size_t const maxIntegerSize = integers64Bit ?
         CScriptNum::MAXIMUM_ELEMENT_SIZE_64_BIT :
@@ -796,6 +810,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_NUMBER_RANGE);
                         }
 
+                        // M2 opcode-cost budget (bytewise): charge input size.
+                        if (securityUpgrade) {
+                            opcodeCost += vch1.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
+                        }
+
                         popstack(stack);
                         popstack(stack);
                         stack.push_back(LShift(vch1, static_cast<int>(n.getint64())));
@@ -811,6 +833,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         CScriptNum n(stacktop(-1), fRequireMinimal, maxIntegerSize);
                         if (n < 0 || n.getint64() > static_cast<int64_t>(8 * vch1.size())) {
                             return set_error(serror, ScriptError::INVALID_NUMBER_RANGE);
+                        }
+
+                        // M2 opcode-cost budget (bytewise): charge input size.
+                        if (securityUpgrade) {
+                            opcodeCost += vch1.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
                         }
 
                         popstack(stack);
@@ -1068,6 +1098,17 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype &vch = stacktop(-1);
+                        // 2026-06 security-audit hardening (M2): charge the
+                        // hashing opcode-cost budget proportional to input size
+                        // (covers OP_BLAKE3/OP_K12/OP_SHA256/OP_HASH256/
+                        // OP_RIPEMD160 and their siblings here). Conservative:
+                        // all hash opcodes in this group are charged.
+                        if (securityUpgrade) {
+                            opcodeCost += vch.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
+                        }
                         valtype vchHash((opcode == OP_RIPEMD160 ||
                                          opcode == OP_SHA1 ||
                                          opcode == OP_HASH160)
@@ -1105,7 +1146,23 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                             }
                         } else if (opcode == OP_K12) {
-                            if (vch.size() > CK12::MAX_INPUT_LEN) {
+                            // K12 single-node mode requires padded length < 8192;
+                            // since Finalize() appends 1 framing byte the true
+                            // spec-correct raw maximum is 8191 (CK12::MAX_INPUT_LEN).
+                            //
+                            // SECURITY_UPGRADE tightens the guard to >8191. Pre-
+                            // activation we MUST preserve the EXACT historical
+                            // mainnet rule (reject only >8192) to avoid changing
+                            // consensus for scripts valid since ERHeight=62000:
+                            // an 8192-byte input passes this guard and CK12's hard
+                            // limit (8192) still produces its historical off-spec
+                            // hash. CK12::MAX_INPUT_LEN (8191) is enforced only on
+                            // this gated path.
+                            size_t const k12MaxInput =
+                                (flags & SCRIPT_SECURITY_UPGRADE)
+                                    ? CK12::MAX_INPUT_LEN  // 8191
+                                    : size_t{8192};        // legacy pre-activation bound
+                            if (vch.size() > k12MaxInput) {
                                 return set_error(serror, ScriptError::INVALID_OPERAND_SIZE);
                             }
                             CK12 hasher;
@@ -1431,6 +1488,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             MAX_SCRIPT_ELEMENT_SIZE) {
                             return set_error(serror, ScriptError::PUSH_SIZE);
                         }
+                        // M2 opcode-cost budget (bytewise): charge bytes copied.
+                        if (securityUpgrade) {
+                            opcodeCost += vch1.size() + vch2.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
+                        }
                         vch1.insert(vch1.end(), vch2.begin(), vch2.end());
                         popstack(stack);
                     } break;
@@ -1465,6 +1529,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
 
                         valtype &data = stacktop(-1);
+                        // M2 opcode-cost budget (bytewise): charge input size.
+                        if (securityUpgrade) {
+                            opcodeCost += data.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
+                        }
                         std::reverse(data.begin(), data.end());
                     } break;
 
@@ -1480,6 +1551,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         uint64_t const size = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
                         if (size > MAX_SCRIPT_ELEMENT_SIZE) {
                             return set_error(serror, ScriptError::PUSH_SIZE);
+                        }
+
+                        // M2 opcode-cost budget (bytewise): charge produced size.
+                        if (securityUpgrade) {
+                            opcodeCost += size;
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
                         }
 
                         popstack(stack);
@@ -2451,6 +2530,26 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
             // Size limits
             if (stack.size() + altstack.size() > MAX_STACK_SIZE) {
                 return set_error(serror, ScriptError::STACK_SIZE);
+            }
+
+            // 2026-06 security-audit hardening (H1/M1): per-script peak
+            // stack-memory budget. Runs after every executed opcode — which
+            // covers all stack-growing opcodes (pushes, OP_DUP/3DUP/OVER/PICK/
+            // TUCK, OP_CAT/SPLIT/NUM2BIN/LSHIFT/RSHIFT, etc.) — so a single
+            // O(n) recompute here bounds total stack byte usage before a memory
+            // bomb can balloon further. The element-count cap above does not
+            // bound bytes; a few thousand 32 MB elements already exhausts RAM.
+            if (securityUpgrade) {
+                uint64_t stackBytes = 0;
+                for (auto const &elem : stack) {
+                    stackBytes += elem.size();
+                }
+                for (auto const &elem : altstack) {
+                    stackBytes += elem.size();
+                }
+                if (stackBytes > MAX_SCRIPT_STACK_MEMORY_USAGE) {
+                    return set_error(serror, ScriptError::STACK_SIZE);
+                }
             }
         }
     } catch (...) {

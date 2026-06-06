@@ -1746,6 +1746,13 @@ static uint32_t GetNextBlockScriptFlags(const Consensus::Params &params,
         flags |= SCRIPT_PUSH_TX_STATE;
     }
 
+    // Enable 2026-06 security-audit hardening (K12 <8192 bound, per-script
+    // memory / opcode-cost budgets). Gated behind a future activation height
+    // so it never tightens currently-valid scripts retroactively.
+    if ((pindex->nHeight + 1) >= params.SecurityUpgradeHeight) {
+        flags |= SCRIPT_SECURITY_UPGRADE;
+    }
+
     return flags;
 }
 

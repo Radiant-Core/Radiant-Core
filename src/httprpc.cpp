@@ -158,6 +158,18 @@ static bool RPCAuthorized(const std::string &strAuth,
     return multiUserAuthorized(strUserPass);
 }
 
+bool RPCAuthorizedRequest(HTTPRequest *req) {
+    // SECURITY (audit 2026-06, H3): reuse the exact RPC credential check so that
+    // auxiliary endpoints (e.g. /metrics) require the same authentication as the
+    // JSON-RPC endpoint.
+    const auto authHeaderOpt = req->GetHeader("authorization");
+    if (!authHeaderOpt) {
+        return false;
+    }
+    std::string authUser;
+    return RPCAuthorized(*authHeaderOpt, authUser);
+}
+
 static bool checkCORS(HTTPRequest *req) {
     // https://www.w3.org/TR/cors/#resource-requests
 
