@@ -154,7 +154,10 @@ class FrameworkInfo(object):
 class ApplicationBundleInfo(object):
     def __init__(self, path):
         self.path = path
-        appName = "BitcoinCashNode-Qt"
+        # Derive the binary name from the bundle directory name (e.g.
+        # "RadiantCore-Qt.app" -> binary at Contents/MacOS/RadiantCore-Qt).
+        # This avoids a hardcoded name that breaks when the bundle is renamed.
+        appName = os.path.splitext(os.path.basename(path))[0]
         self.binaryPath = os.path.join(path, "Contents", "MacOS", appName)
         if not os.path.exists(self.binaryPath):
             raise RuntimeError("Could not find bundle binary for " + path)
@@ -604,7 +607,7 @@ else:
 
 # ------------------------------------------------
 
-target = os.path.join("dist", "BitcoinCashNode-Qt.app")
+target = os.path.join("dist", app_bundle_name + ".app")
 
 if verbose >= 2:
     print("+ Copying source bundle +")
