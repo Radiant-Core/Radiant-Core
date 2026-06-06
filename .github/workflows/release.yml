@@ -109,7 +109,8 @@ jobs:
             zeromq \
             qt@5 \
             qrencode \
-            protobuf
+            protobuf \
+            librsvg
 
       - name: Configure CMake
         run: |
