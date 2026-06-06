@@ -174,6 +174,58 @@ jobs:
           tar -czvf radiant-core-macos-arm64.tar.gz radiant-core-macos-arm64
           zip -r    radiant-core-macos-arm64.zip    radiant-core-macos-arm64
 
+      - name: Create macOS GUI DMG
+        # The web-GUI package bundles radiantd + the Python web GUI (radiant_node_web.py)
+        # into a drag-to-open DMG.  This must run on the macOS runner because hdiutil
+        # is macOS-only; the build-gui-packages job runs on Linux and cannot make DMGs.
+        run: |
+          VERSION=${{ github.event.inputs.version || github.ref_name }}
+          VNUM=${VERSION#v}
+          DIR="Radiant Core GUI ${VNUM}"
+
+          mkdir -p "$DIR"
+
+          # Node binaries
+          cp build/src/radiantd    "$DIR/" || true
+          cp build/src/radiant-cli "$DIR/" || true
+          cp build/src/radiant-tx  "$DIR/" || true
+
+          # Web GUI scripts
+          cp gui/radiant_node_web.py "$DIR/"
+          cp gui/bip39.py            "$DIR/"
+
+          # Double-clickable launcher (.command files open in Terminal on macOS)
+          cat > "$DIR/Start Radiant Core GUI.command" << 'LAUNCHER'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          chmod +x radiantd radiant-cli radiant-tx 2>/dev/null
+          echo "Starting Radiant Core GUI..."
+          python3 radiant_node_web.py
+          LAUNCHER
+          chmod +x "$DIR/Start Radiant Core GUI.command"
+
+          # Quick-start readme
+          cat > "$DIR/README.txt" << README
+          Radiant Core GUI v${VNUM}
+          =========================
+
+          Double-click "Start Radiant Core GUI.command" to launch.
+          The GUI opens in your browser at http://127.0.0.1:8765
+
+          First launch: if macOS shows a security warning, right-click the
+          .command file and choose Open — this is required once to clear
+          Gatekeeper's quarantine for unsigned apps.
+
+          Requirements: Python 3 (pre-installed on macOS 12+)
+          README
+
+          # Build the DMG
+          hdiutil create \
+            -volname "Radiant Core GUI ${VNUM}" \
+            -srcfolder "$DIR" \
+            -ov -format UDZO \
+            "radiant-core-gui-macos-v${VNUM}.dmg"
+
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
@@ -182,6 +234,7 @@ jobs:
             radiant-core-macos-arm64.tar.gz
             radiant-core-macos-arm64.zip
             radiant-*-macos.dmg
+            radiant-core-gui-macos-*.dmg
 
   build-gui-packages:
     needs: [build-linux, build-macos]
