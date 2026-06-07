@@ -390,18 +390,15 @@ jobs:
             if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
           }
 
-          @"
-Radiant Core GUI v$VNUM - Windows x64
-=========================================
-
-Double-click "Radiant Core.exe" to start the GUI.
-The node starts automatically and the interface opens in
-your default browser at http://127.0.0.1:8765
-
-No additional software required - Python is bundled.
-
-Support: https://radiantblockchain.org
-"@ | Out-File -FilePath "$GUI_STAGE\README.txt" -Encoding utf8
+          # Write README without a here-string (here-strings break YAML block scalars)
+          $readme  = "Radiant Core GUI v$VNUM - Windows x64`n"
+          $readme += "=========================================`n`n"
+          $readme += "Double-click 'Radiant Core.exe' to start the GUI.`n"
+          $readme += "The node starts automatically and opens in`n"
+          $readme += "your default browser at http://127.0.0.1:8765`n`n"
+          $readme += "No additional software required - Python is bundled.`n`n"
+          $readme += "Support: https://radiantblockchain.org`n"
+          $readme | Out-File -FilePath "$GUI_STAGE\README.txt" -Encoding utf8
 
           $ZIP = "radiant-core-gui-windows-x64-v$VNUM.zip"
           Compress-Archive -Path "$GUI_STAGE\*" -DestinationPath $ZIP
