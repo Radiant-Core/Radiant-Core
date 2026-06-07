@@ -259,7 +259,8 @@ jobs:
             -DBUILD_RADIANT_WALLET=OFF \
             -DBUILD_RADIANT_QT=OFF \
             -DENABLE_HARDENING=ON \
-            -DENABLE_UPNP=OFF
+            -DENABLE_UPNP=OFF \
+            -DSECP256K1_ECMULT_STATIC_PRECOMPUTATION=OFF
 
       - name: Build
         run: cmake --build build-win --config Release -j$(nproc)
