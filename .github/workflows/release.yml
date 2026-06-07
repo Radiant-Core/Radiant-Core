@@ -343,62 +343,70 @@ jobs:
           sha256sum radiant-core-windows-x64.zip > radiant-core-windows-x64.zip.sha256
 
       - name: Build Windows GUI (PyInstaller)
+        # Use PowerShell: the windows-2022 runner has Python + pip pre-installed.
+        # The MSYS2 Python (mingw-w64-x86_64-python) does not include pip and
+        # ensurepip is stripped — so we can't use the msys2 shell here.
+        shell: pwsh
         run: |
-          VERSION=${{ github.event.inputs.version || github.ref_name }}
-          VNUM=${VERSION#v}
+          $VERSION = "${{ github.event.inputs.version || github.ref_name }}"
+          $VNUM    = $VERSION.TrimStart('v')
 
-          # Install PyInstaller into the MSYS2/MINGW64 Python environment
-          # Use 'python -m pip' — the bare 'pip' command is not in PATH in MSYS2
-          python -m pip install pyinstaller
+          # System Python on windows-2022 already has pip
+          pip install pyinstaller
 
-          # Build the standalone GUI bundle from gui/
-          cd gui
-          python -m PyInstaller \
-            --onedir \
-            --name "Radiant Core" \
-            --add-data "bip39.py:." \
+          # Build standalone GUI bundle; use ';' separator (Windows os.pathsep)
+          Set-Location gui
+          pyinstaller `
+            --onedir `
+            --name "Radiant Core" `
+            --add-data "bip39.py;." `
             radiant_node_web.py
-          cd ..
+          Set-Location ..
 
-          GUI_STAGE="radiant-core-gui-windows-x64"
-          mkdir -p "${GUI_STAGE}"
+          $GUI_STAGE = "radiant-core-gui-windows-x64"
+          New-Item -ItemType Directory -Force -Path $GUI_STAGE | Out-Null
 
-          # Copy PyInstaller --onedir output (dist/<name>/ → bundle root)
-          cp -r "gui/dist/Radiant Core/." "${GUI_STAGE}/"
+          # Copy PyInstaller --onedir output into the stage directory
+          Copy-Item -Recurse "gui\dist\Radiant Core\*" "$GUI_STAGE\"
 
           # Place node binaries next to Radiant Core.exe so _find_binary
-          # picks them up via: exe_dir / "radiantd.exe"
-          cp build-win/src/radiantd.exe    "${GUI_STAGE}/" 2>/dev/null || true
-          cp build-win/src/radiant-cli.exe "${GUI_STAGE}/" 2>/dev/null || true
-          cp build-win/src/radiant-tx.exe  "${GUI_STAGE}/" 2>/dev/null || true
+          # resolves:  Path(sys.executable).parent / "radiantd.exe"
+          foreach ($exe in @("radiantd.exe", "radiant-cli.exe", "radiant-tx.exe")) {
+            $src = "build-win\src\$exe"
+            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
+          }
 
-          # Bundle MinGW runtime DLLs required by the node .exe files
-          MINGW_BIN="/mingw64/bin"
-          for dll in \
-              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
-              libboost_chrono-mt-x64.dll libboost_thread-mt-x64.dll \
-              libboost_filesystem-mt-x64.dll libboost_system-mt-x64.dll \
-              libevent-2-1-7.dll libevent_pthreads-2-1-7.dll \
-              libzmq.dll libssl-3-x64.dll libcrypto-3-x64.dll zlib1.dll; do
-            [ -f "${MINGW_BIN}/${dll}" ] && cp "${MINGW_BIN}/${dll}" "${GUI_STAGE}/" || true
-          done
+          # Bundle MinGW runtime DLLs required by the node .exe files.
+          # setup-msys2 installs MSYS2 at C:\msys64 on the windows-2022 runner.
+          $MINGW_BIN = "C:\msys64\mingw64\bin"
+          foreach ($dll in @(
+            "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll",
+            "libboost_chrono-mt-x64.dll", "libboost_thread-mt-x64.dll",
+            "libboost_filesystem-mt-x64.dll", "libboost_system-mt-x64.dll",
+            "libevent-2-1-7.dll", "libevent_pthreads-2-1-7.dll",
+            "libzmq.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll", "zlib1.dll"
+          )) {
+            $src = Join-Path $MINGW_BIN $dll
+            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
+          }
 
-          cat > "${GUI_STAGE}/README.txt" << 'GUIEOF'
-          Radiant Core GUI v${VNUM} - Windows x64
-          =========================================
+          @"
+Radiant Core GUI v$VNUM - Windows x64
+=========================================
 
-          Double-click "Radiant Core.exe" to start the GUI.
-          The node starts automatically and the interface opens in
-          your default browser at http://127.0.0.1:8765
+Double-click "Radiant Core.exe" to start the GUI.
+The node starts automatically and the interface opens in
+your default browser at http://127.0.0.1:8765
 
-          No additional software required — Python is bundled.
+No additional software required - Python is bundled.
 
-          Support: https://radiantblockchain.org
-          GUIEOF
+Support: https://radiantblockchain.org
+"@ | Out-File -FilePath "$GUI_STAGE\README.txt" -Encoding utf8
 
-          zip -r "radiant-core-gui-windows-x64-v${VNUM}.zip" "${GUI_STAGE}"
-          sha256sum "radiant-core-gui-windows-x64-v${VNUM}.zip" \
-            > "radiant-core-gui-windows-x64-v${VNUM}.zip.sha256"
+          $ZIP = "radiant-core-gui-windows-x64-v$VNUM.zip"
+          Compress-Archive -Path "$GUI_STAGE\*" -DestinationPath $ZIP
+          $hash = (Get-FileHash $ZIP -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ZIP" | Out-File -FilePath "$ZIP.sha256" -Encoding ascii
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
