@@ -342,6 +342,63 @@ jobs:
           zip -r radiant-core-windows-x64.zip ${STAGE}
           sha256sum radiant-core-windows-x64.zip > radiant-core-windows-x64.zip.sha256
 
+      - name: Build Windows GUI (PyInstaller)
+        run: |
+          VERSION=${{ github.event.inputs.version || github.ref_name }}
+          VNUM=${VERSION#v}
+
+          # Install PyInstaller into the MSYS2/MINGW64 Python environment
+          pip install pyinstaller
+
+          # Build the standalone GUI bundle from gui/
+          cd gui
+          pyinstaller \
+            --onedir \
+            --name "Radiant Core" \
+            --add-data "bip39.py:." \
+            radiant_node_web.py
+          cd ..
+
+          GUI_STAGE="radiant-core-gui-windows-x64"
+          mkdir -p "${GUI_STAGE}"
+
+          # Copy PyInstaller --onedir output (dist/<name>/ → bundle root)
+          cp -r "gui/dist/Radiant Core/." "${GUI_STAGE}/"
+
+          # Place node binaries next to Radiant Core.exe so _find_binary
+          # picks them up via: exe_dir / "radiantd.exe"
+          cp build-win/src/radiantd.exe    "${GUI_STAGE}/" 2>/dev/null || true
+          cp build-win/src/radiant-cli.exe "${GUI_STAGE}/" 2>/dev/null || true
+          cp build-win/src/radiant-tx.exe  "${GUI_STAGE}/" 2>/dev/null || true
+
+          # Bundle MinGW runtime DLLs required by the node .exe files
+          MINGW_BIN="/mingw64/bin"
+          for dll in \
+              libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll \
+              libboost_chrono-mt-x64.dll libboost_thread-mt-x64.dll \
+              libboost_filesystem-mt-x64.dll libboost_system-mt-x64.dll \
+              libevent-2-1-7.dll libevent_pthreads-2-1-7.dll \
+              libzmq.dll libssl-3-x64.dll libcrypto-3-x64.dll zlib1.dll; do
+            [ -f "${MINGW_BIN}/${dll}" ] && cp "${MINGW_BIN}/${dll}" "${GUI_STAGE}/" || true
+          done
+
+          cat > "${GUI_STAGE}/README.txt" << 'GUIEOF'
+          Radiant Core GUI v${VNUM} - Windows x64
+          =========================================
+
+          Double-click "Radiant Core.exe" to start the GUI.
+          The node starts automatically and the interface opens in
+          your default browser at http://127.0.0.1:8765
+
+          No additional software required — Python is bundled.
+
+          Support: https://radiantblockchain.org
+          GUIEOF
+
+          zip -r "radiant-core-gui-windows-x64-v${VNUM}.zip" "${GUI_STAGE}"
+          sha256sum "radiant-core-gui-windows-x64-v${VNUM}.zip" \
+            > "radiant-core-gui-windows-x64-v${VNUM}.zip.sha256"
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
@@ -349,6 +406,8 @@ jobs:
           path: |
             radiant-core-windows-x64.zip
             radiant-core-windows-x64.zip.sha256
+            radiant-core-gui-windows-x64-*.zip
+            radiant-core-gui-windows-x64-*.zip.sha256
 
   build-gui-packages:
     needs: [build-linux, build-macos, build-windows]
@@ -483,12 +542,13 @@ jobs:
           zip -r radiant-core-gui-macos-v${VERSION}.zip radiant-core-gui-macos-v${VERSION}
           sha256sum radiant-core-gui-macos-v${VERSION}.zip > radiant-core-gui-macos-v${VERSION}.zip.sha256
 
-          # Pass through Windows zip from build-windows (already built + DLLs bundled)
-          echo "Passing through Windows GUI package..."
-          cp binaries/windows/radiant-core-windows-x64.zip \
-             radiant-core-gui-windows-x64-v${VERSION}.zip 2>/dev/null || true
-          cp binaries/windows/radiant-core-windows-x64.zip.sha256 \
-             radiant-core-gui-windows-x64-v${VERSION}.zip.sha256 2>/dev/null || true
+          # Pass through Windows packages from build-windows
+          echo "Passing through Windows packages..."
+          cp binaries/windows/radiant-core-windows-x64.zip . 2>/dev/null || true
+          cp binaries/windows/radiant-core-windows-x64.zip.sha256 . 2>/dev/null || true
+          # PyInstaller GUI bundle (no Python install required)
+          cp binaries/windows/radiant-core-gui-windows-x64-v${VERSION}.zip . 2>/dev/null || true
+          cp binaries/windows/radiant-core-gui-windows-x64-v${VERSION}.zip.sha256 . 2>/dev/null || true
 
       - name: Upload GUI packages
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
