@@ -220,8 +220,138 @@ jobs:
             radiant-*-macos.dmg
             radiant-core-gui-macos-*.dmg
 
+  build-windows:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Set up MSYS2 / MINGW64
+        uses: msys2/setup-msys2@ddf331adaebd714795f1042345e6ca57bd66cea8 # v2.24.1
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-libevent
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zeromq
+            mingw-w64-x86_64-miniupnpc
+            mingw-w64-x86_64-libdb
+            mingw-w64-x86_64-python
+            zip
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build-win
+          cmake -S . -B build-win -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_RADIANT_DAEMON=ON \
+            -DBUILD_RADIANT_CLI=ON \
+            -DBUILD_RADIANT_TX=ON \
+            -DBUILD_RADIANT_WALLET=ON \
+            -DBUILD_RADIANT_QT=OFF \
+            -DENABLE_HARDENING=ON \
+            -DENABLE_UPNP=OFF
+
+      - name: Build
+        run: cmake --build build-win --config Release -j$(nproc)
+
+      - name: Create release package
+        shell: msys2 {0}
+        run: |
+          VERSION=${{ github.event.inputs.version || github.ref_name }}
+          STAGE=radiant-core-windows-x64
+
+          mkdir -p ${STAGE}
+
+          cp build-win/src/radiantd.exe    ${STAGE}/ 2>/dev/null || true
+          cp build-win/src/radiant-cli.exe ${STAGE}/ 2>/dev/null || true
+          cp build-win/src/radiant-tx.exe  ${STAGE}/ 2>/dev/null || true
+
+          # Strip debug info
+          strip --strip-all ${STAGE}/*.exe 2>/dev/null || true
+
+          # Bundle required MINGW64 runtime DLLs so the .exe runs without
+          # a separate MSYS2 installation on the target machine.
+          MINGW_BIN="/mingw64/bin"
+          for dll in \
+              libgcc_s_seh-1.dll \
+              libstdc++-6.dll \
+              libwinpthread-1.dll \
+              libboost_chrono-mt-x64.dll \
+              libboost_thread-mt-x64.dll \
+              libboost_filesystem-mt-x64.dll \
+              libboost_system-mt-x64.dll \
+              libevent-2-1-7.dll \
+              libevent_pthreads-2-1-7.dll \
+              libzmq.dll \
+              libssl-3-x64.dll \
+              libcrypto-3-x64.dll \
+              zlib1.dll; do
+            [ -f "${MINGW_BIN}/${dll}" ] && cp "${MINGW_BIN}/${dll}" ${STAGE}/ || true
+          done
+
+          # GUI files
+          cp gui/radiant_node_web.py ${STAGE}/
+          cp gui/bip39.py ${STAGE}/
+
+          # Windows GUI launcher (browser mode — opens http://127.0.0.1:8765)
+          cat > ${STAGE}/start-gui.bat << 'BATCHEOF'
+          @echo off
+          cd /d "%~dp0"
+          echo Starting Radiant Core GUI...
+          python radiant_node_web.py 2>nul || python3 radiant_node_web.py
+          if errorlevel 1 (
+            echo.
+            echo Python 3 is required. Download from https://www.python.org/downloads/
+            pause
+          )
+          BATCHEOF
+
+          cat > ${STAGE}/README.txt << 'TXTEOF'
+          Radiant Core v${VERSION} - Windows x64
+          ========================================
+
+          Node binaries:
+            radiantd.exe    - node daemon (run with -server for RPC)
+            radiant-cli.exe - RPC command-line client
+            radiant-tx.exe  - transaction creation tool
+
+          GUI (requires Python 3.8+):
+            Double-click start-gui.bat
+            The GUI opens automatically at http://127.0.0.1:8765
+
+          Python 3 download: https://www.python.org/downloads/windows/
+            - Check "Add Python to PATH" during install
+
+          Quick start (PowerShell):
+            .\radiantd.exe -server -txindex=1
+
+          Support: https://radiantblockchain.org
+          TXTEOF
+
+          zip -r radiant-core-windows-x64.zip ${STAGE}
+          sha256sum radiant-core-windows-x64.zip > radiant-core-windows-x64.zip.sha256
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        with:
+          name: radiant-windows-x64
+          path: |
+            radiant-core-windows-x64.zip
+            radiant-core-windows-x64.zip.sha256
+
   build-gui-packages:
-    needs: [build-linux, build-macos]
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -240,6 +370,12 @@ jobs:
         with:
           name: radiant-macos
           path: binaries/macos
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: radiant-windows-x64
+          path: binaries/windows
 
       - name: Build GUI packages
         run: |
@@ -270,14 +406,25 @@ jobs:
           
           # Create README
           cat > radiant-core-gui-linux-x64-v${VERSION}/README.txt << 'EOF'
-          Radiant Core GUI - All-in-One Package
-          =====================================
-          
+          Radiant Core GUI - Linux x64
+          =============================
+
           Quick Start:
             ./start-gui.sh
-          
+
           The GUI opens at http://127.0.0.1:8765
-          
+
+          Requirements:
+            - Ubuntu 22.04+ (or equivalent: Debian 12+, Fedora 36+)
+            - Python 3.8+  (sudo apt install python3)
+            - libboost 1.74  (sudo apt install libboost-all-dev)
+            - libevent 2.1   (sudo apt install libevent-dev)
+            - libzmq5        (sudo apt install libzmq3-dev)
+            - libminiupnpc17 (sudo apt install libminiupnpc-dev)
+
+          One-line install for Ubuntu 22.04:
+            sudo apt install python3 libboost-all-dev libevent-dev libzmq3-dev libminiupnpc-dev
+
           Support: https://radiantblockchain.org
           EOF
           
@@ -336,6 +483,13 @@ jobs:
           zip -r radiant-core-gui-macos-v${VERSION}.zip radiant-core-gui-macos-v${VERSION}
           sha256sum radiant-core-gui-macos-v${VERSION}.zip > radiant-core-gui-macos-v${VERSION}.zip.sha256
 
+          # Pass through Windows zip from build-windows (already built + DLLs bundled)
+          echo "Passing through Windows GUI package..."
+          cp binaries/windows/radiant-core-windows-x64.zip \
+             radiant-core-gui-windows-x64-v${VERSION}.zip 2>/dev/null || true
+          cp binaries/windows/radiant-core-windows-x64.zip.sha256 \
+             radiant-core-gui-windows-x64-v${VERSION}.zip.sha256 2>/dev/null || true
+
       - name: Upload GUI packages
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
@@ -346,7 +500,7 @@ jobs:
             radiant-core-gui-*.sha256
 
   create-release:
-    needs: [build-linux, build-macos, build-gui-packages]
+    needs: [build-linux, build-macos, build-windows, build-gui-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
