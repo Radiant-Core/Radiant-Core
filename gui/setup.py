@@ -42,7 +42,9 @@ ICON_FILE = os.path.join(script_dir, '..', 'doc', 'images', 'RXDCore.icns')
 
 # py2app options
 OPTIONS = {
-    'argv_emulation': True,   # Strip macOS -psn_* arg injected by Finder/launchd
+    'argv_emulation': False,  # pywebview initialises NSApplication; argv_emulation's
+                              # Carbon AE event loop conflicts with that. PSN args are
+                              # stripped at the Python level in main() instead.
     'iconfile': ICON_FILE if os.path.exists(ICON_FILE) else None,
     'plist': {
         'CFBundleName': APP_NAME,
@@ -58,12 +60,11 @@ OPTIONS = {
         'NSHumanReadableCopyright': '© 2024-2026 Radiant Blockchain. MIT License.',
     },
     'packages': [
-        'webview',      # pywebview core
-        'objc',         # PyObjC runtime (pywebview macOS backend)
-        'Foundation',   # PyObjC Foundation framework
-        'AppKit',       # PyObjC AppKit framework
-        'WebKit',       # PyObjC WebKit framework (WKWebView)
-    ],  # py2app misses these because `import webview` is in a try/except
+        'webview',      # pywebview core — py2app auto-discovers the PyObjC
+                        # (objc, Foundation, AppKit, WebKit) deps by following
+                        # webview's own imports. Listing them explicitly caused
+                        # double-initialisation and NSApplication conflicts.
+    ],
     'includes': [
         'http.server',
         'socketserver',

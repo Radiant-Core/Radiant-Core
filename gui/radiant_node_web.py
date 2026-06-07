@@ -3121,7 +3121,17 @@ def run_windowed_mode(port):
         # pywebview failed to initialise or crashed (e.g. missing PyObjC
         # bundle, entitlements issue, WKWebView not available).  Fall back to
         # browser mode so the app still starts rather than showing "Launch error".
-        print(f"pywebview unavailable ({exc}); falling back to browser mode.")
+        import traceback
+        _log_dir = os.path.expanduser("~/Library/Logs/RadiantCore")
+        try:
+            os.makedirs(_log_dir, exist_ok=True)
+            with open(os.path.join(_log_dir, "webview.log"), "a") as _lf:
+                _lf.write(f"\n--- pywebview exception ---\n")
+                traceback.print_exc(file=_lf)
+        except Exception:
+            pass
+        print(f"pywebview unavailable ({exc}); falling back to browser mode. "
+              f"See ~/Library/Logs/RadiantCore/webview.log for details.")
         import webbrowser
         def _open():
             import time
