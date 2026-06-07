@@ -1,0 +1,126 @@
+name: Windows GUI Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v3.1.0)'
+        required: true
+        default: 'v3.1.0'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-gui:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Set up MSYS2 / MINGW64 (for node binaries + DLLs)
+        uses: msys2/setup-msys2@ddf331adaebd714795f1042345e6ca57bd66cea8 # v2.24.1
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-libevent
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zeromq
+            mingw-w64-x86_64-miniupnpc
+            zip
+
+      - name: Build node binaries (MSYS2)
+        shell: msys2 {0}
+        run: |
+          mkdir -p build-win
+          cmake -S . -B build-win -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_RADIANT_DAEMON=ON \
+            -DBUILD_RADIANT_CLI=ON \
+            -DBUILD_RADIANT_TX=ON \
+            -DBUILD_RADIANT_WALLET=OFF \
+            -DBUILD_RADIANT_QT=OFF \
+            -DENABLE_HARDENING=ON \
+            -DENABLE_UPNP=OFF \
+            -DSECP256K1_ECMULT_STATIC_PRECOMPUTATION=OFF
+          cmake --build build-win --config Release -j$(nproc)
+
+      - name: Build Windows GUI bundle (PyInstaller)
+        # Use PowerShell — the windows-2022 runner has Python + pip pre-installed.
+        # MSYS2's mingw-w64-x86_64-python ships without pip/ensurepip.
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.event.inputs.version }}"
+          $VNUM    = $VERSION.TrimStart('v')
+
+          # System Python on windows-2022 already has pip
+          pip install pyinstaller
+
+          # Build standalone GUI bundle; ';' is the Windows os.pathsep
+          Set-Location gui
+          pyinstaller `
+            --onedir `
+            --name "Radiant Core" `
+            --add-data "bip39.py;." `
+            radiant_node_web.py
+          Set-Location ..
+
+          $GUI_STAGE = "radiant-core-gui-windows-x64"
+          New-Item -ItemType Directory -Force -Path $GUI_STAGE | Out-Null
+
+          # Copy PyInstaller --onedir output into the stage directory
+          Copy-Item -Recurse "gui\dist\Radiant Core\*" "$GUI_STAGE\"
+
+          # Place node binaries next to Radiant Core.exe so _find_binary
+          # resolves:  Path(sys.executable).parent / "radiantd.exe"
+          foreach ($exe in @("radiantd.exe", "radiant-cli.exe", "radiant-tx.exe")) {
+            $src = "build-win\src\$exe"
+            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
+          }
+
+          # Bundle MinGW runtime DLLs required by the node .exe files.
+          # setup-msys2 installs MSYS2 at C:\msys64 on the windows-2022 runner.
+          $MINGW_BIN = "C:\msys64\mingw64\bin"
+          foreach ($dll in @(
+            "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll",
+            "libboost_chrono-mt-x64.dll", "libboost_thread-mt-x64.dll",
+            "libboost_filesystem-mt-x64.dll", "libboost_system-mt-x64.dll",
+            "libevent-2-1-7.dll", "libevent_pthreads-2-1-7.dll",
+            "libzmq.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll", "zlib1.dll"
+          )) {
+            $src = Join-Path $MINGW_BIN $dll
+            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
+          }
+
+          @"
+Radiant Core GUI v$VNUM - Windows x64
+=========================================
+
+Double-click "Radiant Core.exe" to start the GUI.
+The node starts automatically and the interface opens in
+your default browser at http://127.0.0.1:8765
+
+No additional software required - Python is bundled.
+
+Support: https://radiantblockchain.org
+"@ | Out-File -FilePath "$GUI_STAGE\README.txt" -Encoding utf8
+
+          $ZIP = "radiant-core-gui-windows-x64-v$VNUM.zip"
+          Compress-Archive -Path "$GUI_STAGE\*" -DestinationPath $ZIP
+          $hash = (Get-FileHash $ZIP -Algorithm SHA256).Hash.ToLower()
+          "$hash  $ZIP" | Out-File -FilePath "$ZIP.sha256" -Encoding ascii
+
+      - name: Upload Windows GUI artifact
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        with:
+          name: radiant-windows-gui
+          path: |
+            radiant-core-gui-windows-x64-*.zip
+            radiant-core-gui-windows-x64-*.zip.sha256
