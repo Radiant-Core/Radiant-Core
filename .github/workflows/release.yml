@@ -245,7 +245,6 @@ jobs:
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-zeromq
             mingw-w64-x86_64-miniupnpc
-            mingw-w64-x86_64-libdb
             mingw-w64-x86_64-python
             zip
 
@@ -257,7 +256,7 @@ jobs:
             -DBUILD_RADIANT_DAEMON=ON \
             -DBUILD_RADIANT_CLI=ON \
             -DBUILD_RADIANT_TX=ON \
-            -DBUILD_RADIANT_WALLET=ON \
+            -DBUILD_RADIANT_WALLET=OFF \
             -DBUILD_RADIANT_QT=OFF \
             -DENABLE_HARDENING=ON \
             -DENABLE_UPNP=OFF
