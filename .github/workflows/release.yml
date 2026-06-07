@@ -111,7 +111,8 @@ jobs:
             qrencode \
             protobuf \
             librsvg \
-            help2man
+            help2man \
+            python@3.12
 
       - name: Configure CMake
         run: |

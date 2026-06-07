@@ -39,11 +39,22 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
-# Check for Python 3
-if ! command -v python3 &> /dev/null; then
+# Check for Python 3 — prefer 3.12 or 3.13 over 3.14+ for py2app compatibility.
+# py2app 0.28.8 requires pkg_resources (setuptools); Python 3.14 venvs no
+# longer pre-install setuptools, and py2app may have other 3.14 edge-cases.
+PYTHON_BIN=""
+for candidate in python3.12 python3.13 python3; do
+    if command -v "$candidate" &> /dev/null; then
+        PYTHON_BIN="$candidate"
+        break
+    fi
+done
+if [[ -z "$PYTHON_BIN" ]]; then
     echo -e "${RED}Error: Python 3 is required${NC}"
     exit 1
 fi
+PYTHON_VER=$("$PYTHON_BIN" --version 2>&1)
+echo "  Using $PYTHON_BIN ($PYTHON_VER)"
 
 echo "Step 1: Setting up build environment..."
 echo "----------------------------------------"
@@ -54,7 +65,7 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 echo "  Creating virtual environment..."
-python3 -m venv "$VENV_DIR"
+"$PYTHON_BIN" -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 echo "  Installing build dependencies..."
@@ -69,8 +80,9 @@ echo "  Installing build dependencies..."
 # lines are filled in (PIN-REQUIRED, see that file), we fall back to exact
 # version pins, which still removes the "latest floating version" risk.
 REQ_FILE="$SCRIPT_DIR/requirements-macos-app.txt"
-# Pin pip itself too (reproducible resolver behaviour).
-pip install --upgrade 'pip==24.0' > /dev/null
+# Pin pip itself and install setuptools (required by py2app for pkg_resources;
+# not bundled in Python 3.12+ venvs by default).
+pip install --upgrade 'pip==24.0' 'setuptools>=75' > /dev/null
 if [[ -f "$REQ_FILE" ]] && grep -v '^[[:space:]]*#' "$REQ_FILE" | grep -q -- '--hash='; then
     echo "  Using hash-locked $REQ_FILE (--require-hashes)..."
     pip install --require-hashes -r "$REQ_FILE" > /dev/null
