@@ -184,12 +184,26 @@ BINARIES_FOUND=false
 if [[ -f "$LOCAL_BINARIES/radiantd" ]] && [[ -d "$LOCAL_BINARIES/libs" ]]; then
     # Use pre-bundled local binaries (already has libs fixed)
     echo "  Using local bundled binaries from gui/binaries..."
-    # Copy binaries directly (not in subdirectory)
-    cp "$LOCAL_BINARIES"/*.dylib "$BINARIES_DIR/" 2>/dev/null || true
-    cp "$LOCAL_BINARIES"/radiantd "$LOCAL_BINARIES"/radiant-cli "$LOCAL_BINARIES"/radiant-tx "$BINARIES_DIR/" 2>/dev/null || true
-    # Copy libs directory
-    cp -R "$LOCAL_BINARIES/libs" "$BINARIES_DIR/" 2>/dev/null || true
-    chmod +x "$BINARIES_DIR/radiantd" "$BINARIES_DIR/radiant-cli" "$BINARIES_DIR/radiant-tx" 2>/dev/null || true
+
+    # py2app DATA_FILES already placed the binaries at:
+    #   Resources/binaries/radiant-core-macos-arm64/{radiantd,radiant-cli,radiant-tx}
+    # The binaries embed @loader_path/libs/<name>.dylib.  @loader_path resolves
+    # to the directory that CONTAINS the binary, so libs/ must live alongside
+    # the binaries in radiant-core-macos-arm64/ — NOT one level up at binaries/.
+    APP_BIN_SUBDIR="$APP_PATH/Contents/Resources/binaries/radiant-core-macos-arm64"
+    if [[ -d "$APP_BIN_SUBDIR" ]]; then
+        cp -R "$LOCAL_BINARIES/libs" "$APP_BIN_SUBDIR/" 2>/dev/null || true
+        chmod +x "$APP_BIN_SUBDIR/radiantd" "$APP_BIN_SUBDIR/radiant-cli" "$APP_BIN_SUBDIR/radiant-tx" 2>/dev/null || true
+        echo -e "  ${GREEN}✓${NC} libs/ copied into radiant-core-macos-arm64/ (fixes @loader_path resolution)"
+    else
+        # Fallback: py2app did not create the subdir (e.g. DATA_FILES changed)
+        # — copy binaries + libs to the flat binaries/ directory instead.
+        cp "$LOCAL_BINARIES"/*.dylib "$BINARIES_DIR/" 2>/dev/null || true
+        cp "$LOCAL_BINARIES"/radiantd "$LOCAL_BINARIES"/radiant-cli "$LOCAL_BINARIES"/radiant-tx "$BINARIES_DIR/" 2>/dev/null || true
+        cp -R "$LOCAL_BINARIES/libs" "$BINARIES_DIR/" 2>/dev/null || true
+        chmod +x "$BINARIES_DIR/radiantd" "$BINARIES_DIR/radiant-cli" "$BINARIES_DIR/radiant-tx" 2>/dev/null || true
+        echo -e "  ${GREEN}✓${NC} Local binaries bundled (fallback flat layout)"
+    fi
     BINARIES_FOUND=true
     echo -e "  ${GREEN}✓${NC} Local binaries bundled (with libs)"
     

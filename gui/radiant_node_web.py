@@ -33,7 +33,9 @@ WEBVIEW_AVAILABLE = False
 try:
     import webview
     WEBVIEW_AVAILABLE = True
-except ImportError:
+except Exception:
+    # Catches ImportError (dependency missing) AND other init errors such as
+    # OSError/AttributeError when a bundled PyObjC C extension fails to load.
     pass
 
 # Import BIP39 mnemonic support
@@ -3068,7 +3070,14 @@ def run_browser_mode(port):
 
 
 def run_windowed_mode(port):
-    """Run in windowed mode using pywebview (macOS app)."""
+    """Run in windowed mode using pywebview (macOS app).
+
+    Falls back to browser mode if pywebview is unavailable OR if it raises
+    any exception during create_window / start.  py2app shows a "Launch error"
+    dialog whenever the Python main script exits with a non-zero code; catching
+    all webview failures here ensures the app always exits cleanly (code 0)
+    even when the native window cannot be opened.
+    """
     if not WEBVIEW_AVAILABLE:
         # pywebview not available (not installed or not bundled in the .app).
         # Fall back to browser mode rather than crashing — the GUI still works
@@ -3076,36 +3085,74 @@ def run_windowed_mode(port):
         print("pywebview not available; falling back to browser mode.")
         run_browser_mode(port)
         return
-    
+
     server = ThreadedHTTPServer(("127.0.0.1", port), RequestHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
-    
+
     url = f"http://127.0.0.1:{port}"
     print(f"Starting Radiant Core GUI at {url}")
-    
+
     def on_closed():
         """Called when the window is closed."""
         print("\nShutting down...")
         if manager.is_running:
             manager.stop()
         server.shutdown()
-    
-    # Create native window
-    window = webview.create_window(
-        'Radiant Core',
-        url,
-        width=1200,
-        height=800,
-        min_size=(800, 600),
-        resizable=True
-    )
-    
-    # Start webview (blocks until window is closed)
-    webview.start()
-    
-    # Cleanup after window closes
-    on_closed()
+
+    try:
+        # Create native window
+        window = webview.create_window(
+            'Radiant Core',
+            url,
+            width=1200,
+            height=800,
+            min_size=(800, 600),
+            resizable=True
+        )
+
+        # Start webview event loop (blocks until window is closed).
+        webview.start()
+
+        # Cleanup after window closes
+        on_closed()
+
+    except Exception as exc:
+        # pywebview failed to initialise or crashed (e.g. missing PyObjC
+        # bundle, entitlements issue, WKWebView not available).  Fall back to
+        # browser mode so the app still starts rather than showing "Launch error".
+        print(f"pywebview unavailable ({exc}); falling back to browser mode.")
+        import webbrowser
+        def _open():
+            import time
+            time.sleep(0.5)
+            webbrowser.open(url)
+        threading.Thread(target=_open, daemon=True).start()
+
+        def _signal_handler(sig, frame):
+            print("\nShutting down...")
+            if manager.is_running:
+                manager.stop()
+            server.shutdown()
+            sys.exit(0)
+
+        try:
+            signal.signal(signal.SIGINT, _signal_handler)
+        except (OSError, ValueError):
+            pass
+        try:
+            signal.signal(signal.SIGTERM, _signal_handler)
+        except (OSError, ValueError):
+            pass
+
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if manager.is_running:
+                manager.stop()
+            server.server_close()
 
 
 def main():
