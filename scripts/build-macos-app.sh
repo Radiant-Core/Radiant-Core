@@ -80,16 +80,20 @@ echo "  Installing build dependencies..."
 # lines are filled in (PIN-REQUIRED, see that file), we fall back to exact
 # version pins, which still removes the "latest floating version" risk.
 REQ_FILE="$SCRIPT_DIR/requirements-macos-app.txt"
-# Pin pip itself and install setuptools (required by py2app for pkg_resources;
-# not bundled in Python 3.12+ venvs by default).
-pip install --upgrade 'pip==24.0' 'setuptools>=75' > /dev/null
+# Upgrade pip first; do NOT pin to 24.0 — a downgrade can interfere with
+# setuptools installation in the venv.
+pip install --upgrade pip > /dev/null
 if [[ -f "$REQ_FILE" ]] && grep -v '^[[:space:]]*#' "$REQ_FILE" | grep -q -- '--hash='; then
     echo "  Using hash-locked $REQ_FILE (--require-hashes)..."
     pip install --require-hashes -r "$REQ_FILE" > /dev/null
 else
     echo -e "  ${YELLOW}Note: no hash-locked requirements found; using exact" \
             "version pins (fill in $REQ_FILE with --hash lines to harden).${NC}"
-    pip install 'py2app==0.28.8' 'pywebview==5.1' > /dev/null
+    # py2app 0.28.8 imports pkg_resources (part of setuptools) at load time.
+    # setuptools>=70 restructured pkg_resources in a way that breaks py2app's
+    # entry-point bootstrap; install setuptools<70 alongside py2app so pip
+    # resolves all constraints together to a known-compatible set.
+    pip install 'setuptools<70' 'py2app==0.28.8' 'pywebview==5.1' > /dev/null
 fi
 echo -e "  ${GREEN}✓${NC} Dependencies installed"
 
