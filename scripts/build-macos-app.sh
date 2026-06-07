@@ -71,7 +71,7 @@ echo "  Installing build dependencies..."
 REQ_FILE="$SCRIPT_DIR/requirements-macos-app.txt"
 # Pin pip itself too (reproducible resolver behaviour).
 pip install --upgrade 'pip==24.0' > /dev/null
-if [[ -f "$REQ_FILE" ]] && grep -q -- '--hash=' "$REQ_FILE"; then
+if [[ -f "$REQ_FILE" ]] && grep -v '^[[:space:]]*#' "$REQ_FILE" | grep -q -- '--hash='; then
     echo "  Using hash-locked $REQ_FILE (--require-hashes)..."
     pip install --require-hashes -r "$REQ_FILE" > /dev/null
 else
