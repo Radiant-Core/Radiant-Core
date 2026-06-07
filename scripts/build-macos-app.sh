@@ -102,6 +102,30 @@ else
     echo "  Note: No icon file found, using default"
 fi
 
+# Pre-populate macos-app-build/binaries/ so that py2app's DATA_FILES can
+# resolve the binary paths listed in setup.py.  py2app evaluates DATA_FILES
+# relative to BUILD_DIR, so the files must exist there before the build runs.
+# The full dylib-fixed copies are inserted into the bundle AFTER py2app in
+# Step 3 below; these pre-staged copies just satisfy the DATA_FILES check.
+BIN_STAGE="$BUILD_DIR/binaries/radiant-core-macos-arm64"
+if [[ -f "$ROOT_DIR/gui/binaries/radiant-core-macos-arm64/radiantd" ]]; then
+    mkdir -p "$BIN_STAGE"
+    cp "$ROOT_DIR/gui/binaries/radiant-core-macos-arm64/radiantd" \
+       "$ROOT_DIR/gui/binaries/radiant-core-macos-arm64/radiant-cli" \
+       "$ROOT_DIR/gui/binaries/radiant-core-macos-arm64/radiant-tx" \
+       "$BIN_STAGE/" 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Binaries pre-staged for py2app DATA_FILES (gui/binaries)"
+elif [[ -f "$ROOT_DIR/build-release/src/radiantd" ]]; then
+    mkdir -p "$BIN_STAGE"
+    cp "$ROOT_DIR/build-release/src/radiantd" \
+       "$ROOT_DIR/build-release/src/radiant-cli" \
+       "$ROOT_DIR/build-release/src/radiant-tx" \
+       "$BIN_STAGE/" 2>/dev/null || true
+    echo -e "  ${GREEN}✓${NC} Binaries pre-staged for py2app DATA_FILES (build-release)"
+else
+    echo -e "  ${YELLOW}Note: No binaries found to pre-stage; py2app DATA_FILES may warn.${NC}"
+fi
+
 cd "$BUILD_DIR"
 
 # Build the app bundle

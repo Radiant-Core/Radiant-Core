@@ -174,106 +174,40 @@ jobs:
           tar -czvf radiant-core-macos-arm64.tar.gz radiant-core-macos-arm64
           zip -r    radiant-core-macos-arm64.zip    radiant-core-macos-arm64
 
-      - name: Create macOS GUI app bundle + DMG
-        # Produces a proper .app bundle (not just a folder) so users can
-        # drag it to /Applications and double-click it like any macOS app.
-        # Structure:
-        #   Radiant Core GUI.app/
-        #     Contents/
-        #       Info.plist          — tells macOS this is an application
-        #       MacOS/
-        #         radiant-core-gui  — executable launcher script
-        #       Resources/
-        #         AppIcon.icns      — Radiant branded icon
-        #         radiantd / radiant-cli / radiant-tx
-        #         radiant_node_web.py / bip39.py
-        # The launcher starts radiant_node_web.py and opens the browser.
-        # The DMG has a drag-to-/Applications layout.
+      - name: Create Radiant Core.app bundle + DMG (py2app)
+        # Follows gui/BUILD_DMG.md + scripts/build-macos-app.sh:
+        #   1. Freshly built binaries → gui/binaries/radiant-core-macos-arm64/
+        #   2. fix-macos-dylibs.sh: bundles Homebrew dylibs, rewrites
+        #      load paths to @loader_path/libs/<name>, ad-hoc code-signs
+        #   3. build-macos-app.sh: runs py2app which bundles Python runtime +
+        #      pywebview + all imports into a proper Radiant Core.app bundle,
+        #      then copies the dylib-fixed binaries into the bundle, code-signs
+        #      the whole thing, and creates a drag-to-Applications DMG.
+        # Output: radiant-core-gui-macos-v${VNUM}.dmg  (~30–50 MB)
         run: |
           VERSION=${{ github.event.inputs.version || github.ref_name }}
           VNUM=${VERSION#v}
-          APP="Radiant Core GUI.app"
 
-          # ── App bundle skeleton ──────────────────────────────────────
-          mkdir -p "$APP/Contents/MacOS"
-          mkdir -p "$APP/Contents/Resources"
+          # Step 1: stage freshly built binaries where build-macos-app.sh
+          # (LOCAL_BINARIES branch) will pick them up.
+          mkdir -p gui/binaries/radiant-core-macos-arm64
+          cp build/src/radiantd build/src/radiant-cli build/src/radiant-tx \
+             gui/binaries/radiant-core-macos-arm64/
+          chmod +x gui/binaries/radiant-core-macos-arm64/*
 
-          # Info.plist — minimal but complete for a script-backed app
-          cat > "$APP/Contents/Info.plist" << PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key>             <string>Radiant Core GUI</string>
-            <key>CFBundleDisplayName</key>      <string>Radiant Core GUI</string>
-            <key>CFBundleIdentifier</key>       <string>org.radiantblockchain.radiant-core-gui</string>
-            <key>CFBundleVersion</key>          <string>${VNUM}</string>
-            <key>CFBundleShortVersionString</key><string>${VNUM}</string>
-            <key>CFBundlePackageType</key>      <string>APPL</string>
-            <key>CFBundleExecutable</key>       <string>radiant-core-gui</string>
-            <key>CFBundleIconFile</key>         <string>AppIcon</string>
-            <key>LSMinimumSystemVersion</key>   <string>12.0</string>
-            <key>NSHighResolutionCapable</key>  <true/>
-            <key>NSHumanReadableCopyright</key>
-              <string>Copyright © 2026 The Radiant Core developers</string>
-          </dict>
-          </plist>
-          PLIST
+          # Step 2: copy Homebrew dylibs into libs/ and rewrite load paths so
+          # the binaries are portable (no Homebrew needed on the user's machine).
+          ./scripts/fix-macos-dylibs.sh gui/binaries/radiant-core-macos-arm64
 
-          # Main executable — shell script that is the bundle's "binary"
-          cat > "$APP/Contents/MacOS/radiant-core-gui" << 'LAUNCHER'
-          #!/bin/bash
-          # Locate Resources relative to this script, regardless of where
-          # the .app is installed (Applications, Desktop, DMG, etc.)
-          BUNDLE="$(cd "$(dirname "$0")/.." && pwd)"
-          RES="$BUNDLE/Resources"
-          cd "$RES"
-          chmod +x radiantd radiant-cli radiant-tx 2>/dev/null
+          # Step 3: run the full py2app build + DMG script.
+          # build-macos-app.sh detects gui/binaries/ (LOCAL_BINARIES branch),
+          # pre-stages binaries for py2app DATA_FILES, then copies the
+          # dylib-fixed set into the final bundle.
+          ./scripts/build-macos-app.sh "${VNUM}"
 
-          # Start the web GUI server in the background
-          python3 radiant_node_web.py &
-          GUI_PID=$!
-
-          # Wait for the server to be ready, then open the browser
-          for i in $(seq 1 20); do
-            if curl -s http://127.0.0.1:8765 > /dev/null 2>&1; then break; fi
-            sleep 0.5
-          done
-          open "http://127.0.0.1:8765"
-
-          # Keep the app "running" so macOS shows it in the Dock
-          wait $GUI_PID
-          LAUNCHER
-          chmod +x "$APP/Contents/MacOS/radiant-core-gui"
-
-          # ── Resources ────────────────────────────────────────────────
-          # App icon (Radiant branded)
-          cp doc/images/RXDCore.icns "$APP/Contents/Resources/AppIcon.icns" || true
-
-          # Node binaries
-          cp build/src/radiantd    "$APP/Contents/Resources/"
-          cp build/src/radiant-cli "$APP/Contents/Resources/"
-          cp build/src/radiant-tx  "$APP/Contents/Resources/"
-          chmod +x "$APP/Contents/Resources/radiantd" \
-                   "$APP/Contents/Resources/radiant-cli" \
-                   "$APP/Contents/Resources/radiant-tx"
-
-          # Web GUI Python scripts
-          cp gui/radiant_node_web.py "$APP/Contents/Resources/"
-          cp gui/bip39.py            "$APP/Contents/Resources/"
-
-          # ── DMG with drag-to-Applications layout ─────────────────────
-          DMG_STAGE="dmg_stage"
-          mkdir -p "$DMG_STAGE"
-          cp -R "$APP" "$DMG_STAGE/"
-          ln -s /Applications "$DMG_STAGE/Applications"
-
-          hdiutil create \
-            -volname "Radiant Core GUI ${VNUM}" \
-            -srcfolder "$DMG_STAGE" \
-            -ov -format UDZO \
-            "radiant-core-gui-macos-v${VNUM}.dmg"
+          # Rename to canonical release artifact name.
+          cp "macos-app-build/Radiant-Core-GUI-${VNUM}.dmg" \
+             "radiant-core-gui-macos-v${VNUM}.dmg"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
