@@ -28,6 +28,36 @@ import signal
 import sys
 import shutil
 
+# --------------------------------------------------------------------------
+# py2app bundle compat: pywebview 5.x loads objc._objc via ctypes at import
+# time inside cocoa.py:
+#   from objc import _objc, ...
+#   _objc_so = ctypes.cdll.LoadLibrary(_objc.__file__)
+#
+# py2app bundles C extensions onto disk but does not always set the __file__
+# attribute on the resulting module.  Synthesise __file__ by locating the
+# actual .so in the bundle *before* importing webview so the ctypes call
+# resolves correctly and the native WKWebView window opens.
+# --------------------------------------------------------------------------
+if getattr(sys, 'frozen', False):
+    try:
+        import glob as _glob
+        import objc._objc as _objc_ce
+        if not hasattr(_objc_ce, '__file__'):
+            # Bundle layout: Contents/MacOS/<exe>  →  Contents/Resources/lib/
+            _bundle_lib = os.path.join(
+                os.path.dirname(os.path.dirname(sys.executable)),
+                'Resources', 'lib'
+            )
+            _so_matches = _glob.glob(
+                os.path.join(_bundle_lib, '**', '_objc*.so'), recursive=True
+            )
+            if _so_matches:
+                _objc_ce.__file__ = _so_matches[0]
+        del _glob, _objc_ce
+    except Exception:
+        pass
+
 # pywebview is optional - only needed for windowed mode on macOS
 WEBVIEW_AVAILABLE = False
 try:
@@ -48,34 +78,35 @@ except ImportError:
     VALID_WORD_COUNTS = (12, 15, 18, 21, 24)
 
 # GitHub release configuration
-GITHUB_RELEASE_URL = "https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.0.0"
+RELEASE_VERSION = "v3.1.0"
+GITHUB_RELEASE_URL = f"https://github.com/Radiant-Core/Radiant-Core/releases/download/{RELEASE_VERSION}"
 # C4 Security: SHA-256 hashes for release asset verification
-# These must be updated with each release by running: sha256sum <asset_file>
+# Computed via: shasum -a 256 <asset_file>
 RELEASE_ASSETS = {
     "darwin_arm64": {
         "filename": "radiant-core-macos-arm64.zip",
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Apple Silicon)",
-        # C4: SHA-256 hash - MUST be updated at release time
-        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
+        "sha256": "037ef08edf62f0caf4b8e5a2bb52843a9446cf30ba96d8420fd81ae4e1ad51f5",
     },
     "darwin_x86_64": {
         "filename": "radiant-core-macos-arm64.zip",  # Use ARM64 for now, x64 not available
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Intel) - Using ARM64 binary via Rosetta",
-        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
+        "sha256": "037ef08edf62f0caf4b8e5a2bb52843a9446cf30ba96d8420fd81ae4e1ad51f5",
     },
     "linux_x86_64": {
-        "filename": "radiant-core-linux-x64.tar.gz",
-        "folder": "radiant-core-linux-x64",
+        # Linux binary: radiant-v3.1.0-linux-x64.tar.gz (version-prefixed in CI)
+        "filename": f"radiant-{RELEASE_VERSION}-linux-x64.tar.gz",
+        "folder": f"radiant-{RELEASE_VERSION}-linux-x64",
         "display": "Linux (x86_64)",
-        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
+        "sha256": "0f224c5744de4f1d6ab58ad0b5f9c0da7713d667c647b5446c857e37f9ada711",
     },
     "linux_aarch64": {
-        "filename": "radiant-core-linux-x64.tar.gz",  # ARM Linux not available yet
-        "folder": "radiant-core-linux-x64",
+        "filename": f"radiant-{RELEASE_VERSION}-linux-x64.tar.gz",  # ARM Linux not available yet
+        "folder": f"radiant-{RELEASE_VERSION}-linux-x64",
         "display": "Linux (ARM64) - x64 binary (requires emulation)",
-        "sha256": "PLACEHOLDER_SHA256_UPDATE_AT_RELEASE",
+        "sha256": "0f224c5744de4f1d6ab58ad0b5f9c0da7713d667c647b5446c857e37f9ada711",
     },
     "windows_x64": {
         "filename": "radiant-core-windows-x64.zip",
@@ -1900,7 +1931,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                 </div>
                 <div class="download-status" id="downloadStatus"></div>
                 <div class="manual-download">
-                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.0.0" target="_blank">GitHub Releases</a></small>
+                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.0" target="_blank">GitHub Releases</a></small>
                 </div>
             </div>
             
