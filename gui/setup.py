@@ -100,5 +100,10 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={'py2app': OPTIONS},
-    setup_requires=['py2app'],
+    # Do NOT use setup_requires=['py2app']. With setuptools>=70 the legacy
+    # fetch_build_eggs bootstrap path tries to import pkg_resources from
+    # within setuptools' own finalize_options(), before setuptools is fully
+    # initialised, causing a circular ModuleNotFoundError. py2app is installed
+    # into the venv by pip before setup.py runs, so it is already available as
+    # a distutils command via its entry_point — setup_requires is unnecessary.
 )
