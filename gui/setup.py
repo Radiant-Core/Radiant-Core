@@ -42,7 +42,7 @@ ICON_FILE = os.path.join(script_dir, '..', 'doc', 'images', 'RXDCore.icns')
 
 # py2app options
 OPTIONS = {
-    'argv_emulation': False,  # Don't emulate argv (we handle args ourselves)
+    'argv_emulation': True,   # Strip macOS -psn_* arg injected by Finder/launchd
     'iconfile': ICON_FILE if os.path.exists(ICON_FILE) else None,
     'plist': {
         'CFBundleName': APP_NAME,
@@ -57,7 +57,13 @@ OPTIONS = {
         'LSApplicationCategoryType': 'public.app-category.utilities',
         'NSHumanReadableCopyright': '© 2024-2026 Radiant Blockchain. MIT License.',
     },
-    'packages': ['webview'],  # Include pywebview
+    'packages': [
+        'webview',      # pywebview core
+        'objc',         # PyObjC runtime (pywebview macOS backend)
+        'Foundation',   # PyObjC Foundation framework
+        'AppKit',       # PyObjC AppKit framework
+        'WebKit',       # PyObjC WebKit framework (WKWebView)
+    ],  # py2app misses these because `import webview` is in a try/except
     'includes': [
         'http.server',
         'socketserver',

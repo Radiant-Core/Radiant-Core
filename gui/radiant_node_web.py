@@ -3070,9 +3070,12 @@ def run_browser_mode(port):
 def run_windowed_mode(port):
     """Run in windowed mode using pywebview (macOS app)."""
     if not WEBVIEW_AVAILABLE:
-        print("Error: pywebview is required for windowed mode.")
-        print("Install with: pip install pywebview")
-        sys.exit(1)
+        # pywebview not available (not installed or not bundled in the .app).
+        # Fall back to browser mode rather than crashing — the GUI still works
+        # fully in the browser; the user just won't get a native window.
+        print("pywebview not available; falling back to browser mode.")
+        run_browser_mode(port)
+        return
     
     server = ThreadedHTTPServer(("127.0.0.1", port), RequestHandler)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -3106,6 +3109,13 @@ def run_windowed_mode(port):
 
 
 def main():
+    # Strip macOS Process Serial Number argument injected by Finder/launchd
+    # when launching .app bundles (e.g. -psn_0_12345678).  argparse matches
+    # the leading -p against the --port/-p short flag and then fails to parse
+    # the rest as an int, producing "Launch error" before the script starts.
+    # argv_emulation=True in setup.py also strips it, but belt-and-suspenders.
+    sys.argv = [a for a in sys.argv if not a.startswith('-psn_')]
+
     parser = argparse.ArgumentParser(
         description='Radiant Core Node GUI',
         formatter_class=argparse.RawDescriptionHelpFormatter,
