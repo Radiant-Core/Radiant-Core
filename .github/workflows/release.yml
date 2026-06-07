@@ -348,11 +348,12 @@ jobs:
           VNUM=${VERSION#v}
 
           # Install PyInstaller into the MSYS2/MINGW64 Python environment
-          pip install pyinstaller
+          # Use 'python -m pip' — the bare 'pip' command is not in PATH in MSYS2
+          python -m pip install pyinstaller
 
           # Build the standalone GUI bundle from gui/
           cd gui
-          pyinstaller \
+          python -m PyInstaller \
             --onedir \
             --name "Radiant Core" \
             --add-data "bip39.py:." \
