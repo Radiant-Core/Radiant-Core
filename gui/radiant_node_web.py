@@ -199,6 +199,63 @@ def _validate_privkey(privkey):
         return False, "Invalid private key format"
     return True, None
 
+def _is_within_directory(directory, target):
+    """Return True iff *target* resolves to a path inside *directory*.
+
+    Used to reject archive members that would escape the extraction root via
+    absolute paths or ``..`` traversal (CVE-2007-4559 "tar/zip slip").
+    """
+    directory = os.path.realpath(directory)
+    target = os.path.realpath(target)
+    try:
+        return os.path.commonpath([directory, target]) == directory
+    except ValueError:
+        # Different drives on Windows, or other un-comparable paths.
+        return False
+
+
+def safe_extract_zip(zip_ref, dest):
+    """Extract a ZipFile to *dest*, refusing any path-traversal member.
+
+    Fail-CLOSED on every supported Python version: rather than relying on the
+    ``filter='data'`` keyword (Python 3.12+ only) and silently falling back to
+    an UNFILTERED ``extractall`` on older interpreters, we validate every
+    member name explicitly and raise on the first one that escapes *dest*.
+    """
+    dest = os.path.realpath(dest)
+    for member in zip_ref.namelist():
+        target = os.path.join(dest, member)
+        if not _is_within_directory(dest, target):
+            raise RuntimeError(
+                f"Refusing to extract unsafe path from archive: {member!r}")
+    zip_ref.extractall(dest)
+
+
+def safe_extract_tar(tar, dest):
+    """Extract a tarfile to *dest*, refusing any path-traversal or unsafe member.
+
+    Fail-CLOSED on every supported Python version (see ``safe_extract_zip``).
+    Rejects absolute/``..`` members and, defensively, symlink/hardlink/device
+    members whose target escapes *dest* -- the same protections ``filter='data'``
+    provides, implemented without depending on it.
+    """
+    dest = os.path.realpath(dest)
+    for member in tar.getmembers():
+        target = os.path.join(dest, member.name)
+        if not _is_within_directory(dest, target):
+            raise RuntimeError(
+                f"Refusing to extract unsafe path from archive: {member.name!r}")
+        if member.issym() or member.islnk():
+            link_target = os.path.join(os.path.dirname(target), member.linkname)
+            if not _is_within_directory(dest, link_target):
+                raise RuntimeError(
+                    f"Refusing to extract unsafe link from archive: {member.name!r}")
+        if member.ischr() or member.isblk() or member.isfifo() or member.isdev():
+            raise RuntimeError(
+                f"Refusing to extract special device member: {member.name!r}")
+    tar.extractall(dest)
+
+
 # Fallback logo SVG (simple R icon) used when logo files can't be found
 FALLBACK_LOGO_SVG = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <rect width="100" height="100" rx="20" fill="#1a1f2e"/>
@@ -442,24 +499,18 @@ class DownloadManager:
         }
 
         try:
-            # C4 Security: Extract with data filter to prevent path traversal attacks
+            # C4 Security: Extract with explicit path-traversal rejection.
+            # Fail-CLOSED on every supported Python version: do NOT depend on the
+            # Python 3.12+ filter='data' keyword with a silent unfiltered fallback
+            # on older interpreters (the README supports Python 3.6+). The helpers
+            # validate every member and raise on the first unsafe path, aborting
+            # the install rather than writing outside binaries_path.
             if asset["filename"].endswith(".zip"):
                 with zipfile.ZipFile(tar_path, 'r') as zip_ref:
-                    # C4: Use filter='data' if available (Python 3.12+) for path traversal protection
-                    if hasattr(zip_ref, 'extractall') and callable(getattr(zipfile, 'ZipFile', None)):
-                        try:
-                            zip_ref.extractall(self.binaries_path, filter='data')
-                        except TypeError:
-                            # Python < 3.12 doesn't support filter parameter
-                            zip_ref.extractall(self.binaries_path)
+                    safe_extract_zip(zip_ref, self.binaries_path)
             else:
                 with tarfile.open(tar_path, "r:gz") as tar:
-                    # C4: Use filter='data' for path traversal protection (Python 3.12+)
-                    try:
-                        tar.extractall(path=self.binaries_path, filter='data')
-                    except TypeError:
-                        # Python < 3.12 doesn't support filter parameter
-                        tar.extractall(path=self.binaries_path)
+                    safe_extract_tar(tar, self.binaries_path)
 
             # C4 Security: Removed xattr quarantine bypass that could allow malware to bypass Gatekeeper
             

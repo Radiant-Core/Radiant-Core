@@ -2,7 +2,8 @@
 """
 BIP39 Mnemonic implementation for Radiant Node GUI.
 Generates and validates 12/15/18/21/24-word seed phrases for wallet backup/restore.
-Supports BIP44 key derivation (m/44'/0'/0') for wallet generation.
+Supports BIP44 key derivation (m/44'/512'/0'/0/k, Radiant SLIP-0044 coin type)
+for wallet generation.
 """
 
 import hashlib
@@ -440,17 +441,22 @@ def derive_path(seed, path):
     return key, cc
 
 
-def derive_bip44_key(seed, account=0, change=0, address_index=0, coin_type=0):
+def derive_bip44_key(seed, account=0, change=0, address_index=0,
+                     coin_type=BIP44_COIN_TYPE):
     """
     Derive a key using BIP44 path: m/44'/coin_type'/account'/change/address_index
-    
+
     Args:
         seed: 64-byte BIP39 seed
         account: Account index (default 0)
         change: 0 for external (receiving), 1 for internal (change)
         address_index: Address index (default 0)
-        coin_type: Coin type (0 for Bitcoin/Radiant)
-    
+        coin_type: SLIP-0044 coin type. Defaults to Radiant's registered slot
+                   512 (BIP44_COIN_TYPE). Pass coin_type=0 ONLY for the opt-in
+                   legacy Bitcoin-slot path. The previous default of 0 silently
+                   derived Bitcoin's slot and is corrected here; every in-tree
+                   caller already passes 512 explicitly, so behavior is unchanged.
+
     Returns:
         Tuple of (private_key, chain_code)
     """
