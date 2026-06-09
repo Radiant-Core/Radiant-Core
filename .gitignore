@@ -296,3 +296,7 @@ network_monitor.py
 # Local audit / release-prep working notes
 AUDIT_*.md
 *.LOCAL.md
+
+# Chain-scan results from contrib/audit/scan-hash-opcode-usage.py (local only;
+# the scanner tool itself stays tracked, just not its per-run output)
+contrib/audit/scan-hash-opcode-results-*.md
