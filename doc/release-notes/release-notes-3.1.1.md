@@ -1,16 +1,26 @@
 # Radiant Core 3.1.1 Release Notes
 
 **Release Date**: June 2026
-**Release Type**: Security point release (follow-up to 3.1.0)
-**Consensus Activation**: none new — the `SCRIPT_SECURITY_UPGRADE` soft fork
-height (mainnet block **444,444**) is unchanged from 3.1.0
+**Release Type**: Security release (follow-up to 3.1.0)
+**Consensus Activation**: `SCRIPT_SECURITY_UPGRADE` soft fork **moved earlier** to
+mainnet block **440,000** (was 444,444 in 3.1.0); testnet/scalenet block 1,
+regtest from genesis
 **Git Tag**: v3.1.1
 
-> **Recommended upgrade for all node operators.** 3.1.1 closes a remotely
-> triggerable memory-exhaustion DoS that is live on the network *now* (before the
-> 444,444 fork), fixes a double-spend-proof relay regression, and removes a
-> silent wallet fund-loss footgun. There are **no new consensus rules** and **no
-> breaking changes** for existing deployments (see "Compatibility" below).
+> **⚠️ MANDATORY upgrade for mainnet node operators — earlier deadline than 3.1.0.**
+> 3.1.1 brings the `SCRIPT_SECURITY_UPGRADE` soft-fork activation forward from
+> block 444,444 to **block 440,000**. Every mainnet node — including nodes
+> currently running 3.1.0 — **must** be on 3.1.1 before block 440,000. A node
+> left on 3.1.0 (which still expects 444,444) would, in the window
+> [440,000, 444,444), fail to enforce the tightened script rules and could follow
+> a different chain than 3.1.1 nodes if a rule-violating block is produced in that
+> window. 440,000 is still ahead of the live tip, so the fork remains a clean,
+> non-retroactive soft fork; confirm your node's tip is below 440,000 at upgrade.
+>
+> 3.1.1 also closes a remotely triggerable memory-exhaustion DoS that is live on
+> the network *now* (independently of the fork), fixes a double-spend-proof relay
+> regression, removes a silent wallet fund-loss footgun, and adds authenticated
+> wallet encryption. The `Host`-header allowlist from 3.1.0 still applies.
 
 ---
 
@@ -33,7 +43,7 @@ passes clean and the integration paths were validated on regtest.
 3.1.0 added a per-script peak stack-memory budget
 (`MAX_SCRIPT_STACK_MEMORY_USAGE`) but enforced it only via the consensus
 `SCRIPT_SECURITY_UPGRADE` flag, which does not activate on mainnet until block
-444,444. Until then a single ~sub-12 MB transaction whose input script balloons
+440,000. Until then a single ~sub-12 MB transaction whose input script balloons
 the stack past the budget (e.g. `OP_NUM2BIN`/`OP_DUP` of large elements) could
 exhaust node memory during mempool acceptance — relayable today because mainnet
 runs with `fRequireStandard=false`.
@@ -45,7 +55,7 @@ budget-exceeding transaction is now rejected from the mempool immediately, and i
 classified as a **non-mandatory** rejection (`ScriptError::STACK_MEMORY`) before
 the fork — it does **not** DoS-ban the relaying peer and is **not** re-executed
 under mandatory flags, so it cannot be used to either partition honest nodes or
-re-trigger the bomb. Once `SCRIPT_SECURITY_UPGRADE` activates at 444,444 the same
+re-trigger the bomb. Once `SCRIPT_SECURITY_UPGRADE` activates at 440,000 the same
 budget is enforced as a consensus rule.
 
 ### Per-script stack-memory accounting is now O(1) (High)
@@ -143,13 +153,22 @@ migration — the version selector already existed.)
 
 ## Compatibility
 
-- **No new consensus rules.** Block validation is byte-for-byte identical to
-  3.1.0 until the existing `SCRIPT_SECURITY_UPGRADE` activation at mainnet block
-  444,444. The relay memory-budget guard is mempool policy only and never affects
-  block validity.
-- **No breaking changes** for existing deployments. The `Host`-header allowlist
-  from 3.1.0 still applies (set `-rpcallowhost` as before). `-restauth` defaults
-  off, so existing `-rest` consumers are unaffected.
+- **Soft-fork activation moved earlier (vs 3.1.0).** `SCRIPT_SECURITY_UPGRADE`
+  now activates at mainnet block **440,000** instead of 444,444. The new rules
+  only *tighten* script acceptance, so the fork itself stays a clean soft fork
+  and pre-activation block validation is unchanged. But because 3.1.0 nodes
+  expect 444,444, **all mainnet nodes must upgrade to 3.1.1 before block 440,000**
+  — a 3.1.0 node would not enforce the tightened rules in [440,000, 444,444) and
+  could diverge from 3.1.1 nodes there if a violating block is produced. Confirm
+  your tip is below 440,000 at upgrade (it is, at ~436,500 / 2026-06-10).
+- The always-on relay memory-budget guard is mempool policy only and never
+  affects block validity (no consensus impact before 440,000).
+- **`-restauth` now defaults ON** (REST requires the same auth as JSON-RPC). No
+  known consumer uses credential-less REST; set `-restauth=0` only if you
+  intentionally serve an unauthenticated REST surface. The `Host`-header
+  allowlist from 3.1.0 still applies (set `-rpcallowhost` as before).
+- Newly **encrypted** wallets use the authenticated format and will not open in
+  pre-3.1.1 binaries (clean `TOO_NEW` refusal); existing wallets are unaffected.
 
 ## Credits
 
