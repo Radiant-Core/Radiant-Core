@@ -76,16 +76,37 @@ silently deriving the default path and showing a zero balance. The seed is set
 and the keypool regenerated as an atomic final step, so a failed call never
 leaves a half-applied wallet.
 
+### Authenticated wallet encryption (Medium — M-4)
+
+Encrypted wallets are now **authenticated** (encrypt-then-MAC), closing the
+unauthenticated-AES-256-CBC malleability / padding-oracle surface. Newly
+encrypted wallets use a new `CMasterKey.nDerivationMethod` value: each per-key
+secret and the master-key blob is stored as `AES-256-CBC ciphertext ||
+HMAC-SHA512 tag` (32 bytes), with the MAC key domain-separated from the
+encryption key, the IV and method bound into the tag, and the tag verified in
+constant time **before** the ciphertext is unpadded (fail-closed on any
+tampering).
+
+This is fully backward-compatible: existing wallets keep their legacy method
+(byte-for-byte unchanged — no migration), and `nDerivationMethod` (which already
+round-trips on disk) selects the format, so a legacy blob is never misread. New-
+format wallets raise the wallet feature version, so an older binary refuses to
+load one (clean `TOO_NEW` error) rather than mis-deriving keys. (Investigation
+corrected the earlier assessment that this required a disruptive schema
+migration — the version selector already existed.)
+
 ### Additional hardening
 
 - **DSProof deserialization**: the `pushData` element count is now validated
   before bulk allocation, removing a ~24× transient memory amplification from a
   crafted proof message.
-- **REST interface authentication**: a new `-restauth` option requires the same
-  credentials as JSON-RPC for the `-rest` HTTP interface. It defaults to **off**
-  to preserve compatibility for existing credential-less REST consumers; operators
-  exposing the RPC port beyond loopback should set `-restauth=1` (a startup
-  warning is logged otherwise).
+- **REST interface authentication**: a new `-restauth` option (default **on**)
+  requires the same credentials as JSON-RPC for the `-rest` HTTP interface.
+  Defaulting on is safe — an ecosystem audit confirmed no consumer uses
+  credential-less REST (all use authenticated JSON-RPC or ZMQ) and production
+  nodes are not run with `-rest`. Operators who intentionally serve an
+  unauthenticated REST surface (e.g. behind their own authenticating proxy) can
+  set `-restauth=0`.
 - **`-persistdiscouraged`** is now honored (previously a no-op).
 - **RPC cookie** file is created `0600` before the secret is written (no
   world/group-readable window under `-sysperms`).
@@ -106,13 +127,17 @@ leaves a half-applied wallet.
   consensus. Corrected the `OP_STATESEPARATOR` push-only-prefix comment to match
   actual behavior.
 
-## Known limitations / deferred
+## Known limitations
 
-- **Authenticated wallet encryption (encrypt-then-MAC)** remains deferred. It
-  cannot be added backward-compatibly without a versioned `walletdb` record
-  format (the current `ckey` blob has no version field), which is out of scope
-  for a point release; shipping it in-band would risk misreading existing wallets.
-  Tamper-detection continues to rely on public-key verification on decrypt.
+- **Existing encrypted wallets are not auto-upgraded** to the authenticated
+  format. They remain on the legacy method (and stay fully readable); only newly
+  encrypted wallets adopt encrypt-then-MAC. Changing the passphrase preserves the
+  wallet's existing method.
+- Authenticated-wallet integrity protects against tampering of the encrypted
+  blob. An attacker with full write access to `wallet.dat` could still rewrite
+  the format-selector field to downgrade it, but that is outside the
+  tamper-detection threat model and still cannot recover keys without the
+  passphrase.
 
 ---
 

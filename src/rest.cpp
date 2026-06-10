@@ -33,20 +33,19 @@
 static const size_t MAX_GETUTXOS_OUTPOINTS = 15;
 
 /**
- * SECURITY (audit 2026-06, H4): default on. When true, every /rest/* endpoint
+ * SECURITY (audit 2026-06, H4): default ON. When true, every /rest/* endpoint
  * requires the same authentication as the JSON-RPC interface (single-user,
  * multi-user, or cookie). This mirrors the /metrics posture (-metricsauth).
- * The REST interface (-rest) is unauthenticated by DEFAULT to preserve backward
- * compatibility for existing credential-less REST consumers (it is opt-in and,
- * by default, only binds to loopback and is gated by the -rpcallowip ACL).
- * Operators who expose the RPC port beyond loopback should set -restauth=1 to
- * require the same Basic-auth credentials (or cookie) used for JSON-RPC; a loud
- * startup warning is emitted when REST is reachable unauthenticated beyond
- * loopback. Defaulting OFF (rather than ON) is a deliberate no-regression choice
- * for a point release; consider flipping the default once ecosystem REST
- * consumers are known to authenticate.
+ * Defaulting ON is safe: an ecosystem-wide audit (RXinDexer, ElectrumX, the
+ * stratum proxy, Consigliere, node-helper, the wallets, and the MCP server)
+ * confirmed every node consumer uses authenticated JSON-RPC or ZMQ — none issue
+ * credential-less GET /rest/*, and production radiantd is not even launched with
+ * -rest. Operators who deliberately expose an unauthenticated REST surface (e.g.
+ * behind their own authenticating reverse proxy) can opt out with -restauth=0; a
+ * loud startup warning is then emitted if the RPC port is also exposed beyond
+ * loopback via -rpcallowip.
  */
-static const bool DEFAULT_REST_AUTH = false;
+static const bool DEFAULT_REST_AUTH = true;
 /** WWW-Authenticate header presented with a 401 from /rest/*. */
 static const char *REST_WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
 
@@ -724,15 +723,13 @@ static const struct {
 
 void StartREST() {
     // SECURITY (audit 2026-06, H4): the REST interface is opt-in (-rest, off by
-    // default). Per-request RPC authentication is available via -restauth but is
-    // DISABLED by default to preserve compatibility for existing credential-less
-    // REST consumers. It shares the single HTTP listener with RPC, so it only
-    // ever binds where RPC binds (see HTTPBindAddresses) and is gated by the same
-    // -rpcallowip ACL. When REST auth is disabled (the default) AND the RPC port
-    // is exposed beyond loopback (-rpcallowip), chain/mempool data under /rest/*
-    // is reachable unauthenticated. Emit a loud startup warning in that case so
-    // it is never done accidentally on a public interface; operators should set
-    // -restauth=1 there.
+    // default) and now requires RPC authentication by DEFAULT (-restauth=1). It
+    // shares the single HTTP listener with RPC, so it only ever binds where RPC
+    // binds (see HTTPBindAddresses) and is gated by the same -rpcallowip ACL. If
+    // an operator explicitly disables per-request auth (-restauth=0) AND exposes
+    // the RPC port beyond loopback (-rpcallowip), chain/mempool data under
+    // /rest/* becomes reachable unauthenticated. Emit a loud startup warning in
+    // that specific case so it is never done accidentally on a public interface.
     if (!gArgs.GetBoolArg("-restauth", DEFAULT_REST_AUTH) &&
         gArgs.IsArgSet("-rpcallowip")) {
         LogPrintf("WARNING: the REST interface (-rest) is ENABLED with "

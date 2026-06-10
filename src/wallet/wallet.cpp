@@ -683,7 +683,11 @@ bool CWallet::Unlock(const SecureString &strWalletPassphrase,
                 // try another master key
                 continue;
             }
-            if (CCryptoKeyStore::Unlock(_vMasterKey, accept_no_keys)) {
+            // SECURITY (audit 2026-06, M4): pass the master key's derivation
+            // method down so the per-key ckey secrets are interpreted with the
+            // matching authenticated (method 2) / legacy (method 0) treatment.
+            if (CCryptoKeyStore::Unlock(_vMasterKey, accept_no_keys,
+                                        pMasterKey.second.nDerivationMethod)) {
                 return true;
             }
         }
@@ -714,7 +718,14 @@ bool CWallet::ChangeWalletPassphrase(
             return false;
         }
 
-        if (CCryptoKeyStore::Unlock(_vMasterKey)) {
+        // SECURITY (audit 2026-06, M4): a passphrase change MUST preserve the
+        // wallet's existing nDerivationMethod. We never reassign it here, so a
+        // legacy (method 0) wallet stays method 0 (re-encrypting its master-key
+        // blob and ckeys in legacy format) and a method-2 wallet stays method 2.
+        // Silently upgrading method 0 -> 2 would make the wallet unreadable by
+        // older binaries unexpectedly.
+        if (CCryptoKeyStore::Unlock(_vMasterKey, false,
+                                    pMasterKey.second.nDerivationMethod)) {
             int64_t nStartTime = GetTimeMillis();
             crypter.SetKeyFromPassphrase(strNewWalletPassphrase,
                                          pMasterKey.second.vchSalt,
@@ -969,6 +980,15 @@ bool CWallet::EncryptWallet(const SecureString &strWalletPassphrase) {
     kMasterKey.vchSalt.resize(WALLET_CRYPTO_SALT_SIZE);
     GetStrongRandBytes(&kMasterKey.vchSalt[0], WALLET_CRYPTO_SALT_SIZE);
 
+    // SECURITY (audit 2026-06, M4): NEWLY-encrypted wallets use authenticated
+    // encrypt-then-MAC (method 2). This must be set BEFORE the SetKeyFromPass-
+    // phrase / Encrypt calls below so the master-key blob (vchCryptedKey) is
+    // itself authenticated, and is threaded into EncryptKeys so every per-key
+    // ckey secret is authenticated too. The whole new wallet is thus authenti-
+    // cated; the method round-trips on disk via CMasterKey serialization. (The
+    // CMasterKey ctor defaults to method 0; existing wallets are untouched.)
+    kMasterKey.nDerivationMethod = WALLET_CRYPTO_METHOD_AESCBC_HMAC;
+
     CCrypter crypter;
     int64_t nStartTime = GetTimeMillis();
     crypter.SetKeyFromPassphrase(strWalletPassphrase, kMasterKey.vchSalt, 25000,
@@ -1018,7 +1038,7 @@ bool CWallet::EncryptWallet(const SecureString &strWalletPassphrase) {
         }
         encrypted_batch->WriteMasterKey(nMasterKeyMaxID, kMasterKey);
 
-        if (!EncryptKeys(_vMasterKey)) {
+        if (!EncryptKeys(_vMasterKey, kMasterKey.nDerivationMethod)) {
             encrypted_batch->TxnAbort();
             delete encrypted_batch;
             // We now probably have half of our keys encrypted in memory, and
@@ -1028,6 +1048,17 @@ bool CWallet::EncryptWallet(const SecureString &strWalletPassphrase) {
 
         // Encryption was introduced in version 0.4.0
         SetMinVersion(FEATURE_WALLETCRYPT, encrypted_batch, true);
+
+        // SECURITY (audit 2026-06, M4): authenticated (method 2) wallet
+        // encryption is gated behind its own feature/min-version. Writing this
+        // min-version makes an older binary that lacks method 2 REFUSE to load
+        // the wallet outright (walletdb returns DBErrors::TOO_NEW when
+        // minversion > its FEATURE_LATEST) rather than silently failing to
+        // unlock. Current code raises FEATURE_LATEST to include this feature, so
+        // loading is unaffected for up-to-date binaries.
+        if (kMasterKey.nDerivationMethod == WALLET_CRYPTO_METHOD_AESCBC_HMAC) {
+            SetMinVersion(FEATURE_WALLETCRYPT_AEAD, encrypted_batch, true);
+        }
 
         if (!encrypted_batch->TxnCommit()) {
             delete encrypted_batch;

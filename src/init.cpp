@@ -1120,12 +1120,12 @@ void SetupServerArgs() {
     gArgs.AddArg("-restauth",
                  "Require RPC authentication for the public REST interface "
                  "(-rest): clients must supply the same Basic-auth credentials "
-                 "(or cookie) used for JSON-RPC. Disabled by default to preserve "
-                 "compatibility for existing credential-less REST consumers. "
-                 "STRONGLY RECOMMENDED (-restauth=1) whenever the RPC port is "
-                 "exposed beyond loopback (-rpcallowip/-rpcbind); a startup "
-                 "warning is logged when REST is reachable unauthenticated "
-                 "beyond loopback (default: 0)",
+                 "(or cookie) used for JSON-RPC. Enabled by default for security "
+                 "(no known consumer uses credential-less REST). Set -restauth=0 "
+                 "only if you intentionally serve an unauthenticated REST surface "
+                 "(e.g. behind your own authenticating proxy); a startup warning "
+                 "is then logged if the RPC port is exposed beyond loopback "
+                 "(default: 1)",
                  ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     gArgs.AddArg("-persistdiscouraged",
                  "Persist the peer discouragement filter across restarts "

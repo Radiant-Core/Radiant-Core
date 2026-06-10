@@ -126,7 +126,16 @@ enum WalletFeature {
     // Upgraded to HD SPLIT and can have a pre-split keypool
     FEATURE_PRE_SPLIT_KEYPOOL = 200300,
 
-    FEATURE_LATEST = FEATURE_PRE_SPLIT_KEYPOOL,
+    // SECURITY (audit 2026-06, M4): authenticated wallet encryption
+    // (AES-256-CBC encrypt-then-HMAC-SHA512, CMasterKey::nDerivationMethod == 2).
+    // A wallet newly encrypted with method 2 sets this as its minversion, so an
+    // older binary that does not implement method 2 refuses to load it
+    // (DBErrors::TOO_NEW) instead of merely failing to unlock. Value is above
+    // the previous FEATURE_LATEST so older binaries reject it; current code
+    // includes it in FEATURE_LATEST below so loading is unaffected.
+    FEATURE_WALLETCRYPT_AEAD = 210000,
+
+    FEATURE_LATEST = FEATURE_WALLETCRYPT_AEAD,
 };
 
 //! Default for -addresstype
