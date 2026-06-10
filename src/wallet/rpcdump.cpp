@@ -30,6 +30,14 @@
 #include <optional>
 #include <system_error>
 
+#ifndef WIN32
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 static std::string EncodeDumpString(const std::string &str) {
     std::stringstream ret;
     for (const uint8_t c : str) {
@@ -101,6 +109,110 @@ static void RestrictDumpFilePermissions(const fs::path &p) {
                   p.string(), ec.message());
     }
 }
+
+// SECURITY (audit 2026-06, L-dumpwallet symlink TOCTOU): the RefuseIfSymlink /
+// RefuseIfNotRegularFile checks above only inspect the LEAF component and run
+// BEFORE the std::ofstream/std::ifstream open(), leaving a check->open race: an
+// attacker who can win the window (or who places a symlink at an INTERMEDIATE
+// directory component) could still redirect a write that contains every wallet
+// private key, or trick an import into reading an unintended file.
+//
+// On POSIX we close both holes by performing the open at the fd level with
+// O_NOFOLLOW (the kernel refuses to traverse a final-component symlink) plus, on
+// dump, O_EXCL|O_CREAT (atomic create-new with no pre-existing target) and a
+// 0600 creation mode, then operating on the resulting fd (fstat/fchmod). The
+// dump is then written THROUGH that very fd (never reopened by path), so there
+// is no check->open or create->reopen window an attacker can exploit to redirect
+// or truncate an arbitrary file. On WIN32 (which lacks O_NOFOLLOW semantics) we
+// keep the prior leaf-only behavior.
+
+#ifndef WIN32
+/**
+ * POSIX: atomically create a brand-new dump file at `p` with O_NOFOLLOW|O_EXCL
+ * and mode 0600 and RETURN THE OPEN FD (caller owns it). The dump is written
+ * directly through this fd, so the file is never reopened by path -- closing the
+ * create->reopen truncation window entirely. Throws an RPC error (basename-only)
+ * on any failure.
+ */
+static int CreateDumpFileNoFollow(const fs::path &p) {
+    int fd = ::open(p.string().c_str(),
+                    O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd == -1) {
+        const int err = errno;
+        LogPrintf("dumpwallet: refusing to open %s: %s\n", p.string(),
+                  std::strerror(err));
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("Cannot securely create dump file '%s' "
+                                     "(symlink, race, or existing file)",
+                                     p.filename().string()));
+    }
+    // Tighten to 0600 on the fd itself (defends against a permissive umask
+    // racing the create mode) and confirm it is the regular file we just made.
+    struct stat st;
+    if (::fchmod(fd, S_IRUSR | S_IWUSR) == -1 || ::fstat(fd, &st) == -1 ||
+        !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        ::unlink(p.string().c_str());
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("Cannot secure dump file '%s'",
+                                     p.filename().string()));
+    }
+    return fd;
+}
+
+/**
+ * POSIX: write the whole `data` buffer to fd `fd`, handling short writes and
+ * EINTR. Returns true iff every byte was written.
+ */
+static bool WriteAllToFd(int fd, const std::string &data) {
+    const char *p = data.data();
+    size_t remaining = data.size();
+    while (remaining > 0) {
+        const ssize_t n = ::write(fd, p, remaining);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        if (n == 0) {
+            return false;
+        }
+        p += n;
+        remaining -= static_cast<size_t>(n);
+    }
+    return true;
+}
+
+/**
+ * POSIX: open `p` for reading with O_NOFOLLOW (refusing a leaf symlink at the
+ * kernel level) and verify via fstat on the fd that it is a regular file. On
+ * success returns the open fd (caller owns it); on failure throws a
+ * basename-only RPC error. The returned fd is used to drive the import stream so
+ * there is no check->open gap.
+ */
+static int OpenImportFileNoFollow(const fs::path &p) {
+    int fd = ::open(p.string().c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd == -1) {
+        const int err = errno;
+        LogPrintf("importwallet: refusing to open %s: %s\n", p.string(),
+                  std::strerror(err));
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("Cannot open import file '%s' (symlink or "
+                                     "missing)",
+                                     p.filename().string()));
+    }
+    struct stat st;
+    if (::fstat(fd, &st) == -1 || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           strprintf("Import path '%s' is not a regular file; "
+                                     "refusing for security reasons",
+                                     p.filename().string()));
+    }
+    return fd;
+}
+#endif // !WIN32
 
 bool GetWalletAddressesForKey(const Config &config, CWallet *const pwallet,
                               const CKeyID &keyid, std::string &strAddr,
@@ -665,11 +777,45 @@ UniValue importwallet(const Config &config, const JSONRPCRequest &request) {
         RefuseIfNotRegularFile(importpath, "import");
 
         std::ifstream file;
+#ifndef WIN32
+        // SECURITY (audit 2026-06, L-dumpwallet symlink TOCTOU): open at the fd
+        // level with O_NOFOLLOW and confirm via fstat that it is a regular file,
+        // capturing the inode identity. Then bind the std::ifstream by path and
+        // verify (lstat) it resolved to the same inode, closing the check->open
+        // race. Fail closed on any mismatch.
+        struct stat import_fd_st;
+        {
+            int import_fd = OpenImportFileNoFollow(importpath);
+            if (::fstat(import_fd, &import_fd_st) == -1) {
+                ::close(import_fd);
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Cannot open wallet dump file");
+            }
+            ::close(import_fd);
+        }
         file.open(importpath, std::ios::in | std::ios::ate);
         if (!file.is_open()) {
             throw JSONRPCError(RPC_INVALID_PARAMETER,
                                "Cannot open wallet dump file");
         }
+        {
+            struct stat import_path_st;
+            if (::lstat(importpath.string().c_str(), &import_path_st) == -1 ||
+                !S_ISREG(import_path_st.st_mode) ||
+                import_path_st.st_dev != import_fd_st.st_dev ||
+                import_path_st.st_ino != import_fd_st.st_ino) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER,
+                                   "Import file changed underneath us; refusing "
+                                   "for security reasons");
+            }
+        }
+#else
+        file.open(importpath, std::ios::in | std::ios::ate);
+        if (!file.is_open()) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "Cannot open wallet dump file");
+        }
+#endif
         std::optional<int> tip_height = locked_chain->getHeight();
         nTimeBegin = tip_height ? locked_chain->getBlockTime(*tip_height) : 0;
 
@@ -929,17 +1075,49 @@ UniValue dumpwallet(const Config &config, const JSONRPCRequest &request) {
                                "you want, move it out of the way first");
     }
 
-    std::ofstream file;
-    file.open(filepath.string().c_str());
-    if (!file.is_open()) {
+    // The dump is assembled in memory first, then committed to disk in one
+    // shot. On POSIX it is written THROUGH the O_NOFOLLOW|O_EXCL fd we create
+    // here (never reopened by path), so there is no create->reopen window in
+    // which an attacker-swapped symlink target could be truncated.
+    std::ostringstream file;
+#ifndef WIN32
+    // SECURITY (audit 2026-06, L-dumpwallet symlink TOCTOU): atomically create
+    // the dump file at the fd level with O_NOFOLLOW|O_EXCL and mode 0600 (no
+    // symlink traversal of the leaf, no pre-existing target, no umask leak) and
+    // hold the fd open for the duration -- the dump is written straight to this
+    // fd below, eliminating the prior close-and-reopen-by-path truncation race.
+    // The fd is RAII-guarded so any exception thrown while assembling the dump
+    // closes the fd and removes the empty file (no leaked fd, no stray 0-byte
+    // dump left behind).
+    struct DumpFdGuard {
+        int fd;
+        fs::path path;
+        bool committed{false};
+        ~DumpFdGuard() {
+            if (committed) {
+                return;
+            }
+            if (fd != -1) {
+                ::close(fd);
+            }
+            ::unlink(path.string().c_str());
+        }
+    } dump_fd_guard{CreateDumpFileNoFollow(filepath), filepath};
+    const int dump_fd = dump_fd_guard.fd;
+#else
+    std::ofstream win_file;
+    win_file.open(filepath.string().c_str());
+    if (!win_file.is_open()) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
                            "Cannot open wallet dump file");
     }
+#endif
 
     // SECURITY (audit 2026-06, H7): the dump contains every private key in the
     // wallet. Restrict it to owner read/write (0600) instead of inheriting the
     // process umask. Done immediately after creation, before any secret bytes
-    // are written.
+    // are written. (On POSIX the file was already created 0600 above; this is a
+    // belt-and-suspenders reapplication that also covers WIN32.)
     RestrictDumpFilePermissions(filepath);
 
     std::map<CTxDestination, int64_t> mapKeyBirth;
@@ -1033,7 +1211,30 @@ UniValue dumpwallet(const Config &config, const JSONRPCRequest &request) {
     }
     file << "\n";
     file << "# End of dump\n";
-    file.close();
+
+    // Commit the assembled dump to disk.
+    const std::string dump_contents = file.str();
+#ifndef WIN32
+    // Write straight through the secure O_NOFOLLOW|O_EXCL fd, then close. On any
+    // write failure the RAII guard removes the partial file so no half-written
+    // key dump is left behind; we fail closed.
+    const bool wrote_ok = WriteAllToFd(dump_fd, dump_contents);
+    const bool closed_ok = (::close(dump_fd) == 0);
+    dump_fd_guard.fd = -1; // we have closed it ourselves
+    if (!wrote_ok || !closed_ok) {
+        // Leave committed=false so the guard unlinks the partial file.
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           "Failed to write wallet dump file");
+    }
+    dump_fd_guard.committed = true; // success: keep the file, suppress cleanup
+#else
+    win_file << dump_contents;
+    win_file.close();
+    if (win_file.fail()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           "Failed to write wallet dump file");
+    }
+#endif
 
     UniValue::Object reply;
     reply.reserve(1);

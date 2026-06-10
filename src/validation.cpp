@@ -738,8 +738,9 @@ AcceptToMemoryPoolWorker(const Config &config, CTxMemPool &pool,
         const uint32_t nextBlockScriptVerifyFlags =
             GetNextBlockScriptFlags(consensusParams, ::ChainActive().Tip());
 
-        // Are the induction rules valid
-        if (!ReferenceParser::validateTransactionReferenceOperations(tx, view)) {
+        // Are the induction rules valid.
+        if (!ReferenceParser::validateTransactionReferenceOperations(
+                tx, view)) {
             return state.Invalid(false, REJECT_INVALIDPUSHREFS,
                                  "bad-txns-inputs-outputs-invalid-transaction-reference-operations-mempool");
         }
@@ -786,8 +787,21 @@ AcceptToMemoryPoolWorker(const Config &config, CTxMemPool &pool,
         }
 
         // Validate input scripts against standard script flags.
+        //
+        // 2026-06 security-audit (H-1): enforce the per-script peak-stack
+        // memory budget on EVERY mempool-accepted tx. This is set
+        // UNCONDITIONALLY on the relay/policy verification path here --
+        // independent of fRequireStandard (which is false on mainnet) and
+        // independent of SecurityUpgradeHeight -- so the relay-reachable
+        // memory-bomb DoS is closed now, ahead of the gated consensus
+        // activation. It is intentionally NOT folded into
+        // nextBlockScriptVerifyFlags / GetNextBlockScriptFlags, so it is never
+        // added to the consensus flags used by CheckInputsFromMempoolAndCache
+        // (below) or ConnectBlock; those stay gated at SecurityUpgradeHeight to
+        // avoid a retroactive consensus split on historical mainnet blocks.
         const uint32_t scriptVerifyFlags =
-            nextBlockScriptVerifyFlags | STANDARD_SCRIPT_VERIFY_FLAGS;
+            nextBlockScriptVerifyFlags | STANDARD_SCRIPT_VERIFY_FLAGS |
+            SCRIPT_VERIFY_MEMORY_BUDGET;
         PrecomputedTransactionData txdata(tx);
         int nSigChecksStandard;
         if (!CheckInputs(tx, state, view, true, scriptVerifyFlags, true, false,
@@ -1392,6 +1406,22 @@ bool CheckInputs(const CTransaction &tx, CValidationState &state,
         } else if (!check()) {
  
             ScriptError scriptError = check.GetScriptError();
+            // The per-script peak-stack-memory budget (ScriptError::STACK_MEMORY)
+            // is a relay/policy DoS guard before SecurityUpgradeHeight: there it
+            // is enforced via SCRIPT_VERIFY_MEMORY_BUDGET but NOT the consensus
+            // SCRIPT_SECURITY_UPGRADE, so a failing tx is still consensus-valid.
+            // In that pre-fork regime, reject it as non-mandatory (do NOT DoS-ban
+            // the relaying peer) AND do NOT fall through to the check2 re-run,
+            // which would drop the budget bit and let the memory-bomb script
+            // execute unbounded. Once SCRIPT_SECURITY_UPGRADE is active the budget
+            // is a consensus rule and a trip falls through to the mandatory path.
+            if (scriptError == ScriptError::STACK_MEMORY &&
+                (flags & SCRIPT_SECURITY_UPGRADE) == 0) {
+                return state.Invalid(
+                    false, REJECT_NONSTANDARD,
+                    strprintf("non-mandatory-script-verify-flag (%s)",
+                              ScriptErrorString(scriptError)));
+            }
             // Compute flags without the optional standardness flags.
             // This differs from MANDATORY_SCRIPT_VERIFY_FLAGS as it contains
             // additional upgrade flags (see AcceptToMemoryPoolWorker variable
@@ -2010,8 +2040,9 @@ bool CChainState::ConnectBlock(const CBlock &block, CValidationState &state,
             prevheights[j] = view.AccessCoin(tx.vin[j].prevout).GetHeight();
         }
  
-        // Are the induction rules valid
-        if (!ReferenceParser::validateTransactionReferenceOperations(tx, view)) {
+        // Are the induction rules valid.
+        if (!ReferenceParser::validateTransactionReferenceOperations(
+                tx, view)) {
             return state.Invalid(false, REJECT_INVALIDPUSHREFS,
                                  "bad-txns-inputs-outputs-invalid-induction-rules");
         }

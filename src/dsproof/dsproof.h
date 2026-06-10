@@ -114,6 +114,37 @@ public:
         }
     }
 
+    // M-dsproof: serialization formatter for a spender's pushData vector that
+    // enforces the legal element count *at read time* — before the (potentially
+    // large) outer vector of inner vectors is allocated. Without this guard the
+    // generic vector deserializer would happily allocate one (~24-byte)
+    // std::vector<uint8_t> per claimed element, turning a ~2MB message into tens
+    // of MB of transient heap before CheckSpenderPushDataOrThrow() ever fires
+    // (~24x amplification). Since a well-formed DSProof always carries exactly 1
+    // pushData element per spender, we reject any other count immediately upon
+    // reading the CompactSize, then read the single element. The wire format is
+    // unchanged: valid (count == 1) proofs serialize/deserialize identically.
+    struct PushDataFormatter {
+        template <typename Stream>
+        void Ser(Stream &s, const std::vector<std::vector<uint8_t>> &pd) const {
+            // Serialization is unchanged: write the vector normally.
+            ::Serialize(s, pd);
+        }
+        template <typename Stream>
+        void Unser(Stream &s, std::vector<std::vector<uint8_t>> &pd) const {
+            const uint64_t count = ReadCompactSize(s);
+            if (count != 1) {
+                // Reject before bulk-allocating the outer vector. Only count==1
+                // is legal (enforced post-read by CheckSpenderPushDataOrThrow);
+                // bailing here prevents the transient memory amplification.
+                throw std::ios_base::failure(
+                    "DSProof must contain exactly 1 pushData per spender");
+            }
+            pd.resize(1);
+            ::Unserialize(s, pd.front());
+        }
+    };
+
     // new fashioned serialization.
     SERIALIZE_METHODS(DoubleSpendProof, obj) {
         READWRITE(obj.m_outPoint);
@@ -125,7 +156,8 @@ public:
         READWRITE(obj.m_spender1.hashSequence);
         READWRITE(obj.m_spender1.hashOutputHashes);
         READWRITE(obj.m_spender1.hashOutputs);
-        READWRITE(obj.m_spender1.pushData);
+        // M-dsproof: count-guarded read; identical wire format on write.
+        READWRITE(Using<PushDataFormatter>(obj.m_spender1.pushData));
         // M13: enforce the spender-1 pushData bounds as soon as they are read.
         SER_READ(obj, CheckSpenderPushDataOrThrow(obj.m_spender1));
 
@@ -136,7 +168,8 @@ public:
         READWRITE(obj.m_spender2.hashSequence);
         READWRITE(obj.m_spender2.hashOutputHashes);
         READWRITE(obj.m_spender2.hashOutputs);
-        READWRITE(obj.m_spender2.pushData);
+        // M-dsproof: count-guarded read; identical wire format on write.
+        READWRITE(Using<PushDataFormatter>(obj.m_spender2.pushData));
         // M13: enforce the spender-2 pushData bounds as soon as they are read.
         SER_READ(obj, CheckSpenderPushDataOrThrow(obj.m_spender2));
 

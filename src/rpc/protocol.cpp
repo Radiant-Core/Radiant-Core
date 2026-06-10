@@ -86,21 +86,28 @@ bool GenerateAuthCookie(std::string *cookie_out) {
     /** the umask determines what permissions are used to create this file -
      * these are set to 077 in init.cpp unless overridden with -sysperms.
      */
-    std::ofstream file;
     fs::path filepath_tmp = GetAuthCookieFile(true);
-    file.open(filepath_tmp.string().c_str());
-    if (!file.is_open()) {
-        LogPrintf("Unable to open cookie authentication file %s for writing\n",
-                  filepath_tmp.string());
-        return false;
-    }
-    file << cookie;
-    file.close();
 
-    // SECURITY (audit 2026-06, M6): do not rely on the process umask for the
-    // cookie file permissions. The cookie grants full RPC access, so force it
-    // to owner-only read/write (0600) explicitly before exposing it under its
-    // final name. We set perms on the temp file; RenameOver preserves them.
+    // SECURITY (audit 2026-06, M6 + L-cookie race): do not rely on the process
+    // umask for the cookie file permissions. The cookie grants full RPC access.
+    // Under -sysperms the umask is left untouched, so the file could be created
+    // world/group-readable and the 32-byte secret would be written into it
+    // before the perms were tightened — a brief race window. To close it, create
+    // the temp file EMPTY, restrict it to owner-only read/write (0600) BEFORE the
+    // secret is ever written, and only then write the cookie. We set perms on the
+    // temp file; RenameOver preserves them onto the final name.
+    {
+        std::ofstream emptyfile;
+        emptyfile.open(filepath_tmp.string().c_str(),
+                       std::ios::out | std::ios::trunc);
+        if (!emptyfile.is_open()) {
+            LogPrintf(
+                "Unable to open cookie authentication file %s for writing\n",
+                filepath_tmp.string());
+            return false;
+        }
+        emptyfile.close();
+    }
     {
         std::error_code ec;
         fs::permissions(filepath_tmp,
@@ -112,6 +119,17 @@ bool GenerateAuthCookie(std::string *cookie_out) {
                       filepath_tmp.string(), ec.message());
         }
     }
+
+    std::ofstream file;
+    file.open(filepath_tmp.string().c_str(),
+              std::ios::out | std::ios::trunc);
+    if (!file.is_open()) {
+        LogPrintf("Unable to open cookie authentication file %s for writing\n",
+                  filepath_tmp.string());
+        return false;
+    }
+    file << cookie;
+    file.close();
 
     fs::path filepath = GetAuthCookieFile(false);
     if (!RenameOver(filepath_tmp, filepath)) {

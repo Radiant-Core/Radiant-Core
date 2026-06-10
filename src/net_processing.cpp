@@ -547,11 +547,27 @@ static CNodeState *State(NodeId pnode) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
 }
 
 /**
- * M10: insert a mapBlockSource entry while enforcing a per-peer cap
- * (MAX_BLOCK_SOURCE_PER_PEER). If the source peer already has the maximum
- * number of attributed entries, the new entry is recorded as non-punishable
- * (NodeId is preserved for reject routing, but the peer cannot be misbehaved
- * for it), preventing a single peer from growing mapBlockSource without bound.
+ * M10: insert a mapBlockSource entry while enforcing a per-peer punishability
+ * cap (MAX_BLOCK_SOURCE_PER_PEER).
+ *
+ * IMPORTANT — scope of the cap (L-mapBlockSource): this cap governs *only*
+ * punishability, not entry insertion. Once a peer reaches the cap, further
+ * entries are still inserted (with NodeId preserved) but marked non-punishable,
+ * so the peer cannot be misbehaved repeatedly for entries beyond the cap. We
+ * deliberately do NOT drop the entry over-cap: mapBlockSource is the routing
+ * table for reject/DoS messages keyed by block hash, and silently discarding an
+ * attribution would mis-route (or drop) a legitimate reject for that block.
+ *
+ * The number of entries a single peer can hold is instead bounded in practice
+ * by the underlying resource each entry represents: every entry corresponds to
+ * a distinct block hash the peer delivered (a full block, compact block, or
+ * block-txn response), each of which required valid proof-of-work to be
+ * accepted to this point in processing. Forging unbounded distinct valid-PoW
+ * block hashes is computationally infeasible, and entries are erased as blocks
+ * are processed (see EraseBlockSource), so the map does not grow without bound.
+ * The per-peer counter is decremented on erase and cleared on disconnect, so it
+ * cannot drift upward over the peer's lifetime.
+ *
  * Returns true if the entry was newly inserted.
  */
 static bool AddBlockSource(const uint256 &hash, NodeId nodeId, bool punish)
@@ -563,7 +579,8 @@ static bool AddBlockSource(const uint256 &hash, NodeId nodeId, bool punish)
     CNodeState *state = State(nodeId);
     if (state && state->m_block_source_count >= MAX_BLOCK_SOURCE_PER_PEER) {
         // Over the per-peer cap: still record the source (so reject messages
-        // route correctly) but mark it non-punishable to bound abuse.
+        // route correctly) but mark it non-punishable to bound abuse. See the
+        // function comment above for why we keep, rather than drop, the entry.
         punish = false;
     }
     auto ret = mapBlockSource.emplace(hash, std::make_pair(nodeId, punish));
@@ -1077,6 +1094,13 @@ void PeerLogicValidation::FinalizeNode(const Config &config, NodeId nodeid,
         mapBlocksInFlight.erase(entry.hash);
     }
     internal::EraseOrphansFor(nodeid);
+    // H-3: drop this peer's per-peer DSProof orphan counter entry so the
+    // m_orphansByPeer bookkeeping map cannot grow without bound as peers
+    // connect and disconnect. This only removes the counter entry; any resident
+    // orphan proofs attributed to this peer are left to the normal expiry path.
+    if (DoubleSpendProof::IsEnabled()) {
+        g_mempool.doubleSpendProofStorage()->dropPeer(nodeid);
+    }
     nPreferredDownload -= state->fPreferredDownload;
     nPeersWithValidatedDownloads -= (state->nBlocksInFlightValidHeaders != 0);
     assert(nPeersWithValidatedDownloads >= 0);

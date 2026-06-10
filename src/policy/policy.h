@@ -154,6 +154,12 @@ static constexpr uint32_t STANDARD_SCRIPT_VERIFY_FLAGS =
  */
 static constexpr uint32_t STANDARD_NOT_MANDATORY_VERIFY_FLAGS =
     STANDARD_SCRIPT_VERIFY_FLAGS & ~MANDATORY_SCRIPT_VERIFY_FLAGS;
+// NOTE: SCRIPT_VERIFY_MEMORY_BUDGET is intentionally NOT folded into the flag
+// sets above. It is a relay/policy DoS guard whose pre-fork (policy-only)
+// failures are classified as non-mandatory directly in CheckInputs (keyed on
+// ScriptError::STACK_MEMORY), without re-executing the offending script. Keeping
+// it out of STANDARD_NOT_MANDATORY ensures the check2 re-run (used for other
+// non-mandatory failures) still carries the budget bit and stays memory-bounded.
 
 /**
  * Used as the flags parameter to sequence and nLocktime checks in non-consensus

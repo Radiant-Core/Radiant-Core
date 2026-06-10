@@ -113,6 +113,20 @@ static inline void popstack(std::vector<valtype> &stack) {
     stack.pop_back();
 }
 
+// Variant of popstack() that keeps an incrementally-maintained running total of
+// the cumulative byte size of all elements on the (main + alt) stacks in sync.
+// The removed element's size is subtracted BEFORE removal so nStackMemUsage
+// always equals the exact sum of every element size across both stacks. Used by
+// the 2026-06 security-audit peak-stack-memory budget (see consensus.h); the
+// behavior is otherwise identical to popstack().
+static inline void popstack(std::vector<valtype> &stack, size_t &nStackMemUsage) {
+    if (stack.empty()) {
+        throw std::runtime_error("popstack(): stack empty");
+    }
+    nStackMemUsage -= stack.back().size();
+    stack.pop_back();
+}
+
 int FindAndDelete(CScript &script, const CScript &b) {
     int nFound = 0;
     if (b.empty()) {
@@ -286,8 +300,28 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
     // stack-memory and hashing/bytewise opcode-cost budgets (see consensus.h).
     // Gated so it never tightens scripts valid before the activation height.
     bool const securityUpgrade = (flags & SCRIPT_SECURITY_UPGRADE) != 0;
+    // Relay/policy guard: lets the mempool enforce the peak-stack-memory budget
+    // now (pre-activation) without altering pre-SecurityUpgradeHeight consensus.
+    bool const memoryBudget = (flags & SCRIPT_VERIFY_MEMORY_BUDGET) != 0;
     // Running accumulator of hashing/bytewise opcode cost (bytes processed).
     uint64_t opcodeCost = 0;
+
+    // 2026-06 security-audit hardening (H2): incrementally-maintained running
+    // total of the cumulative byte size of every element across the main stack
+    // and altstack. This is kept EXACTLY equal to a full re-sum over both stacks
+    // by updating it at every mutation (push/pop/erase/insert and in-place
+    // resize), making the per-opcode peak-stack-memory check O(1) instead of the
+    // former O(n)-per-opcode (O(n^2)-per-script) recompute. Seeded here from any
+    // pre-populated initial stack (the altstack is always empty at entry).
+    size_t nStackMemUsage = 0;
+    for (auto const &elem : stack) {
+        nStackMemUsage += elem.size();
+    }
+    // Push a copy/temporary onto a stack while keeping nStackMemUsage exact.
+    auto pushStack = [&nStackMemUsage](std::vector<valtype> &s, valtype v) {
+        nStackMemUsage += v.size();
+        s.push_back(std::move(v));
+    };
 
     size_t const maxIntegerSize = integers64Bit ?
         CScriptNum::MAXIMUM_ELEMENT_SIZE_64_BIT :
@@ -328,7 +362,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                     !CheckMinimalPush(vchPushValue, opcode)) {
                     return set_error(serror, ScriptError::MINIMALDATA);
                 }
-                stack.push_back(vchPushValue);
+                pushStack(stack, vchPushValue);
             } else if (fExec || (OP_IF <= opcode && opcode <= OP_ENDIF)) {
                 switch (opcode) {
                     //
@@ -353,7 +387,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                     case OP_16: {
                         // ( -- value)
                         auto const bn = CScriptNum::fromIntUnchecked(int(opcode) - int(OP_1 - 1));
-                        stack.push_back(bn.getvch());
+                        pushStack(stack, bn.getvch());
                         // The result of these opcodes should always be the
                         // minimal way to push the data they push, so no need
                         // for a CheckMinimalPush here.
@@ -491,7 +525,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             if (opcode == OP_NOTIF) {
                                 fValue = !fValue;
                             }
-                            popstack(stack);
+                            popstack(stack, nStackMemUsage);
                         }
                         vfExec.push_back(fValue);
                     } break;
@@ -521,7 +555,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
                         bool fValue = CastToBool(stacktop(-1));
                         if (fValue) {
-                            popstack(stack);
+                            popstack(stack, nStackMemUsage);
                         } else {
                             return set_error(serror, ScriptError::VERIFY);
                         }
@@ -545,8 +579,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(
                                 serror, ScriptError::INVALID_STACK_OPERATION);
                         }
-                        altstack.push_back(stacktop(-1));
-                        popstack(stack);
+                        pushStack(altstack, stacktop(-1));
+                        popstack(stack, nStackMemUsage);
                     } break;
 
                     case OP_FROMALTSTACK: {
@@ -555,8 +589,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 serror,
                                 ScriptError::INVALID_ALTSTACK_OPERATION);
                         }
-                        stack.push_back(altstacktop(-1));
-                        popstack(altstack);
+                        pushStack(stack, altstacktop(-1));
+                        popstack(altstack, nStackMemUsage);
                     } break;
 
                     case OP_2DROP: {
@@ -565,8 +599,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(
                                 serror, ScriptError::INVALID_STACK_OPERATION);
                         }
-                        popstack(stack);
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
                     } break;
 
                     case OP_2DUP: {
@@ -577,8 +611,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
                         valtype vch1 = stacktop(-2);
                         valtype vch2 = stacktop(-1);
-                        stack.push_back(vch1);
-                        stack.push_back(vch2);
+                        pushStack(stack, vch1);
+                        pushStack(stack, vch2);
                     } break;
 
                     case OP_3DUP: {
@@ -590,9 +624,9 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         valtype vch1 = stacktop(-3);
                         valtype vch2 = stacktop(-2);
                         valtype vch3 = stacktop(-1);
-                        stack.push_back(vch1);
-                        stack.push_back(vch2);
-                        stack.push_back(vch3);
+                        pushStack(stack, vch1);
+                        pushStack(stack, vch2);
+                        pushStack(stack, vch3);
                     } break;
 
                     case OP_2OVER: {
@@ -603,8 +637,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
                         valtype vch1 = stacktop(-4);
                         valtype vch2 = stacktop(-3);
-                        stack.push_back(vch1);
-                        stack.push_back(vch2);
+                        pushStack(stack, vch1);
+                        pushStack(stack, vch2);
                     } break;
 
                     case OP_2ROT: {
@@ -615,9 +649,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
                         valtype vch1 = stacktop(-6);
                         valtype vch2 = stacktop(-5);
+                        // Keep nStackMemUsage exact: the two erased elements are
+                        // exactly vch1 and vch2 (copied above), re-added below.
+                        nStackMemUsage -= vch1.size() + vch2.size();
                         stack.erase(stack.end() - 6, stack.end() - 4);
-                        stack.push_back(vch1);
-                        stack.push_back(vch2);
+                        pushStack(stack, vch1);
+                        pushStack(stack, vch2);
                     } break;
 
                     case OP_2SWAP: {
@@ -638,14 +675,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
                         valtype vch = stacktop(-1);
                         if (CastToBool(vch)) {
-                            stack.push_back(vch);
+                            pushStack(stack, vch);
                         }
                     } break;
 
                     case OP_DEPTH: {
                         // -- stacksize
                         auto const bn = CScriptNum::fromIntUnchecked(stack.size());
-                        stack.push_back(bn.getvch());
+                        pushStack(stack, bn.getvch());
                     } break;
 
                     case OP_DROP: {
@@ -653,7 +690,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         if (stack.size() < 1) {
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
                     } break;
 
                     case OP_DUP: {
@@ -663,7 +700,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype vch = stacktop(-1);
-                        stack.push_back(vch);
+                        pushStack(stack, vch);
                     } break;
 
                     case OP_NIP: {
@@ -672,6 +709,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(
                                 serror, ScriptError::INVALID_STACK_OPERATION);
                         }
+                        // Keep nStackMemUsage exact: subtract the erased element.
+                        nStackMemUsage -= stacktop(-2).size();
                         stack.erase(stack.end() - 2);
                     } break;
 
@@ -683,7 +722,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype vch = stacktop(-2);
-                        stack.push_back(vch);
+                        pushStack(stack, vch);
                     } break;
 
                     case OP_PICK:
@@ -694,15 +733,18 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         int64_t const n = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
                         if (n < 0 || uint64_t(n) >= stack.size()) {
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype const vch = stacktop(-n - 1);
                         if (opcode == OP_ROLL) {
+                            // Keep nStackMemUsage exact: the erased element is
+                            // exactly vch (copied above), re-pushed below.
+                            nStackMemUsage -= vch.size();
                             stack.erase(stack.end() - n - 1);
                         }
-                        stack.push_back(vch);
+                        pushStack(stack, vch);
                     } break;
 
                     case OP_ROT: {
@@ -730,6 +772,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype vch = stacktop(-1);
+                        // Keep nStackMemUsage exact: one extra copy of vch added.
+                        nStackMemUsage += vch.size();
                         stack.insert(stack.end() - 2, vch);
                     } break;
 
@@ -739,7 +783,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         auto const bn = CScriptNum::fromIntUnchecked(stacktop(-1).size());
-                        stack.push_back(bn.getvch());
+                        pushStack(stack, bn.getvch());
                     } break;
 
                     //
@@ -758,6 +802,17 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         // Inputs must be the same size
                         if (vch1.size() != vch2.size()) {
                             return set_error(serror, ScriptError::INVALID_OPERAND_SIZE);
+                        }
+
+                        // M2 opcode-cost budget (bytewise): charge bytes
+                        // processed, mirroring OP_LSHIFT/RSHIFT/CAT. These loop
+                        // O(n) over up-to-32 MB operands, so they belong on the
+                        // same per-script cost budget as the neighboring opcodes.
+                        if (securityUpgrade) {
+                            opcodeCost += vch1.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
                         }
 
                         // To avoid allocating, we modify vch1 in place.
@@ -782,7 +837,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
 
                         // And pop vch2.
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
                     } break;
 
                     case OP_INVERT: {
@@ -791,6 +846,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         valtype &vch1 = stacktop(-1);
+                        // M2 opcode-cost budget (bytewise): charge input size,
+                        // mirroring OP_AND/OR/XOR and OP_LSHIFT/RSHIFT/CAT.
+                        if (securityUpgrade) {
+                            opcodeCost += vch1.size();
+                            if (opcodeCost > MAX_SCRIPT_OPCODE_COST) {
+                                return set_error(serror, ScriptError::OP_COUNT);
+                            }
+                        }
                         // To avoid allocating, we modify vch1 in place
                         for(size_t i=0; i<vch1.size(); i++)
                         {
@@ -818,9 +881,9 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             }
                         }
 
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(LShift(vch1, static_cast<int>(n.getint64())));
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, LShift(vch1, static_cast<int>(n.getint64())));
                     } break;
 
                     case OP_RSHIFT: {
@@ -843,9 +906,9 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             }
                         }
 
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(RShift(vch1, static_cast<int>(n.getint64())));
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, RShift(vch1, static_cast<int>(n.getint64())));
                     } break;
 
                     case OP_EQUAL:
@@ -866,12 +929,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             // (numerically, 0x01 == 0x0001 == 0x000001)
                             // if (opcode == OP_NOTEQUAL)
                             //    fEqual = !fEqual;
-                            popstack(stack);
-                            popstack(stack);
-                            stack.push_back(fEqual ? vchTrue : vchFalse);
+                            popstack(stack, nStackMemUsage);
+                            popstack(stack, nStackMemUsage);
+                            pushStack(stack, fEqual ? vchTrue : vchFalse);
                             if (opcode == OP_EQUALVERIFY) {
                                 if (fEqual) {
-                                    popstack(stack);
+                                    popstack(stack, nStackMemUsage);
                                 } else {
                                     return set_error(serror, ScriptError::EQUALVERIFY);
                                 }
@@ -943,8 +1006,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 assert(!"invalid opcode");
                                 break;
                         }
-                        popstack(stack);
-                        stack.push_back(bn.getvch());
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, bn.getvch());
                     } break;
 
                     case OP_ADD:
@@ -1052,13 +1115,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 assert(!"invalid opcode");
                                 break;
                         }
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(bn.getvch());
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, bn.getvch());
 
                         if (opcode == OP_NUMEQUALVERIFY) {
                             if (CastToBool(stacktop(-1))) {
-                                popstack(stack);
+                                popstack(stack, nStackMemUsage);
                             } else {
                                 return set_error(serror, ScriptError::NUMEQUALVERIFY);
                             }
@@ -1075,10 +1138,10 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         CScriptNum bn3(stacktop(-1), fRequireMinimal, maxIntegerSize);
 
                         bool fValue = (bn2 <= bn1 && bn1 < bn3);
-                        popstack(stack);
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(fValue ? vchTrue : vchFalse);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, fValue ? vchTrue : vchFalse);
                     } break;
 
                     //
@@ -1171,8 +1234,8 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                             }
                         }
-                        popstack(stack);
-                        stack.push_back(vchHash);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, vchHash);
                     } break;
 
                     case OP_CODESEPARATOR: {
@@ -1212,12 +1275,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             }
                         }
 
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(fSuccess ? vchTrue : vchFalse);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, fSuccess ? vchTrue : vchFalse);
                         if (opcode == OP_CHECKSIGVERIFY) {
                             if (fSuccess) {
-                                popstack(stack);
+                                popstack(stack, nStackMemUsage);
                             } else {
                                 return set_error(serror, ScriptError::CHECKSIGVERIFY);
                             }
@@ -1257,13 +1320,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             }
                         }
 
-                        popstack(stack);
-                        popstack(stack);
-                        popstack(stack);
-                        stack.push_back(fSuccess ? vchTrue : vchFalse);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        popstack(stack, nStackMemUsage);
+                        pushStack(stack, fSuccess ? vchTrue : vchFalse);
                         if (opcode == OP_CHECKDATASIGVERIFY) {
                             if (fSuccess) {
-                                popstack(stack);
+                                popstack(stack, nStackMemUsage);
                             } else {
                                 return set_error(serror, ScriptError::CHECKDATASIGVERIFY);
                             }
@@ -1461,13 +1524,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
 
                         // Clean up stack of all arguments
                         for (size_t i = 0; i < idxDummy; i++) {
-                            popstack(stack);
+                            popstack(stack, nStackMemUsage);
                         }
 
-                        stack.push_back(fSuccess ? vchTrue : vchFalse);
+                        pushStack(stack, fSuccess ? vchTrue : vchFalse);
                         if (opcode == OP_CHECKMULTISIGVERIFY) {
                             if (fSuccess) {
-                                popstack(stack);
+                                popstack(stack, nStackMemUsage);
                             } else {
                                 return set_error(serror, ScriptError::CHECKMULTISIGVERIFY);
                             }
@@ -1495,8 +1558,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 return set_error(serror, ScriptError::OP_COUNT);
                             }
                         }
+                        // Keep nStackMemUsage exact: vch1 grows in place by
+                        // vch2.size() here; the subsequent popstack() removes the
+                        // (unchanged-size) vch2, so the net is zero — matching the
+                        // fact that OP_CAT preserves total stack bytes.
+                        nStackMemUsage += vch2.size();
                         vch1.insert(vch1.end(), vch2.begin(), vch2.end());
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
                     } break;
 
                     case OP_SPLIT: {
@@ -1516,6 +1584,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         // Prepare the results in their own buffer as `data` will be invalidated.
                         valtype n1(data.begin(), data.begin() + position);
                         valtype n2(data.begin() + position, data.end());
+
+                        // Keep nStackMemUsage exact across the in-place
+                        // reassignments below: subtract the two old element sizes
+                        // and add the two new ones (n1.size()+n2.size() ==
+                        // data.size(), so the net change is just the dropped
+                        // position-number element).
+                        nStackMemUsage -= stacktop(-2).size() + stacktop(-1).size();
+                        nStackMemUsage += n1.size() + n2.size();
 
                         // Replace existing stack values by the new values.
                         stacktop(-2) = std::move(n1);
@@ -1561,8 +1637,17 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             }
                         }
 
-                        popstack(stack);
+                        popstack(stack, nStackMemUsage);
                         valtype &rawnum = stacktop(-1);
+
+                        // Keep nStackMemUsage exact: on every non-error exit below
+                        // the top element ends up exactly `size` bytes (either it
+                        // already is, or it is zero-padded up to `size`). Replace
+                        // its currently-reflected size with `size` now; the only
+                        // other exit is the IMPOSSIBLE_ENCODING error return, which
+                        // abandons execution so the counter value is irrelevant.
+                        nStackMemUsage -= rawnum.size();
+                        nStackMemUsage += size;
 
                         // Try to see if we can fit that number in the number of byte requested.
                         CScriptNum::MinimallyEncode(rawnum);
@@ -1597,7 +1682,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         }
 
                         valtype &n = stacktop(-1);
+                        // Keep nStackMemUsage exact: MinimallyEncode may shrink the
+                        // top element in place. Subtract old size, add new size.
+                        size_t const oldNumSize = n.size();
                         CScriptNum::MinimallyEncode(n);
+                        nStackMemUsage -= oldNumSize;
+                        nStackMemUsage += n.size();
 
                         // The resulting number must be a valid number.
                         // Note: IsMinimallyEncoded() here is really just checking if the number is in range.
@@ -1624,7 +1714,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             //  Operations
                             case OP_INPUTINDEX: {
                                 auto const bn = CScriptNum::fromInt(context->inputIndex()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_ACTIVEBYTECODE: {
                                 // Subset of script starting at the most recent code separator (if any)
@@ -1632,23 +1722,23 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (size_t(script.end() - pbegincodehash) > MAX_SCRIPT_ELEMENT_SIZE) {
                                     return set_error(serror, ScriptError::PUSH_SIZE);
                                 }
-                                stack.emplace_back(pbegincodehash, script.end());
+                                pushStack(stack, valtype(pbegincodehash, script.end()));
                             } break;
                             case OP_TXVERSION: {
                                 auto const bn = CScriptNum::fromInt(context->tx().nVersion()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_TXINPUTCOUNT: {
                                 auto const bn = CScriptNum::fromInt(context->tx().vin().size()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_TXOUTPUTCOUNT: {
                                 auto const bn = CScriptNum::fromInt(context->tx().vout().size()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_TXLOCKTIME: {
                                 auto const bn = CScriptNum::fromInt(context->tx().nLockTime()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             default: {
                                 assert(!"invalid opcode");
@@ -1679,7 +1769,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                         }
                         auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                        popstack(stack); // consume element
+                        popstack(stack, nStackMemUsage); // consume element
 
                         switch (opcode) {
                             case OP_UTXOVALUE: {
@@ -1692,7 +1782,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::LIMITED_CONTEXT_NO_SIBLING_INFO);
                                 }
                                 auto const bn = CScriptNum::fromInt(context->coinAmount(index) / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
 
                             case OP_UTXOBYTECODE: {
@@ -1708,7 +1798,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (utxoScript.size() > MAX_SCRIPT_ELEMENT_SIZE) {
                                     return set_error(serror, ScriptError::PUSH_SIZE);
                                 }
-                                stack.emplace_back(utxoScript.begin(), utxoScript.end());
+                                pushStack(stack, valtype(utxoScript.begin(), utxoScript.end()));
                             } break;
 
                             case OP_OUTPOINTTXHASH: {
@@ -1718,7 +1808,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 auto const& input = context->tx().vin()[index];
                                 auto const& txid = input.prevout.GetTxId();
                                 static_assert(TxId::size() <= MAX_SCRIPT_ELEMENT_SIZE);
-                                stack.emplace_back(txid.begin(), txid.end());
+                                pushStack(stack, valtype(txid.begin(), txid.end()));
                             } break;
 
                             case OP_OUTPOINTINDEX: {
@@ -1727,7 +1817,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const& input = context->tx().vin()[index];
                                 auto const bn = CScriptNum::fromInt(input.prevout.GetN()).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
 
                             case OP_INPUTBYTECODE: {
@@ -1738,7 +1828,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (inputScript.size() > MAX_SCRIPT_ELEMENT_SIZE) {
                                     return set_error(serror, ScriptError::PUSH_SIZE);
                                 }
-                                stack.emplace_back(inputScript.begin(), inputScript.end());
+                                pushStack(stack, valtype(inputScript.begin(), inputScript.end()));
                             } break;
 
                             case OP_INPUTSEQUENCENUMBER: {
@@ -1747,7 +1837,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const& input = context->tx().vin()[index];
                                 auto const bn = CScriptNum::fromInt(input.nSequence).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
 
                             case OP_OUTPUTVALUE: {
@@ -1756,7 +1846,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const& output = context->tx().vout()[index];
                                 auto const bn = CScriptNum::fromInt(output.nValue / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
 
                             case OP_OUTPUTBYTECODE: {
@@ -1767,7 +1857,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (outputScript.size() > MAX_SCRIPT_ELEMENT_SIZE) {
                                     return set_error(serror, ScriptError::PUSH_SIZE);
                                 }
-                                stack.emplace_back(outputScript.begin(), outputScript.end());
+                                pushStack(stack, valtype(outputScript.begin(), outputScript.end()));
                             } break;
                             default: {
                                 assert(!"invalid opcode");
@@ -1824,7 +1914,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 
                                 auto const fieldItem = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 // fieldNum 0: Txid
                                 // fieldNum 1: total input satoshis/photons
@@ -1837,7 +1927,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     case 0: {
                                         // Get the txid based on normal version or txid v3
                                         TxId currentTxId = context->GetTxId();
-                                        stack.emplace_back(currentTxId.begin(), currentTxId.end());
+                                        pushStack(stack, valtype(currentTxId.begin(), currentTxId.end()));
                                         break;
                                     }
                                     case 1: {
@@ -1847,7 +1937,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                             accumulatedInputValue += inputAmount;
                                         }
                                         auto const bn = CScriptNum::fromInt(accumulatedInputValue / SATOSHI).value();
-                                        stack.push_back(bn.getvch());
+                                        pushStack(stack, bn.getvch());
                                         break;
                                     }
                                     case 2: {
@@ -1857,7 +1947,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                             accumulatedOutputValue += output.nValue;
                                         }
                                         auto const bn = CScriptNum::fromInt(accumulatedOutputValue / SATOSHI).value();
-                                        stack.push_back(bn.getvch());
+                                        pushStack(stack, bn.getvch());
                                         break;
                                     }
                                     default:
@@ -1868,17 +1958,28 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (vchPushValue.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                // When interpretting OP_PUSHINPUTREF, just push to the primary stack
-                                // As safety check, ensure that the UTXO being spent does indeed have the OP_PUSHINPUTREF saved in it's ref vector
-                                // It should never be the case that the check fails since a UTXO can only be committed with the output color verified
-                                stack.push_back(vchPushValue);
-                                // As a sanity check we save all the pushrefs, and then cross check them against 
-                                // OP_DISALLOWPUSHINPUTREF
+                                // When interpreting OP_PUSHINPUTREF, just push the 36-byte ref to the primary stack.
+                                // NOTE: there is NO per-input membership check here that the UTXO being spent
+                                // actually carries this ref in its color/ref vector. The real enforcement of which
+                                // refs a transaction may carry (including the spent-UTXO membership relationship)
+                                // lives solely in ReferenceParser::validateTransactionReferenceOperations() in
+                                // validation.h. This handler only records the ref locally for the in-script
+                                // OP_DISALLOWPUSHINPUTREF cross-check performed at the end of EvalScript.
+                                pushStack(stack, vchPushValue);
+                                // Record the pushref locally so it can be cross-checked against the
+                                // OP_DISALLOWPUSHINPUTREF set after the script finishes.
                                 if (pushTxState) {
                                     uint288 uref(vchPushValue);
                                     foundPushRefs.insert(uref);
                                 } else {
-                                    // Note: this does not actually work and results in all zeroes
+                                    // C-M1 (benign dead branch): for height < PushTXStateHeight this
+                                    // uint288S(...c_str()) path yields an all-zero ref (it parses a
+                                    // hex *string*, not these raw bytes, and stops at the first NUL).
+                                    // It is intentionally left behavior-identical: changing it would
+                                    // alter validation of historical mainnet blocks (< height 214555).
+                                    // The all-zero value is harmless because the authoritative ref
+                                    // membership is enforced by GetPushRefs()/ReferenceParser at the
+                                    // parser level, not by this local sanity set.
                                     uint288 uref = uint288S(std::string(vchPushValue.begin(), vchPushValue.end()).c_str());
                                     foundPushRefs.insert(uref);
                                 }
@@ -1890,12 +1991,17 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (pushTxState) {
                                     uint288 uref(vchPushValue);
                                     disallowedRefs.insert(uref);
-                                    stack.push_back(vchPushValue);
+                                    pushStack(stack, vchPushValue);
                                 } else {
-                                    // Note: this does not actually work and results in all zeroes
+                                    // C-M1 (benign dead branch): as in OP_PUSHINPUTREF above, this
+                                    // uint288S(...c_str()) path yields an all-zero ref for
+                                    // height < PushTXStateHeight. Left behavior-identical to preserve
+                                    // historical-block (< height 214555) validation; harmless because
+                                    // authoritative enforcement is at the parser level (GetPushRefs /
+                                    // ReferenceParser::validateTransactionReferenceOperations).
                                     uint288 uref = uint288S(std::string(vchPushValue.begin(), vchPushValue.end()).c_str());
                                     disallowedRefs.insert(uref);
-                                    stack.push_back(vchPushValue);
+                                    pushStack(stack, vchPushValue);
                                 }
                             } break;
                             case OP_DISALLOWPUSHINPUTREFSIBLING: {
@@ -1903,14 +2009,14 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
                                 // When interpreting OP_DISALLOWPUSHINPUTREFSIBLING, push the value to the stack
-                                stack.push_back(vchPushValue);
+                                pushStack(stack, vchPushValue);
                             } break;
                             case OP_REQUIREINPUTREF: {
                                 if (vchPushValue.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
                                 // When interpreting OP_REQUIREINPUTREF, push the value to the stack
-                                stack.push_back(vchPushValue);
+                                pushStack(stack, vchPushValue);
                             } break;
                             case OP_REFHASHDATASUMMARY_UTXO: {
                                 // Push a hash256 of the output being spent of a vector of the form:
@@ -1925,7 +2031,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vin().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_INPUT_INDEX);
@@ -1936,7 +2042,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::LIMITED_CONTEXT_NO_SIBLING_INFO);
                                 }
                                 auto const& dataHash = context->getRefHashDataSummaryUtxo(index);
-                                stack.emplace_back(dataHash.begin(), dataHash.end());
+                                pushStack(stack, valtype(dataHash.begin(), dataHash.end()));
                             } break;
                             case OP_REFHASHDATASUMMARY_OUTPUT: {
                                 // Push a hash256 of an output of a vector of the form:
@@ -1951,13 +2057,13 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vout().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_OUTPUT_INDEX);
                                 }
                                 auto const& dataHash = context->getRefHashDataSummaryOutput(index);
-                                stack.emplace_back(dataHash.begin(), dataHash.end());
+                                pushStack(stack, valtype(dataHash.begin(), dataHash.end()));
 
                             } break;
                             case OP_REFHASHVALUESUM_UTXOS: {
@@ -1973,12 +2079,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_REFHASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 uint256 refHashUint256(refHash);
                                 auto const& sumAmount = context->getRefHashValueSumUtxos(refHashUint256);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFHASHVALUESUM_OUTPUTS: {
                                 if ( ! enhancedReferences) {
@@ -1996,12 +2102,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_REFHASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 uint256 refHashUint256(refHash);
                                 auto const& sumAmount = context->getRefHashValueSumOutputs(refHashUint256);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFVALUESUM_UTXOS: {
                                 if ( ! context) {
@@ -2016,12 +2122,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& sumAmount = context->getRefValueSumUtxos(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             
                             case OP_REFVALUESUM_OUTPUTS: {
@@ -2037,12 +2143,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& sumAmount = context->getRefValueSumOutputs(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break; 
                             case OP_PUSHINPUTREFSINGLETON: {
                                 if ( ! enhancedReferences) {
@@ -2052,7 +2158,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
                                 // When interpreting OP_PUSHINPUTREFSINGLETON, push the value to the stack
-                                stack.push_back(vchPushValue);
+                                pushStack(stack, vchPushValue);
                             } break;
 
                             case OP_STATESEPARATOR: {
@@ -2075,11 +2181,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefTypeUtxo(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFTYPE_OUTPUT: {
                                 if ( ! context) {
@@ -2094,11 +2200,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefTypeOutput(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                              } break;
                             case OP_STATESEPARATORINDEX_UTXO: {
                                 if ( ! enhancedReferences) {
@@ -2112,7 +2218,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vin().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_INPUT_INDEX);
@@ -2124,7 +2230,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const& intType = context->getStateSeperatorIndexUtxo(index);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_STATESEPARATORINDEX_OUTPUT: {
                                 if ( ! enhancedReferences) {
@@ -2138,7 +2244,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vout().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_OUTPUT_INDEX);
@@ -2150,7 +2256,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const& intType = context->getStateSeperatorIndexOutput(index);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFOUTPUTCOUNT_UTXOS: {
                                 if ( ! context) {
@@ -2165,11 +2271,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefOutputCountUtxos(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFOUTPUTCOUNT_OUTPUTS: {
                                 if ( ! context) {
@@ -2184,11 +2290,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefOutputCountOutputs(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFOUTPUTCOUNTZEROVALUED_UTXOS: {
                                 if ( ! context) {
@@ -2203,11 +2309,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefOutputZeroValuedCountUtxos(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFOUTPUTCOUNTZEROVALUED_OUTPUTS: {
                                 if ( ! context) {
@@ -2222,11 +2328,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (refAssetId.size() != 36) {
                                     return set_error(serror, ScriptError::INVALID_TX_REF_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint288 refAssetIdUint288(refAssetId);
                                 auto const& intType = context->getRefOutputZeroValuedCountOutputs(refAssetIdUint288);
                                 auto bn = CScriptNum::fromInt(intType).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_REFDATASUMMARY_UTXO: {
                                 if ( ! context) {
@@ -2237,7 +2343,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vin().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_INPUT_INDEX);
@@ -2250,10 +2356,10 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 std::vector<uint8_t> concatVec;
                                 auto const hasAtLeastOneValidRef = context->getRefsPerUtxo(index, concatVec);
                                 if (hasAtLeastOneValidRef) {
-                                    stack.emplace_back(concatVec.begin(), concatVec.end());
+                                    pushStack(stack, valtype(concatVec.begin(), concatVec.end()));
                                 } else {
                                     auto bn = CScriptNum::fromInt(0).value();
-                                    stack.push_back(bn.getvch());
+                                    pushStack(stack, bn.getvch());
                                 }
                             } break;
                             case OP_REFDATASUMMARY_OUTPUT: {
@@ -2265,7 +2371,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 
                                 if (index < 0 || uint64_t(index) >= context->tx().vout().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_OUTPUT_INDEX);
@@ -2274,10 +2380,10 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 std::vector<uint8_t> concatVec;
                                 auto const hasAtLeastOneValidRef = context->getRefsPerOutput(index, concatVec);
                                 if (hasAtLeastOneValidRef) {
-                                    stack.emplace_back(concatVec.begin(), concatVec.end());
+                                    pushStack(stack, valtype(concatVec.begin(), concatVec.end()));
                                 } else {
                                     auto bn = CScriptNum::fromInt(0).value();
-                                    stack.push_back(bn.getvch());
+                                    pushStack(stack, bn.getvch());
                                 }
                             } break;
                             case OP_CODESCRIPTHASHVALUESUM_UTXOS: {
@@ -2293,11 +2399,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& sumAmount = context->getCodeScriptHashValueSumUtxos(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTHASHVALUESUM_OUTPUTS: {
                                 if ( ! context) {
@@ -2312,11 +2418,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& sumAmount = context->getCodeScriptHashValueSumOutputs(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(sumAmount / SATOSHI).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTHASHOUTPUTCOUNT_UTXOS: {
                                 if ( ! context) {
@@ -2331,11 +2437,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& counter = context->getCodeScriptHashOutputCountUtxos(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(counter).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTHASHOUTPUTCOUNT_OUTPUTS: {
                                 if ( ! context) {
@@ -2350,11 +2456,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& counter = context->getCodeScriptHashOutputCountOutputs(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(counter).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTHASHZEROVALUEDOUTPUTCOUNT_UTXOS: {
                                 if ( ! context) {
@@ -2369,11 +2475,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& counter = context->getCodeScriptHashOutputZeroValuedCountUtxos(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(counter).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTHASHZEROVALUEDOUTPUTCOUNT_OUTPUTS: {
                                 if ( ! context) {
@@ -2388,11 +2494,11 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 if (codeScriptHash.size() != 32) {
                                     return set_error(serror, ScriptError::INVALID_TX_HASH_SIZE);
                                 }
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 uint256 codeScriptHashUint256(codeScriptHash);
                                 auto const& counter = context->getCodeScriptHashOutputZeroValuedCountOutputs(codeScriptHashUint256);
                                 auto bn = CScriptNum::fromInt(counter).value();
-                                stack.push_back(bn.getvch());
+                                pushStack(stack, bn.getvch());
                             } break;
                             case OP_CODESCRIPTBYTECODE_UTXO: {
                                 if ( ! context) {
@@ -2403,7 +2509,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 if (index < 0 || uint64_t(index) >= context->tx().vin().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_INPUT_INDEX);
                                 }
@@ -2419,7 +2525,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
 
                                 auto const stateSeperatorIndex = context->getStateSeparatorByteIndexUtxo(index);
-                                stack.emplace_back(utxoScript.begin() + stateSeperatorIndex, utxoScript.end());
+                                pushStack(stack, valtype(utxoScript.begin() + stateSeperatorIndex, utxoScript.end()));
                             } break;
                             case OP_CODESCRIPTBYTECODE_OUTPUT: {
                                 if ( ! context) {
@@ -2430,7 +2536,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
                                 if (index < 0 || uint64_t(index) >= context->tx().vout().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_OUTPUT_INDEX);
                                 }
@@ -2439,7 +2545,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::PUSH_SIZE);
                                 }
                                 auto const stateSeperatorIndex = context->getStateSeparatorByteIndexOutput(index);
-                                stack.emplace_back(outputScript.begin() + stateSeperatorIndex, outputScript.end());
+                                pushStack(stack, valtype(outputScript.begin() + stateSeperatorIndex, outputScript.end()));
                             } break;
  
                             case OP_STATESCRIPTBYTECODE_UTXO: {
@@ -2456,7 +2562,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 if (index < 0 || uint64_t(index) >= context->tx().vin().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_INPUT_INDEX);
@@ -2473,10 +2579,10 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 auto const stateSeperatorIndex = context->getStateSeparatorByteIndexUtxo(index);
 
                                 if (stateSeperatorIndex > 0) {
-                                    stack.emplace_back(utxoScript.begin(), utxoScript.begin() + stateSeperatorIndex - 1); // Do not include the state seperator itself
+                                    pushStack(stack, valtype(utxoScript.begin(), utxoScript.begin() + stateSeperatorIndex - 1)); // Do not include the state seperator itself
                                 } else {
                                     auto const bn = CScriptNum::fromIntUnchecked(0);
-                                    stack.push_back(bn.getvch());   
+                                    pushStack(stack, bn.getvch());   
                                 }
                                
                              
@@ -2496,7 +2602,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                     return set_error(serror, ScriptError::INVALID_STACK_OPERATION);
                                 }
                                 auto const index = CScriptNum(stacktop(-1), fRequireMinimal, maxIntegerSize).getint64();
-                                popstack(stack); // consume element
+                                popstack(stack, nStackMemUsage); // consume element
 
                                 if (index < 0 || uint64_t(index) >= context->tx().vout().size()) {
                                     return set_error(serror, ScriptError::INVALID_TX_OUTPUT_INDEX);
@@ -2507,10 +2613,10 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 }
                                 auto const stateSeperatorIndex = context->getStateSeparatorByteIndexOutput(index);
                                 if (stateSeperatorIndex > 0) {
-                                    stack.emplace_back(outputScript.begin(), outputScript.begin() + stateSeperatorIndex - 1); // Do not include the state seperator itself
+                                    pushStack(stack, valtype(outputScript.begin(), outputScript.begin() + stateSeperatorIndex - 1)); // Do not include the state seperator itself
                                 } else {
                                     auto const bn = CScriptNum::fromIntUnchecked(0);
-                                    stack.push_back(bn.getvch());
+                                    pushStack(stack, bn.getvch());
                                 }
                             } break;
 
@@ -2532,24 +2638,30 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                 return set_error(serror, ScriptError::STACK_SIZE);
             }
 
-            // 2026-06 security-audit hardening (H1/M1): per-script peak
+            // 2026-06 security-audit hardening (H1/H2): per-script peak
             // stack-memory budget. Runs after every executed opcode — which
             // covers all stack-growing opcodes (pushes, OP_DUP/3DUP/OVER/PICK/
-            // TUCK, OP_CAT/SPLIT/NUM2BIN/LSHIFT/RSHIFT, etc.) — so a single
-            // O(n) recompute here bounds total stack byte usage before a memory
-            // bomb can balloon further. The element-count cap above does not
-            // bound bytes; a few thousand 32 MB elements already exhausts RAM.
-            if (securityUpgrade) {
-                uint64_t stackBytes = 0;
-                for (auto const &elem : stack) {
-                    stackBytes += elem.size();
-                }
-                for (auto const &elem : altstack) {
-                    stackBytes += elem.size();
-                }
-                if (stackBytes > MAX_SCRIPT_STACK_MEMORY_USAGE) {
-                    return set_error(serror, ScriptError::STACK_SIZE);
-                }
+            // TUCK, OP_CAT/SPLIT/NUM2BIN/LSHIFT/RSHIFT, etc.) — bounding total
+            // stack byte usage before a memory bomb can balloon further. The
+            // element-count cap above does not bound bytes; a few thousand
+            // 32 MB elements already exhausts RAM.
+            //
+            // H2: nStackMemUsage is maintained incrementally at every stack /
+            // altstack mutation so it always equals the exact sum of all element
+            // sizes across both stacks. The check is therefore O(1) here instead
+            // of the former O(n) re-sum (O(n^2) per script) — and is EXACTLY
+            // equivalent (same accept/reject) to that full re-sum.
+            //
+            // H1: gated on (securityUpgrade || memoryBudget) so the mempool can
+            // enforce this budget as a relay/policy guard now, closing the
+            // relay-reachable memory bomb before SecurityUpgradeHeight, without
+            // changing pre-activation consensus.
+            if ((securityUpgrade || memoryBudget) &&
+                nStackMemUsage > MAX_SCRIPT_STACK_MEMORY_USAGE) {
+                // Distinct from STACK_SIZE (element-count limit): lets CheckInputs
+                // classify a pre-fork (policy-only) budget trip as non-mandatory
+                // without re-running this memory-bomb script under mandatory flags.
+                return set_error(serror, ScriptError::STACK_MEMORY);
             }
         }
     } catch (...) {

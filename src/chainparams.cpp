@@ -102,12 +102,14 @@ public:
         consensus.ERHeight = 62000;
         consensus.PushTXStateHeight = 214555;
         consensus.radiantCore2UpgradeHeight = 410000;
-        // v3.1.0 security upgrade: OP_K12 8191-byte single-node bound, per-script
-        // memory budget (64 MB), opcode cost cap. Activated at block 444444 (~225
-        // days from the v3.0.1 audit baseline at block ~412000). Chain-scan via
-        // contrib/audit/scan-hash-opcode-usage.py confirmed no historical usage
-        // in the tightened ranges before this height was set.
-        consensus.SecurityUpgradeHeight = 444444;
+        // Security upgrade: OP_K12 8191-byte single-node bound, per-script peak
+        // stack-memory budget (128 MB) and opcode-cost cap, enforced as consensus.
+        // Activated at block 440000 (~12 days past the ~436,500 tip on 2026-06-10
+        // at 5-min spacing). A chain scan (contrib/audit/scan-hash-opcode-usage.py)
+        // confirmed no historical usage of the tightened constructs before this
+        // height, and 440000 remains ahead of the live tip, so activation is a
+        // clean soft fork (non-retroactive). Operators MUST upgrade before 440000.
+        consensus.SecurityUpgradeHeight = 440000;
         consensus.powLimit = uint256S(
             "00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         // one week

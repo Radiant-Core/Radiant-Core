@@ -15,6 +15,31 @@ const unsigned int WALLET_CRYPTO_KEY_SIZE = 32;
 const unsigned int WALLET_CRYPTO_SALT_SIZE = 8;
 const unsigned int WALLET_CRYPTO_IV_SIZE = 16;
 
+// SECURITY (audit 2026-06, M4): CMasterKey::nDerivationMethod values. This
+// field is an on-disk, read-on-load version selector that governs how a wallet's
+// ciphertext blobs (both the master-key blob and every per-key "ckey" secret)
+// are interpreted. It round-trips on disk, so legacy wallets are never misread.
+//
+//   0 = legacy EVP_sha512() KDF + AES-256-CBC, UNAUTHENTICATED. This is the
+//       historical format; method-0 ciphertext layout and bytes are unchanged.
+//   1 = RESERVED for the documented-but-unimplemented scrypt() KDF.
+//   2 = EVP_sha512() KDF + AES-256-CBC encrypt-then-HMAC-SHA512 (authenticated).
+//       Closes the M4 malleability / padding-oracle surface by appending a
+//       32-byte MAC tag over (contextLabel || IV || ciphertext) and verifying it
+//       constant-time, FAIL-CLOSED, BEFORE any CBC unpad.
+//
+// An old binary that does not implement method 2 fails safe: SetKeyFromPassphrase
+// returns false for an unknown method (cannot unlock, no corruption), and the
+// wallet's bumped minversion (FEATURE_WALLETCRYPT_AEAD) causes such a binary to
+// refuse to load the wallet outright (DBErrors::TOO_NEW).
+const unsigned int WALLET_CRYPTO_METHOD_SHA512_AESCBC = 0;
+const unsigned int WALLET_CRYPTO_METHOD_SCRYPT = 1; // reserved, not implemented
+const unsigned int WALLET_CRYPTO_METHOD_AESCBC_HMAC = 2;
+
+// Size of the appended authentication tag for method 2 (HMAC-SHA512 truncated to
+// 32 bytes). Truncated-MAC is standard practice (e.g. SHA-512/256-style use).
+const unsigned int WALLET_CRYPTO_MAC_SIZE = 32;
+
 // SECURITY (audit 2026-06, M3): minimum EVP_BytesToKey(SHA512) iteration count
 // for NEWLY encrypted wallets. The historical floor of 25000 rounds was tuned
 // for ~2009 hardware (under 0.1s on a 1.86 GHz Pentium M) and is far too weak
@@ -88,10 +113,24 @@ private:
     std::vector<uint8_t, secure_allocator<uint8_t>> vchKey;
     std::vector<uint8_t, secure_allocator<uint8_t>> vchIV;
     bool fKeySet;
+    //! Which CMasterKey::nDerivationMethod governs Encrypt/Decrypt for this
+    //! context. Set by SetKey/SetKeyFromPassphrase. Method 0 = legacy
+    //! unauthenticated AES-256-CBC; method 2 = AES-256-CBC encrypt-then-MAC.
+    unsigned int nMethod;
 
     int BytesToKeySHA512AES(const std::vector<uint8_t> &chSalt,
                             const SecureString &strKeyData, int count,
                             uint8_t *key, uint8_t *iv) const;
+
+    //! Derive the method-2 MAC key from the AES encryption key. Domain-separated
+    //! from the AES key (HMAC-SHA512(vchKey, "radiant-wallet-mac")[0:32]) so the
+    //! MAC key is never equal to the encryption key.
+    void DeriveMacKey(uint8_t macKey[WALLET_CRYPTO_KEY_SIZE]) const;
+
+    //! Compute the method-2 tag over (contextLabel || IV || ciphertext).
+    void ComputeMac(const uint8_t macKey[WALLET_CRYPTO_KEY_SIZE],
+                    const std::vector<uint8_t> &vchCiphertext,
+                    uint8_t macOut[WALLET_CRYPTO_MAC_SIZE]) const;
 
 public:
     bool SetKeyFromPassphrase(const SecureString &strKeyData,
@@ -102,8 +141,12 @@ public:
                  std::vector<uint8_t> &vchCiphertext) const;
     bool Decrypt(const std::vector<uint8_t> &vchCiphertext,
                  CKeyingMaterial &vchPlaintext) const;
+    //! Set the raw key/IV directly. nDerivationMethodIn selects the (un)authenti-
+    //! cated mode; defaults to legacy method 0 to keep existing callers unchanged.
     bool SetKey(const CKeyingMaterial &chNewKey,
-                const std::vector<uint8_t> &chNewIV);
+                const std::vector<uint8_t> &chNewIV,
+                const unsigned int nDerivationMethodIn =
+                    WALLET_CRYPTO_METHOD_SHA512_AESCBC);
 
     void CleanKey() {
         memory_cleanse(vchKey.data(), vchKey.size());
@@ -113,6 +156,7 @@ public:
 
     CCrypter() {
         fKeySet = false;
+        nMethod = WALLET_CRYPTO_METHOD_SHA512_AESCBC;
         vchKey.resize(WALLET_CRYPTO_KEY_SIZE);
         vchIV.resize(WALLET_CRYPTO_IV_SIZE);
     }
@@ -136,17 +180,29 @@ private:
     //! keeps track of whether Unlock has run a thorough check before
     bool fDecryptionThoroughlyChecked;
 
+    //! SECURITY (audit 2026-06, M4): the CMasterKey::nDerivationMethod in force
+    //! for the currently-unlocked wallet. This governs how the per-key "ckey"
+    //! secrets in mapCryptedKeys are interpreted (method 0 = legacy CBC, method 2
+    //! = authenticated CBC+HMAC). It is supplied by the caller on Unlock /
+    //! EncryptKeys (the CWallet layer reads it from the matching CMasterKey).
+    unsigned int nCryptoMethod GUARDED_BY(cs_KeyStore){
+        WALLET_CRYPTO_METHOD_SHA512_AESCBC};
+
 protected:
     using CryptedKeyMap =
         std::map<CKeyID, std::pair<CPubKey, std::vector<uint8_t>>>;
 
     bool SetCrypted();
 
-    //! will encrypt previously unencrypted keys
-    bool EncryptKeys(CKeyingMaterial &vMasterKeyIn);
+    //! will encrypt previously unencrypted keys, using the given derivation
+    //! method for the per-key authenticated/legacy mode.
+    bool EncryptKeys(CKeyingMaterial &vMasterKeyIn,
+                     unsigned int nDerivationMethod =
+                         WALLET_CRYPTO_METHOD_SHA512_AESCBC);
 
-    bool Unlock(const CKeyingMaterial &vMasterKeyIn,
-                bool accept_no_keys = false);
+    bool Unlock(const CKeyingMaterial &vMasterKeyIn, bool accept_no_keys = false,
+                unsigned int nDerivationMethod =
+                    WALLET_CRYPTO_METHOD_SHA512_AESCBC);
     CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
 
 public:

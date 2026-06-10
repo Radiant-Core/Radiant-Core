@@ -6,9 +6,11 @@
 #include <wallet/crypter.h>
 
 #include <crypto/aes.h>
+#include <crypto/hmac_sha512.h>
 #include <crypto/sha512.h>
 #include <script/script.h>
 #include <script/standard.h>
+#include <util/strencodings.h>
 #include <util/system.h>
 
 #include <string>
@@ -50,8 +52,14 @@ bool CCrypter::SetKeyFromPassphrase(const SecureString &strKeyData,
         return false;
     }
 
+    // SECURITY (audit 2026-06, M4): both method 0 (legacy CBC) and method 2
+    // (CBC+HMAC) use the SAME EVP_sha512()-based KDF to derive the AES key/IV;
+    // they differ only in whether Encrypt/Decrypt append+verify a MAC. Any other
+    // (unknown / reserved) method is rejected here, which is exactly the fail-
+    // safe an older binary relies on when it encounters a newer method.
     int i = 0;
-    if (nDerivationMethod == 0) {
+    if (nDerivationMethod == WALLET_CRYPTO_METHOD_SHA512_AESCBC ||
+        nDerivationMethod == WALLET_CRYPTO_METHOD_AESCBC_HMAC) {
         i = BytesToKeySHA512AES(chSalt, strKeyData, nRounds, vchKey.data(),
                                 vchIV.data());
     }
@@ -62,34 +70,90 @@ bool CCrypter::SetKeyFromPassphrase(const SecureString &strKeyData,
         return false;
     }
 
+    nMethod = nDerivationMethod;
     fKeySet = true;
     return true;
 }
 
 bool CCrypter::SetKey(const CKeyingMaterial &chNewKey,
-                      const std::vector<uint8_t> &chNewIV) {
+                      const std::vector<uint8_t> &chNewIV,
+                      const unsigned int nDerivationMethodIn) {
     if (chNewKey.size() != WALLET_CRYPTO_KEY_SIZE ||
         chNewIV.size() != WALLET_CRYPTO_IV_SIZE) {
+        return false;
+    }
+    // Reject unknown methods so callers fail closed rather than silently writing
+    // an unauthenticated blob.
+    if (nDerivationMethodIn != WALLET_CRYPTO_METHOD_SHA512_AESCBC &&
+        nDerivationMethodIn != WALLET_CRYPTO_METHOD_AESCBC_HMAC) {
         return false;
     }
 
     memcpy(vchKey.data(), chNewKey.data(), chNewKey.size());
     memcpy(vchIV.data(), chNewIV.data(), chNewIV.size());
 
+    nMethod = nDerivationMethodIn;
     fKeySet = true;
     return true;
 }
 
-// SECURITY (audit 2026-06, M4): wallet secrets are encrypted with AES-256-CBC
-// and NO message authentication code (no MAC / authenticated encryption). The
-// ciphertext is therefore malleable and tamper-detection relies solely on the
-// downstream CKey::VerifyPubKey() check in DecryptKey(). This is a known
-// limitation inherited from the upstream wallet format. Adding authenticated
-// encryption (e.g. AES-GCM or encrypt-then-MAC) cannot be done in place because
-// it changes the on-disk ciphertext layout and would brick every existing
-// wallet; it requires a versioned wallet-format migration, which is tracked
-// separately and intentionally DEFERRED here. Do not silently "upgrade" the
-// format without a migration path.
+// SECURITY (audit 2026-06, M4): derive a MAC key that is domain-separated from
+// the AES encryption key. We MUST NOT reuse vchKey directly as the HMAC key
+// (that couples confidentiality and integrity keys). HMAC-SHA512 over a fixed
+// label, truncated to 32 bytes, yields an independent 256-bit MAC key.
+void CCrypter::DeriveMacKey(uint8_t macKey[WALLET_CRYPTO_KEY_SIZE]) const {
+    static const unsigned char MAC_KEY_LABEL[] = "radiant-wallet-mac";
+    // length excludes the implicit terminating NUL
+    CHMAC_SHA512 hasher(vchKey.data(), vchKey.size());
+    hasher.Write(MAC_KEY_LABEL, sizeof(MAC_KEY_LABEL) - 1);
+    uint8_t full[CHMAC_SHA512::OUTPUT_SIZE];
+    hasher.Finalize(full);
+    memcpy(macKey, full, WALLET_CRYPTO_KEY_SIZE);
+    memory_cleanse(full, sizeof(full));
+}
+
+// SECURITY (audit 2026-06, M4): compute the encrypt-then-MAC tag over the
+// domain-separating context label, the IV, and the ciphertext. Binding the IV
+// into the MAC prevents an attacker from swapping IVs, and the fixed label
+// pins the tag to this wallet-secret context.
+void CCrypter::ComputeMac(const uint8_t macKey[WALLET_CRYPTO_KEY_SIZE],
+                          const std::vector<uint8_t> &vchCiphertext,
+                          uint8_t macOut[WALLET_CRYPTO_MAC_SIZE]) const {
+    static const unsigned char MAC_CTX_LABEL[] = "radiant-wallet-aead-v2";
+    CHMAC_SHA512 mac(macKey, WALLET_CRYPTO_KEY_SIZE);
+    mac.Write(MAC_CTX_LABEL, sizeof(MAC_CTX_LABEL) - 1);
+    // Bind the encryption method into the tag so an authenticated blob cannot be
+    // reinterpreted under a different (future) authenticated method. NOTE: this
+    // does not close a downgrade to method 0 (legacy blobs legitimately carry no
+    // MAC, so the verifier simply does not run) -- but forcing method 0 requires
+    // rewriting the persisted nDerivationMethod, i.e. full wallet-file write
+    // access, which is outside the M4 tamper-detection threat model and still
+    // cannot recover plaintext without the passphrase.
+    const uint8_t methodByte = static_cast<uint8_t>(nMethod);
+    mac.Write(&methodByte, 1);
+    mac.Write(vchIV.data(), vchIV.size());
+    if (!vchCiphertext.empty()) {
+        mac.Write(vchCiphertext.data(), vchCiphertext.size());
+    }
+    uint8_t full[CHMAC_SHA512::OUTPUT_SIZE];
+    mac.Finalize(full);
+    memcpy(macOut, full, WALLET_CRYPTO_MAC_SIZE);
+    memory_cleanse(full, sizeof(full));
+}
+
+// SECURITY (audit 2026-06, M4): method 0 (legacy) remains plain AES-256-CBC with
+// NO MAC -- byte-for-byte identical to the historical format, so existing
+// wallets are untouched. Method 2 (FIX) is authenticated encrypt-then-MAC: the
+// CBC ciphertext is followed by a 32-byte HMAC-SHA512 tag computed over
+// (contextLabel || IV || ciphertext) using a MAC key domain-separated from the
+// AES key. The tag closes the M4 malleability / padding-oracle surface.
+//
+// Method-2 on-disk layout (per blob):
+//   [ AES-256-CBC ciphertext (== plaintext + PKCS#7 pad) ] [ 32-byte MAC tag ]
+// i.e. exactly 32 bytes longer than the equivalent method-0 blob. No record/
+// serialization change is needed: the vchCryptedSecret / vchCryptedKey vector
+// just grows by 32 bytes, and CMasterKey::nDerivationMethod (which round-trips
+// on disk) tells the reader which interpretation to use.
 bool CCrypter::Encrypt(const CKeyingMaterial &vchPlaintext,
                        std::vector<uint8_t> &vchCiphertext) const {
     if (!fKeySet) {
@@ -108,27 +172,70 @@ bool CCrypter::Encrypt(const CKeyingMaterial &vchPlaintext,
     }
     vchCiphertext.resize(nLen);
 
+    // Method 0: legacy, no MAC -- return exactly the CBC ciphertext (unchanged).
+    if (nMethod == WALLET_CRYPTO_METHOD_SHA512_AESCBC) {
+        return true;
+    }
+
+    // Method 2: encrypt-then-MAC. Append HMAC-SHA512(macKey, label||IV||ct)[0:32].
+    uint8_t macKey[WALLET_CRYPTO_KEY_SIZE];
+    DeriveMacKey(macKey);
+    uint8_t mac[WALLET_CRYPTO_MAC_SIZE];
+    ComputeMac(macKey, vchCiphertext, mac);
+    memory_cleanse(macKey, sizeof(macKey));
+    vchCiphertext.insert(vchCiphertext.end(), mac, mac + WALLET_CRYPTO_MAC_SIZE);
+    memory_cleanse(mac, sizeof(mac));
     return true;
 }
 
-// SECURITY (audit 2026-06, M4): see the note on CCrypter::Encrypt. This CBC
-// decryption is UNAUTHENTICATED -- it cannot detect ciphertext tampering by
-// itself. Integrity currently depends on the caller (DecryptKey verifies the
-// recovered private key against its known public key). Authenticated decryption
-// is DEFERRED pending a versioned wallet-format migration.
+// SECURITY (audit 2026-06, M4): method 0 stays UNAUTHENTICATED CBC (integrity
+// historically rests on the downstream CKey::VerifyPubKey() check). Method 2
+// verifies the appended MAC CONSTANT-TIME and FAILS CLOSED on any mismatch
+// BEFORE attempting the CBC unpad, which removes the padding-oracle / malleabi-
+// lity surface entirely. Truncation or extension changes the MAC input and is
+// therefore also rejected.
 bool CCrypter::Decrypt(const std::vector<uint8_t> &vchCiphertext,
                        CKeyingMaterial &vchPlaintext) const {
     if (!fKeySet) {
         return false;
     }
 
+    std::vector<uint8_t> vchCbc;
+    const std::vector<uint8_t> *pCbc = &vchCiphertext;
+
+    if (nMethod == WALLET_CRYPTO_METHOD_AESCBC_HMAC) {
+        // Must have at least one AES block plus a full tag.
+        if (vchCiphertext.size() < WALLET_CRYPTO_MAC_SIZE + AES_BLOCKSIZE) {
+            return false;
+        }
+        const size_t nCbcLen = vchCiphertext.size() - WALLET_CRYPTO_MAC_SIZE;
+        vchCbc.assign(vchCiphertext.begin(), vchCiphertext.begin() + nCbcLen);
+        std::vector<uint8_t> vchTag(vchCiphertext.begin() + nCbcLen,
+                                    vchCiphertext.end());
+
+        uint8_t macKey[WALLET_CRYPTO_KEY_SIZE];
+        DeriveMacKey(macKey);
+        uint8_t expected[WALLET_CRYPTO_MAC_SIZE];
+        ComputeMac(macKey, vchCbc, expected);
+        memory_cleanse(macKey, sizeof(macKey));
+
+        // Constant-time compare; FAIL CLOSED before any unpad on mismatch.
+        std::vector<uint8_t> vchExpected(expected, expected + sizeof(expected));
+        memory_cleanse(expected, sizeof(expected));
+        if (!TimingResistantEqual(vchExpected, vchTag)) {
+            return false;
+        }
+        pCbc = &vchCbc;
+    }
+
     // plaintext will always be equal to or lesser than length of ciphertext
-    int nLen = vchCiphertext.size();
+    const std::vector<uint8_t> &vchToDecrypt = *pCbc;
+    int nLen = vchToDecrypt.size();
 
     vchPlaintext.resize(nLen);
 
     AES256CBCDecrypt dec(vchKey.data(), vchIV.data(), true);
-    nLen = dec.Decrypt(vchCiphertext.data(), vchCiphertext.size(),
+    nLen = dec.Decrypt(vchToDecrypt.data(), vchToDecrypt.size(),
                        vchPlaintext.data());
     if (nLen == 0) {
         return false;
@@ -137,14 +244,19 @@ bool CCrypter::Decrypt(const std::vector<uint8_t> &vchCiphertext,
     return true;
 }
 
+// SECURITY (audit 2026-06, M4): nDerivationMethod selects per-key authenticated
+// (method 2) vs legacy (method 0) treatment for the ckey secret. It is the same
+// method stored on the wallet's CMasterKey, so the per-key blobs and the
+// master-key blob are authenticated consistently for method-2 wallets.
 static bool EncryptSecret(const CKeyingMaterial &vMasterKey,
                           const CKeyingMaterial &vchPlaintext,
                           const uint256 &nIV,
-                          std::vector<uint8_t> &vchCiphertext) {
+                          std::vector<uint8_t> &vchCiphertext,
+                          unsigned int nDerivationMethod) {
     CCrypter cKeyCrypter;
     std::vector<uint8_t> chIV(WALLET_CRYPTO_IV_SIZE);
     memcpy(chIV.data(), &nIV, WALLET_CRYPTO_IV_SIZE);
-    if (!cKeyCrypter.SetKey(vMasterKey, chIV)) {
+    if (!cKeyCrypter.SetKey(vMasterKey, chIV, nDerivationMethod)) {
         return false;
     }
     return cKeyCrypter.Encrypt(*((const CKeyingMaterial *)&vchPlaintext),
@@ -153,11 +265,12 @@ static bool EncryptSecret(const CKeyingMaterial &vMasterKey,
 
 static bool DecryptSecret(const CKeyingMaterial &vMasterKey,
                           const std::vector<uint8_t> &vchCiphertext,
-                          const uint256 &nIV, CKeyingMaterial &vchPlaintext) {
+                          const uint256 &nIV, CKeyingMaterial &vchPlaintext,
+                          unsigned int nDerivationMethod) {
     CCrypter cKeyCrypter;
     std::vector<uint8_t> chIV(WALLET_CRYPTO_IV_SIZE);
     memcpy(chIV.data(), &nIV, WALLET_CRYPTO_IV_SIZE);
-    if (!cKeyCrypter.SetKey(vMasterKey, chIV)) {
+    if (!cKeyCrypter.SetKey(vMasterKey, chIV, nDerivationMethod)) {
         return false;
     }
     return cKeyCrypter.Decrypt(vchCiphertext,
@@ -166,10 +279,11 @@ static bool DecryptSecret(const CKeyingMaterial &vMasterKey,
 
 static bool DecryptKey(const CKeyingMaterial &vMasterKey,
                        const std::vector<uint8_t> &vchCryptedSecret,
-                       const CPubKey &vchPubKey, CKey &key) {
+                       const CPubKey &vchPubKey, CKey &key,
+                       unsigned int nDerivationMethod) {
     CKeyingMaterial vchSecret;
     if (!DecryptSecret(vMasterKey, vchCryptedSecret, vchPubKey.GetHash(),
-                       vchSecret)) {
+                       vchSecret, nDerivationMethod)) {
         return false;
     }
 
@@ -216,7 +330,8 @@ bool CCryptoKeyStore::Lock() {
 }
 
 bool CCryptoKeyStore::Unlock(const CKeyingMaterial &vMasterKeyIn,
-                             bool accept_no_keys) {
+                             bool accept_no_keys,
+                             unsigned int nDerivationMethod) {
     {
         LOCK(cs_KeyStore);
         if (!SetCrypted()) {
@@ -231,7 +346,8 @@ bool CCryptoKeyStore::Unlock(const CKeyingMaterial &vMasterKeyIn,
             const CPubKey &vchPubKey = (*mi).second.first;
             const std::vector<uint8_t> &vchCryptedSecret = (*mi).second.second;
             CKey key;
-            if (!DecryptKey(vMasterKeyIn, vchCryptedSecret, vchPubKey, key)) {
+            if (!DecryptKey(vMasterKeyIn, vchCryptedSecret, vchPubKey, key,
+                            nDerivationMethod)) {
                 keyFail = true;
                 break;
             }
@@ -249,6 +365,10 @@ bool CCryptoKeyStore::Unlock(const CKeyingMaterial &vMasterKeyIn,
             return false;
         }
         vMasterKey = vMasterKeyIn;
+        // Remember the active derivation method so subsequently-added keys
+        // (AddKeyPubKey) and reads (GetKey) use the same authenticated/legacy
+        // treatment as the rest of this wallet.
+        nCryptoMethod = nDerivationMethod;
         fDecryptionThoroughlyChecked = true;
     }
     NotifyStatusChanged(this);
@@ -268,7 +388,7 @@ bool CCryptoKeyStore::AddKeyPubKey(const CKey &key, const CPubKey &pubkey) {
     std::vector<uint8_t> vchCryptedSecret;
     CKeyingMaterial vchSecret(key.begin(), key.end());
     if (!EncryptSecret(vMasterKey, vchSecret, pubkey.GetHash(),
-                       vchCryptedSecret)) {
+                       vchCryptedSecret, nCryptoMethod)) {
         return false;
     }
 
@@ -308,7 +428,8 @@ bool CCryptoKeyStore::GetKey(const CKeyID &address, CKey &keyOut) const {
     if (mi != mapCryptedKeys.end()) {
         const CPubKey &vchPubKey = (*mi).second.first;
         const std::vector<uint8_t> &vchCryptedSecret = (*mi).second.second;
-        return DecryptKey(vMasterKey, vchCryptedSecret, vchPubKey, keyOut);
+        return DecryptKey(vMasterKey, vchCryptedSecret, vchPubKey, keyOut,
+                          nCryptoMethod);
     }
     return false;
 }
@@ -342,20 +463,24 @@ std::set<CKeyID> CCryptoKeyStore::GetKeys() const {
     return set_address;
 }
 
-bool CCryptoKeyStore::EncryptKeys(CKeyingMaterial &vMasterKeyIn) {
+bool CCryptoKeyStore::EncryptKeys(CKeyingMaterial &vMasterKeyIn,
+                                  unsigned int nDerivationMethod) {
     LOCK(cs_KeyStore);
     if (!mapCryptedKeys.empty() || IsCrypted()) {
         return false;
     }
 
     fUseCrypto = true;
+    // Persist the active method so later AddKeyPubKey / GetKey use the matching
+    // authenticated (method 2) or legacy (method 0) treatment.
+    nCryptoMethod = nDerivationMethod;
     for (const KeyMap::value_type &mKey : mapKeys) {
         const CKey &key = mKey.second;
         CPubKey vchPubKey = key.GetPubKey();
         CKeyingMaterial vchSecret(key.begin(), key.end());
         std::vector<uint8_t> vchCryptedSecret;
         if (!EncryptSecret(vMasterKeyIn, vchSecret, vchPubKey.GetHash(),
-                           vchCryptedSecret)) {
+                           vchCryptedSecret, nDerivationMethod)) {
             return false;
         }
         if (!AddCryptedKey(vchPubKey, vchCryptedSecret)) {

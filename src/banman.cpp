@@ -25,10 +25,12 @@ static constexpr int DISCOURAGED_DUMP_VERSION = 1;
 } // namespace
 
 BanMan::BanMan(fs::path ban_file, const CChainParams &chainparams,
-               CClientUIInterface *client_interface, int64_t default_ban_time)
+               CClientUIInterface *client_interface, int64_t default_ban_time,
+               bool persist_discouraged)
     : m_client_interface(client_interface),
       m_ban_db(std::move(ban_file), chainparams),
-      m_default_ban_time(default_ban_time) {
+      m_default_ban_time(default_ban_time),
+      m_persist_discouraged(persist_discouraged) {
     if (m_client_interface) {
         m_client_interface->InitMessage(_("Loading banlist..."));
     }

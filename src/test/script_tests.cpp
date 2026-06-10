@@ -58,6 +58,7 @@ static ScriptErrorDesc script_errors[] = {
     {ScriptError::PUSH_SIZE, "PUSH_SIZE"},
     {ScriptError::OP_COUNT, "OP_COUNT"},
     {ScriptError::STACK_SIZE, "STACK_SIZE"},
+    {ScriptError::STACK_MEMORY, "STACK_MEMORY"},
     {ScriptError::SIG_COUNT, "SIG_COUNT"},
     {ScriptError::PUBKEY_COUNT, "PUBKEY_COUNT"},
     {ScriptError::INPUT_SIGCHECKS, "INPUT_SIGCHECKS"},

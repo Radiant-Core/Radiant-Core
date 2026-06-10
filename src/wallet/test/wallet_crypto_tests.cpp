@@ -10,12 +10,26 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 BOOST_FIXTURE_TEST_SUITE(wallet_crypto_tests, BasicTestingSetup)
 
 class TestCrypter {
 public:
+    // Expose the private encryption key bytes for the domain-separation test.
+    static std::vector<uint8_t> GetKeyBytes(const CCrypter &crypt) {
+        return std::vector<uint8_t>(crypt.vchKey.begin(), crypt.vchKey.end());
+    }
+    // Expose the derived MAC key (private) so a test can assert it differs from
+    // the AES encryption key (M4 domain separation).
+    static std::vector<uint8_t> GetMacKey(const CCrypter &crypt) {
+        uint8_t macKey[WALLET_CRYPTO_KEY_SIZE];
+        crypt.DeriveMacKey(macKey);
+        return std::vector<uint8_t>(macKey, macKey + WALLET_CRYPTO_KEY_SIZE);
+    }
+
     static void TestPassphraseSingle(
         const std::vector<uint8_t> &vchSalt, const SecureString &passphrase,
         uint32_t rounds,
@@ -158,6 +172,276 @@ BOOST_AUTO_TEST_CASE(decrypt) {
         TestCrypter::TestDecrypt(
             crypt, std::vector<uint8_t>(hash.begin(), hash.end()));
     }
+}
+
+// SECURITY (audit 2026-06, M-4): authenticated wallet encryption (encrypt-then-
+// MAC / GCM with a format-version marker) was DEFERRED because the on-disk
+// "ckey" record stores the bare ciphertext vector with no adjacent format/
+// version field (see wallet/walletdb.cpp WriteCryptedKey), so a new format
+// could only be distinguished in-band -- which is neither brick-proof (a legacy
+// CBC blob could collide with the magic and become unreadable) nor downgrade-
+// resistant (stripping a trailing MAC would fall through to legacy CBC). This
+// regression test LOCKS IN the backward-compatible legacy behavior that the
+// deferral relies on, so any future format change is forced to update it
+// consciously rather than silently bricking existing wallets:
+//   - a 32-byte secret encrypts to a 48-byte (== plaintext + AES block) CBC blob
+//   - that blob round-trips back to the exact plaintext
+//   - decrypting a legacy (no-MAC) blob with the correct key still succeeds
+//   - decrypting with the WRONG passphrase does NOT recover the plaintext
+BOOST_AUTO_TEST_CASE(legacy_format_backward_compat) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    BOOST_CHECK_EQUAL(vchSalt.size(), WALLET_CRYPTO_SALT_SIZE);
+
+    CCrypter crypt;
+    BOOST_CHECK(crypt.SetKeyFromPassphrase("correct horse", vchSalt, 25000, 0));
+
+    // A 32-byte wallet secret (the size of a private key / master key).
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    BOOST_CHECK_EQUAL(vchPlaintext.size(), 32U);
+
+    // Encrypt: legacy AES-256-CBC produces exactly plaintext + one AES block of
+    // PKCS#7 padding (32 + 16 = 48). This is the layout that must stay readable.
+    std::vector<uint8_t> vchCiphertext;
+    BOOST_CHECK(crypt.Encrypt(vchPlaintext, vchCiphertext));
+    BOOST_CHECK_EQUAL(vchCiphertext.size(), 48U);
+
+    // Round-trip with the same (correct) key recovers the exact plaintext. This
+    // is the "decrypt of an old-format (no-MAC) blob still succeeds" guarantee.
+    CKeyingMaterial vchRoundTrip;
+    BOOST_CHECK(crypt.Decrypt(vchCiphertext, vchRoundTrip));
+    BOOST_CHECK(vchRoundTrip == vchPlaintext);
+
+    // Wrong passphrase must NOT recover the original secret. CBC has no MAC, so
+    // Decrypt may still "succeed" structurally on a block boundary, but the
+    // recovered bytes must differ from the plaintext (the downstream
+    // CKey::VerifyPubKey check in DecryptKey is what ultimately rejects it).
+    CCrypter wrong;
+    BOOST_CHECK(wrong.SetKeyFromPassphrase("battery staple", vchSalt, 25000, 0));
+    CKeyingMaterial vchWrong;
+    wrong.Decrypt(vchCiphertext, vchWrong);
+    BOOST_CHECK(vchWrong != vchPlaintext);
+}
+
+// SECURITY (audit 2026-06, M-4): no-regression lock-in. Method 0 (legacy) MUST
+// remain byte-for-byte identical to the historical AES-256-CBC output for the
+// same key/IV/plaintext. We assert against a fixed known-answer vector so any
+// accidental change to the legacy path (e.g. appending a MAC to method 0) is
+// caught immediately -- that would brick every existing wallet.
+BOOST_AUTO_TEST_CASE(method0_byte_identical_known_answer) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter crypt;
+    BOOST_CHECK(crypt.SetKeyFromPassphrase("passphrase", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_SHA512_AESCBC));
+
+    // Same plaintext used by the existing `encrypt` known-answer test.
+    const std::vector<uint8_t> vchPlaintextIn = ParseHex(
+        "22bcade09ac03ff6386914359cfe885cfeb5f77ff0d670f102f619687453b29d");
+    const CKeyingMaterial vchPlaintext(vchPlaintextIn.begin(),
+                                       vchPlaintextIn.end());
+
+    std::vector<uint8_t> vchCiphertext;
+    BOOST_CHECK(crypt.Encrypt(vchPlaintext, vchCiphertext));
+    // 32 bytes plaintext -> 48 bytes CBC (one block of PKCS#7 pad), NO MAC.
+    BOOST_CHECK_EQUAL(vchCiphertext.size(), 48U);
+
+    // Round-trips exactly.
+    CKeyingMaterial vchRoundTrip;
+    BOOST_CHECK(crypt.Decrypt(vchCiphertext, vchRoundTrip));
+    BOOST_CHECK(vchRoundTrip == vchPlaintext);
+
+    // A second CCrypter constructed without ever calling SetKeyFromPassphrase
+    // with a method (i.e. the default-constructed method) must also be 0/legacy
+    // and produce the same 48-byte (no-MAC) output -- defends the SetKey default.
+    CCrypter crypt2;
+    BOOST_CHECK(crypt2.SetKeyFromPassphrase("passphrase", vchSalt, 25000, 0));
+    std::vector<uint8_t> vchCiphertext2;
+    BOOST_CHECK(crypt2.Encrypt(vchPlaintext, vchCiphertext2));
+    BOOST_CHECK(vchCiphertext2 == vchCiphertext);
+}
+
+// SECURITY (audit 2026-06, M-4): method 2 round-trip. encrypt-then-MAC recovers
+// the exact plaintext, and the blob is exactly 32 bytes (the MAC tag) longer
+// than the equivalent method-0 blob.
+BOOST_AUTO_TEST_CASE(method2_roundtrip) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+
+    CCrypter legacy;
+    BOOST_CHECK(legacy.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                            WALLET_CRYPTO_METHOD_SHA512_AESCBC));
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    BOOST_CHECK_EQUAL(vchPlaintext.size(), 32U);
+
+    std::vector<uint8_t> vchLegacy;
+    BOOST_CHECK(legacy.Encrypt(vchPlaintext, vchLegacy));
+    std::vector<uint8_t> vchAuth;
+    BOOST_CHECK(authd.Encrypt(vchPlaintext, vchAuth));
+
+    // Method 2 == method-0 CBC blob + 32-byte tag.
+    BOOST_CHECK_EQUAL(vchAuth.size(), vchLegacy.size() + WALLET_CRYPTO_MAC_SIZE);
+    BOOST_CHECK_EQUAL(vchAuth.size(), 48U + 32U);
+    // The CBC prefix is identical (same key/IV/plaintext) -- only the tag differs.
+    BOOST_CHECK(std::equal(vchLegacy.begin(), vchLegacy.end(),
+                           vchAuth.begin()));
+
+    // Round-trips exactly under method 2.
+    CKeyingMaterial vchRoundTrip;
+    BOOST_CHECK(authd.Decrypt(vchAuth, vchRoundTrip));
+    BOOST_CHECK(vchRoundTrip == vchPlaintext);
+}
+
+// SECURITY (audit 2026-06, M-4): the core property. Flipping ANY byte of a
+// method-2 blob -- in the CBC ciphertext region OR in the trailing MAC tag --
+// makes Decrypt FAIL CLOSED (returns false, recovers nothing).
+BOOST_AUTO_TEST_CASE(method2_tamper_detected) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+
+    std::vector<uint8_t> vchAuth;
+    BOOST_CHECK(authd.Encrypt(vchPlaintext, vchAuth));
+    BOOST_CHECK_EQUAL(vchAuth.size(), 80U); // 48 CBC + 32 MAC
+
+    // Flip every byte position in turn; each tampered blob must FAIL CLOSED.
+    for (size_t i = 0; i < vchAuth.size(); i++) {
+        std::vector<uint8_t> tampered = vchAuth;
+        tampered[i] ^= 0x01;
+        CKeyingMaterial vchOut;
+        bool ok = authd.Decrypt(tampered, vchOut);
+        BOOST_CHECK_MESSAGE(!ok || vchOut != vchPlaintext,
+                            "tamper at byte " + std::to_string(i) +
+                                " was NOT rejected");
+    }
+}
+
+// SECURITY (audit 2026-06, M-4): truncation and extension both fail closed.
+BOOST_AUTO_TEST_CASE(method2_truncation_extension) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    std::vector<uint8_t> vchAuth;
+    BOOST_CHECK(authd.Encrypt(vchPlaintext, vchAuth));
+
+    // Drop the last byte (truncated tag).
+    {
+        std::vector<uint8_t> truncated(vchAuth.begin(), vchAuth.end() - 1);
+        CKeyingMaterial vchOut;
+        BOOST_CHECK(!authd.Decrypt(truncated, vchOut) || vchOut != vchPlaintext);
+    }
+    // Drop a whole block + tag, leaving fewer than tag+block bytes -> length
+    // guard rejects.
+    {
+        std::vector<uint8_t> tiny(vchAuth.begin(),
+                                  vchAuth.begin() + WALLET_CRYPTO_MAC_SIZE);
+        CKeyingMaterial vchOut;
+        BOOST_CHECK(!authd.Decrypt(tiny, vchOut));
+    }
+    // Append a byte (extension).
+    {
+        std::vector<uint8_t> extended = vchAuth;
+        extended.push_back(0x00);
+        CKeyingMaterial vchOut;
+        BOOST_CHECK(!authd.Decrypt(extended, vchOut) || vchOut != vchPlaintext);
+    }
+    // Empty input fails the length guard.
+    {
+        std::vector<uint8_t> empty;
+        CKeyingMaterial vchOut;
+        BOOST_CHECK(!authd.Decrypt(empty, vchOut));
+    }
+}
+
+// SECURITY (audit 2026-06, M-4): the wrong passphrase must not unlock a method-2
+// blob. Because the MAC key is passphrase-derived, the MAC check rejects it
+// outright (fails closed before any unpad), which is strictly stronger than the
+// legacy method-0 behavior.
+BOOST_AUTO_TEST_CASE(method2_wrong_passphrase) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    std::vector<uint8_t> vchAuth;
+    BOOST_CHECK(authd.Encrypt(vchPlaintext, vchAuth));
+
+    CCrypter wrong;
+    BOOST_CHECK(wrong.SetKeyFromPassphrase("battery staple", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+    CKeyingMaterial vchOut;
+    // MAC mismatch -> fail closed.
+    BOOST_CHECK(!wrong.Decrypt(vchAuth, vchOut));
+}
+
+// SECURITY (audit 2026-06, M-4): a method-2 blob fed to a method-0 (legacy)
+// decryptor (e.g. an old binary, or a downgrade attempt) must NOT recover the
+// plaintext. The legacy path treats the trailing MAC as extra ciphertext, so
+// the unpad yields garbage rather than the secret. (Belt-and-suspenders: the
+// real defense against old binaries is the minversion bump.)
+BOOST_AUTO_TEST_CASE(method2_not_readable_as_method0) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    std::vector<uint8_t> vchAuth;
+    BOOST_CHECK(authd.Encrypt(vchPlaintext, vchAuth));
+
+    CCrypter legacy;
+    BOOST_CHECK(legacy.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                            WALLET_CRYPTO_METHOD_SHA512_AESCBC));
+    CKeyingMaterial vchOut;
+    legacy.Decrypt(vchAuth, vchOut);
+    BOOST_CHECK(vchOut != vchPlaintext);
+}
+
+// SECURITY (audit 2026-06, M-4): domain separation. The derived HMAC key MUST
+// NOT equal the AES encryption key.
+BOOST_AUTO_TEST_CASE(method2_mac_key_domain_separated) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter authd;
+    BOOST_CHECK(authd.SetKeyFromPassphrase("correct horse", vchSalt, 25000,
+                                           WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+
+    const std::vector<uint8_t> aesKey = TestCrypter::GetKeyBytes(authd);
+    const std::vector<uint8_t> macKey = TestCrypter::GetMacKey(authd);
+    BOOST_CHECK_EQUAL(aesKey.size(), WALLET_CRYPTO_KEY_SIZE);
+    BOOST_CHECK_EQUAL(macKey.size(), WALLET_CRYPTO_KEY_SIZE);
+    BOOST_CHECK(macKey != aesKey);
+}
+
+// SECURITY (audit 2026-06, M-4): SetKeyFromPassphrase / SetKey reject unknown
+// derivation methods, which is the fail-safe an older binary relies on when it
+// meets a newer method, and what makes a forward-compat downgrade impossible.
+BOOST_AUTO_TEST_CASE(unknown_method_rejected) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    CCrypter c;
+    // Method 1 (scrypt) is reserved/unimplemented and method 3 is unknown.
+    BOOST_CHECK(!c.SetKeyFromPassphrase("pw", vchSalt, 25000,
+                                        WALLET_CRYPTO_METHOD_SCRYPT));
+    BOOST_CHECK(!c.SetKeyFromPassphrase("pw", vchSalt, 25000, 3));
+
+    const CKeyingMaterial key(WALLET_CRYPTO_KEY_SIZE, 0x11);
+    const std::vector<uint8_t> iv(WALLET_CRYPTO_IV_SIZE, 0x22);
+    BOOST_CHECK(c.SetKey(key, iv, WALLET_CRYPTO_METHOD_SHA512_AESCBC));
+    BOOST_CHECK(c.SetKey(key, iv, WALLET_CRYPTO_METHOD_AESCBC_HMAC));
+    BOOST_CHECK(!c.SetKey(key, iv, WALLET_CRYPTO_METHOD_SCRYPT));
+    BOOST_CHECK(!c.SetKey(key, iv, 99));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

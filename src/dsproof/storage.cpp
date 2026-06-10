@@ -293,6 +293,18 @@ size_t DoubleSpendProofStorage::numOrphans() const {
     return m_numOrphans;
 }
 
+void DoubleSpendProofStorage::dropPeer(NodeId nodeId)
+{
+    if (nodeId < 0)
+        return;
+    LOCK(m_lock);
+    // H-3: erase only the per-peer COUNTER entry. We intentionally do NOT
+    // decrement m_numOrphans or remove any resident orphan proofs here: those
+    // orphans remain valid and are reaped by the normal expiry path. Removing
+    // the map entry simply bounds m_orphansByPeer growth across peer churn.
+    m_orphansByPeer.erase(nodeId);
+}
+
 void DoubleSpendProofStorage::adjustPeerOrphanCount(NodeId nodeId, long delta)
 {
     if (nodeId < 0 || delta == 0)

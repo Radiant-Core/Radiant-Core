@@ -20,6 +20,12 @@ bool DoubleSpendProofStorage::periodicCleanup()
             if (it->orphan) {
                 if (it->nodeId > -1)
                     punishPeers.push_back(it->nodeId);
+                // H-3: keep the per-peer orphan count in sync on expiry. Mirror
+                // every other removal path in storage.cpp (which pairs
+                // decrementOrphans() with adjustPeerOrphanCount(-1)); omitting
+                // it here leaked the per-peer counter upward on every orphan
+                // expiry, eventually tripping the per-peer cap for honest peers.
+                adjustPeerOrphanCount(it->nodeId, -1);
                 it = index.erase(it);
                 decrementOrphans(1);
                 ++erased;

@@ -17,6 +17,11 @@ enum class ScriptError {
     PUSH_SIZE,
     OP_COUNT,
     STACK_SIZE,
+    // Per-script peak stack-memory budget (MAX_SCRIPT_STACK_MEMORY_USAGE).
+    // Distinct from STACK_SIZE (element-count limit) so that CheckInputs can
+    // treat a pre-SecurityUpgradeHeight budget trip as a non-mandatory relay
+    // rejection without re-executing the offending (memory-bomb) script.
+    STACK_MEMORY,
     SIG_COUNT,
     PUBKEY_COUNT,
     INPUT_SIGCHECKS,

@@ -1,0 +1,176 @@
+# Radiant Core 3.1.1 Release Notes
+
+**Release Date**: June 2026
+**Release Type**: Security release (follow-up to 3.1.0)
+**Consensus Activation**: `SCRIPT_SECURITY_UPGRADE` soft fork **moved earlier** to
+mainnet block **440,000** (was 444,444 in 3.1.0); testnet/scalenet block 1,
+regtest from genesis
+**Git Tag**: v3.1.1
+
+> **⚠️ MANDATORY upgrade for mainnet node operators — earlier deadline than 3.1.0.**
+> 3.1.1 brings the `SCRIPT_SECURITY_UPGRADE` soft-fork activation forward from
+> block 444,444 to **block 440,000**. Every mainnet node — including nodes
+> currently running 3.1.0 — **must** be on 3.1.1 before block 440,000. A node
+> left on 3.1.0 (which still expects 444,444) would, in the window
+> [440,000, 444,444), fail to enforce the tightened script rules and could follow
+> a different chain than 3.1.1 nodes if a rule-violating block is produced in that
+> window. 440,000 is still ahead of the live tip, so the fork remains a clean,
+> non-retroactive soft fork; confirm your node's tip is below 440,000 at upgrade.
+>
+> 3.1.1 also closes a remotely triggerable memory-exhaustion DoS that is live on
+> the network *now* (independently of the fork), fixes a double-spend-proof relay
+> regression, removes a silent wallet fund-loss footgun, and adds authenticated
+> wallet encryption. The `Host`-header allowlist from 3.1.0 still applies.
+
+---
+
+## Overview
+
+3.1.1 is a follow-up to the 3.1.0 security-remediation release. A second audit
+pass (re-review of the 3.1.0 fixes plus the previously under-covered money-layer
+and reference/covenant subsystems) confirmed the money layer is sound
+(`MAX_MONEY` is 21,000,000,000 RXD, well below `INT64_MAX`, and every consensus
+value sum re-checks `MoneyRange`, so no inflation vector exists) and surfaced a
+small number of residual issues that are fixed here. The `test_bitcoin` suite
+passes clean and the integration paths were validated on regtest.
+
+---
+
+## Security fixes
+
+### Script memory-exhaustion DoS — closed at relay before the fork (High)
+
+3.1.0 added a per-script peak stack-memory budget
+(`MAX_SCRIPT_STACK_MEMORY_USAGE`) but enforced it only via the consensus
+`SCRIPT_SECURITY_UPGRADE` flag, which does not activate on mainnet until block
+440,000. Until then a single ~sub-12 MB transaction whose input script balloons
+the stack past the budget (e.g. `OP_NUM2BIN`/`OP_DUP` of large elements) could
+exhaust node memory during mempool acceptance — relayable today because mainnet
+runs with `fRequireStandard=false`.
+
+3.1.1 enforces the budget as an **always-on relay/policy guard** in
+`AcceptToMemoryPool` via a new non-consensus script flag
+(`SCRIPT_VERIFY_MEMORY_BUDGET`), independent of the fork height. A
+budget-exceeding transaction is now rejected from the mempool immediately, and is
+classified as a **non-mandatory** rejection (`ScriptError::STACK_MEMORY`) before
+the fork — it does **not** DoS-ban the relaying peer and is **not** re-executed
+under mandatory flags, so it cannot be used to either partition honest nodes or
+re-trigger the bomb. Once `SCRIPT_SECURITY_UPGRADE` activates at 440,000 the same
+budget is enforced as a consensus rule.
+
+### Per-script stack-memory accounting is now O(1) (High)
+
+The 3.1.0 budget recomputed the full stack+altstack byte total after every
+opcode (O(n²) per script), which was itself a CPU-exhaustion vector once the fork
+activated. 3.1.1 maintains the total incrementally (O(1) amortized) with
+identical accept/reject results. The headroom was also raised from 64 MB to
+128 MB (4× the 32 MB element size) — a relaxation of a never-yet-active limit.
+
+### Double-spend-proof per-peer orphan accounting leak (High)
+
+The 3.1.0 per-peer DSProof orphan cap leaked its counter on the expiry path
+(`periodicCleanup`): the counter was incremented on add but never decremented on
+expiry, so a long-lived peer would eventually be permanently refused new orphan
+proofs even with zero resident orphans, and the per-peer map grew unbounded
+across peer churn. 3.1.1 decrements the counter on expiry (matching every other
+removal path) and clears a peer's entry on disconnect.
+
+### Restore-from-seed no longer silently reports a zero balance (High)
+
+`sethdseed` now scans the node's UTXO set for activity on **both** the legacy
+(`m/0'/0'/k`) and Radiant-standard (`m/44'/512'/0'/0/k`) derivation paths of the
+supplied seed before committing any wallet state. If funds are found only on the
+alternate path it selects that path (or, for an explicit `coin_type` mismatch,
+fails with a clear, actionable error **without** modifying the wallet) instead of
+silently deriving the default path and showing a zero balance. The seed is set
+and the keypool regenerated as an atomic final step, so a failed call never
+leaves a half-applied wallet.
+
+### Authenticated wallet encryption (Medium — M-4)
+
+Encrypted wallets are now **authenticated** (encrypt-then-MAC), closing the
+unauthenticated-AES-256-CBC malleability / padding-oracle surface. Newly
+encrypted wallets use a new `CMasterKey.nDerivationMethod` value: each per-key
+secret and the master-key blob is stored as `AES-256-CBC ciphertext ||
+HMAC-SHA512 tag` (32 bytes), with the MAC key domain-separated from the
+encryption key, the IV and method bound into the tag, and the tag verified in
+constant time **before** the ciphertext is unpadded (fail-closed on any
+tampering).
+
+This is fully backward-compatible: existing wallets keep their legacy method
+(byte-for-byte unchanged — no migration), and `nDerivationMethod` (which already
+round-trips on disk) selects the format, so a legacy blob is never misread. New-
+format wallets raise the wallet feature version, so an older binary refuses to
+load one (clean `TOO_NEW` error) rather than mis-deriving keys. (Investigation
+corrected the earlier assessment that this required a disruptive schema
+migration — the version selector already existed.)
+
+### Additional hardening
+
+- **DSProof deserialization**: the `pushData` element count is now validated
+  before bulk allocation, removing a ~24× transient memory amplification from a
+  crafted proof message.
+- **REST interface authentication**: a new `-restauth` option (default **on**)
+  requires the same credentials as JSON-RPC for the `-rest` HTTP interface.
+  Defaulting on is safe — an ecosystem audit confirmed no consumer uses
+  credential-less REST (all use authenticated JSON-RPC or ZMQ) and production
+  nodes are not run with `-rest`. Operators who intentionally serve an
+  unauthenticated REST surface (e.g. behind their own authenticating proxy) can
+  set `-restauth=0`.
+- **`-persistdiscouraged`** is now honored (previously a no-op).
+- **RPC cookie** file is created `0600` before the secret is written (no
+  world/group-readable window under `-sysperms`).
+- **`dumpwallet`/`importwallet`** open with `O_NOFOLLOW`/`O_EXCL` and write
+  through the created descriptor, closing symlink/TOCTOU and reopen-truncation
+  windows.
+- **`CFeeRate`** fee/feerate math is computed in 128-bit and clamped, removing
+  signed-overflow UB at extreme (economically-unreachable) fee values;
+  prioritisation deltas are clamped to `MoneyRange`.
+- **Defense-in-depth**: a `MoneyRange` guard on block-template fee accumulation,
+  and an opcode-cost charge for `OP_AND`/`OP_OR`/`OP_XOR`/`OP_INVERT`.
+
+### Documentation / non-code
+
+- Clarified (in code comments) that the node does **not** enforce input-reference
+  *conservation* for non-singleton refs — a colored-coin covenant must enforce
+  its own supply via `OP_REFOUTPUTCOUNT_*`. Singleton uniqueness *is* enforced by
+  consensus. Corrected the `OP_STATESEPARATOR` push-only-prefix comment to match
+  actual behavior.
+
+## Known limitations
+
+- **Existing encrypted wallets are not auto-upgraded** to the authenticated
+  format. They remain on the legacy method (and stay fully readable); only newly
+  encrypted wallets adopt encrypt-then-MAC. Changing the passphrase preserves the
+  wallet's existing method.
+- Authenticated-wallet integrity protects against tampering of the encrypted
+  blob. An attacker with full write access to `wallet.dat` could still rewrite
+  the format-selector field to downgrade it, but that is outside the
+  tamper-detection threat model and still cannot recover keys without the
+  passphrase.
+
+---
+
+## Compatibility
+
+- **Soft-fork activation moved earlier (vs 3.1.0).** `SCRIPT_SECURITY_UPGRADE`
+  now activates at mainnet block **440,000** instead of 444,444. The new rules
+  only *tighten* script acceptance, so the fork itself stays a clean soft fork
+  and pre-activation block validation is unchanged. But because 3.1.0 nodes
+  expect 444,444, **all mainnet nodes must upgrade to 3.1.1 before block 440,000**
+  — a 3.1.0 node would not enforce the tightened rules in [440,000, 444,444) and
+  could diverge from 3.1.1 nodes there if a violating block is produced. Confirm
+  your tip is below 440,000 at upgrade (it is, at ~436,500 / 2026-06-10).
+- The always-on relay memory-budget guard is mempool policy only and never
+  affects block validity (no consensus impact before 440,000).
+- **`-restauth` now defaults ON** (REST requires the same auth as JSON-RPC). No
+  known consumer uses credential-less REST; set `-restauth=0` only if you
+  intentionally serve an unauthenticated REST surface. The `Host`-header
+  allowlist from 3.1.0 still applies (set `-rpcallowhost` as before).
+- Newly **encrypted** wallets use the authenticated format and will not open in
+  pre-3.1.1 binaries (clean `TOO_NEW` refusal); existing wallets are unaffected.
+
+## Credits
+
+2026-06 Radiant Core audit follow-up (re-review + money-layer / reference-system
+deep dive), remediation, and regtest validation.

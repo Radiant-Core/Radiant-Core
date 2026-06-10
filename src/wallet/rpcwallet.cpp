@@ -4233,56 +4233,157 @@ static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
 
     // Get coin_type preference (default: 512 for Radiant SLIP-0044)
     int coin_type = 512;
+    bool coin_type_explicit = false;
     if (!request.params[2].isNull()) {
         coin_type = request.params[2].get_int();
+        coin_type_explicit = true;
         if (coin_type != 0 && coin_type != 512) {
             throw JSONRPCError(RPC_INVALID_PARAMETER,
                                "coin_type must be 0 (Legacy) or 512 (Radiant Standard)");
         }
     }
 
-    // Set derivation type based on coin_type preference
-    bool use_legacy = (coin_type == 0);
-    if (use_legacy) {
-        pwallet->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
-    }
+    // SECURITY (audit 2026-06, H-4 + M-split-brain): determine the CANDIDATE
+    // seed key, run the dual-path UTXO probe, and make the entire
+    // auto-switch/throw decision BEFORE mutating the wallet. Nothing below this
+    // point persists until the atomic tail at the very end, so any error path
+    // throws with the wallet completely untouched (no half-applied seed, no
+    // keypool flushed against a seed that was never set).
 
-    CPubKey master_pub_key;
-    if (request.params[1].isNull()) {
-        master_pub_key = pwallet->GenerateNewSeed();
+    // The user's requested derivation (may be auto-corrected below). We do NOT
+    // touch WALLET_FLAG_LEGACY_DERIVATION yet -- that happens in the tail.
+    bool use_legacy = (coin_type == 0);
+
+    // Resolve the candidate master seed key WITHOUT persisting it. For the
+    // restore case we use the supplied WIF; for the generate case we mint a
+    // fresh key here and only persist it (via DeriveNewSeed) in the tail.
+    CKey candidate_key;
+    const bool generating_new = request.params[1].isNull();
+    if (generating_new) {
+        candidate_key.MakeNewKey(true);
     } else {
-        CKey key = DecodeSecret(request.params[1].get_str());
-        if (!key.IsValid()) {
+        candidate_key = DecodeSecret(request.params[1].get_str());
+        if (!candidate_key.IsValid()) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                                "Invalid private key");
         }
 
-        if (HaveKey(*pwallet, key)) {
+        if (HaveKey(*pwallet, candidate_key)) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                                "Already have this key (either as an HD seed or "
                                "as a loose private key)");
         }
-
-        master_pub_key = pwallet->DeriveNewSeed(key);
     }
 
-    pwallet->SetHDSeed(master_pub_key);
-
-    // Scan for keys on the alternate derivation path and warn if found
+    // Real dual-path activity scan against the node's live UTXO set. Restoring a
+    // pre-v3 legacy seed (funds at m/0'/0'/k) under the default coin_type=512
+    // derives the BIP44 path (m/44'/512'/0'/0/k) and would otherwise silently
+    // present a 0-balance wallet. The probe takes only the seed key (no
+    // keystore/mapWallet dependency), so it works on a fresh restore and before
+    // any mutation. A freshly GENERATED random seed cannot have prior funds, so
+    // we skip the (full-UTXO-set) scan in that case.
+    //
+    //   Legacy path: m/0'/0'/k and m/0'/1'/k (all levels hardened)
+    //   BIP44 path:  m/44'/512'/0'/0/k and m/44'/512'/0'/1/k
     std::string warning_msg;
-    int alternate_coin_type = use_legacy ? 512 : 0;
-    // TODO: Implement full dual-path scanning logic
-    // Legacy path:    m/0'/0'/k  (all levels hardened)
-    // BIP44 path:     m/44'/512'/0'/0/k  (purpose/coin/account hardened, change/index non-hardened)
-    // For now, emit a warning that the user should check for funds on the alternate path
-    warning_msg = strprintf(
-        "Derivation path set to %s (coin_type %d). "
-        "If you had funds on the %s path (coin_type %d), "
-        "you may need to import them separately or send them to the new address.",
-        use_legacy ? "legacy m/0'/0'/k" : "Radiant Standard m/44'/512'/0'/0/k",
-        coin_type,
-        use_legacy ? "Radiant Standard" : "legacy",
-        alternate_coin_type);
+    const CWallet::HDSeedDerivationActivity activity =
+        generating_new ? CWallet::HDSeedDerivationActivity{}
+                        : pwallet->ScanSeedDerivationActivity(candidate_key);
+
+    const bool legacy_has_funds = activity.legacyHits > 0;
+    const bool bip44_has_funds = activity.bip44Hits > 0;
+    const bool active_is_legacy = use_legacy;
+    const bool active_has_funds =
+        active_is_legacy ? legacy_has_funds : bip44_has_funds;
+    const bool alternate_has_funds =
+        active_is_legacy ? bip44_has_funds : legacy_has_funds;
+
+    if (!activity.scanAvailable) {
+        // The live UTXO set could not be scanned (pruned chainstate not yet
+        // available, no chainstate, or a concurrent scan). We must NOT
+        // auto-switch the derivation off non-authoritative counts, and we must
+        // NOT claim a 0-balance result. Proceed with the user's chosen path and
+        // warn clearly and actionably.
+        warning_msg = strprintf(
+            "Derivation path set to %s (coin_type %d). The live UTXO set could "
+            "not be scanned to verify funds (the node may be pruned or busy); "
+            "if you are restoring an old seed, run 'rescan' and verify the "
+            "derivation type -- if your balance stays 0, re-run sethdseed with "
+            "the other coin_type.",
+            use_legacy ? "legacy m/0'/0'/k"
+                       : "Radiant Standard m/44'/512'/0'/0/k",
+            use_legacy ? 0 : 512);
+    } else if (alternate_has_funds && !active_has_funds) {
+        // The seed is funded ONLY on the path the user is NOT currently using.
+        if (!coin_type_explicit) {
+            // The user did not pin a coin_type, so we are free to switch the
+            // wallet to the derivation style that actually holds the funds.
+            // Only the legacy<-default(BIP44) direction is reachable here in
+            // practice, but handle both symmetrically. The flag is applied in
+            // the tail; here we only record the corrected intent.
+            use_legacy = legacy_has_funds;
+            warning_msg = strprintf(
+                "Restored seed is funded on the %s derivation path, not the "
+                "default. The wallet derivation type has been automatically set "
+                "to %s so your funds are visible. Run 'rescan' if balances do "
+                "not appear immediately.",
+                legacy_has_funds ? "legacy m/0'/0'/k"
+                                 : "Radiant Standard m/44'/512'/0'/0/k",
+                legacy_has_funds ? "legacy (coin_type 0)"
+                                 : "Radiant Standard (coin_type 512)");
+        } else {
+            // The user explicitly pinned a coin_type that does NOT match where
+            // the funds are. Fail hard BEFORE any wallet mutation, with an exact
+            // actionable instruction naming the funded path and the precise
+            // command to restore it. Because we throw here -- before SetHDSeed --
+            // the wallet's existing HD seed and keypool are left untouched.
+            throw JSONRPCError(
+                RPC_WALLET_ERROR,
+                strprintf(
+                    "This seed is funded on the %s derivation path (coin_type "
+                    "%d), but you set coin_type=%d (%s). The wallet has NOT been "
+                    "modified. To access your funds re-run: sethdseed %s "
+                    "\"<seed-wif>\" %d",
+                    legacy_has_funds ? "legacy m/0'/0'/k"
+                                     : "Radiant Standard m/44'/512'/0'/0/k",
+                    legacy_has_funds ? 0 : 512, coin_type,
+                    active_is_legacy ? "legacy" : "Radiant Standard",
+                    flush_key_pool ? "true" : "false",
+                    legacy_has_funds ? 0 : 512));
+        }
+    } else if (active_has_funds) {
+        warning_msg = strprintf(
+            "Derivation path set to %s (coin_type %d); existing funds detected "
+            "on this path.",
+            use_legacy ? "legacy m/0'/0'/k"
+                       : "Radiant Standard m/44'/512'/0'/0/k",
+            use_legacy ? 0 : 512);
+    } else {
+        // No funds found on either path within the gap limit. Normal for a fresh
+        // (non-restore) seed; keep the user's chosen derivation untouched and
+        // give a non-alarming, factual note.
+        warning_msg = strprintf(
+            "Derivation path set to %s (coin_type %d). No funds were found for "
+            "this seed on either the legacy or Radiant Standard path; if you are "
+            "restoring an old seed with funds, run 'rescan' and verify the "
+            "derivation type.",
+            use_legacy ? "legacy m/0'/0'/k"
+                       : "Radiant Standard m/44'/512'/0'/0/k",
+            use_legacy ? 0 : 512);
+    }
+
+    // ----- Atomic mutation tail. No throw between these statements. -----
+    // Every decision above is finalized; from here we only persist. The flag,
+    // the seed, and the keypool flush are applied together so the wallet can
+    // never be left half-configured (split-brain).
+    if (use_legacy) {
+        pwallet->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+    } else {
+        pwallet->UnsetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+    }
+
+    const CPubKey master_pub_key = pwallet->DeriveNewSeed(candidate_key);
+    pwallet->SetHDSeed(master_pub_key);
 
     if (flush_key_pool) {
         pwallet->NewKeyPool();

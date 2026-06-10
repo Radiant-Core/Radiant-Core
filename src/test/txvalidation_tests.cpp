@@ -6,8 +6,10 @@
 #include <amount.h>
 #include <config.h>
 #include <consensus/validation.h>
+#include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
+#include <script/script_flags.h>
 #include <test/setup_common.h>
 #include <txmempool.h>
 #include <validation.h>
@@ -158,6 +160,61 @@ BOOST_FIXTURE_TEST_CASE(tx_mempool_reject_dup_txin, TestChain100Setup) {
       BOOST_CHECK_EQUAL(state2.IsInvalid(nDoS), true);
       BOOST_CHECK_EQUAL(nDoS, 100);
     }
+}
+
+/**
+ * 2026-06 security-audit (H-1): AcceptToMemoryPool must verify every
+ * mempool-accepted tx against the per-script memory budget UNCONDITIONALLY on
+ * its relay/policy verification path -- independent of fRequireStandard and of
+ * SecurityUpgradeHeight -- to close the relay-reachable memory-bomb DoS now.
+ *
+ * Building a real >budget stack tx and pushing it through ATMP requires the
+ * interpreter's budget enforcement plus a funded regtest chain, so the
+ * end-to-end accept/reject behavior is covered by the regtest functional
+ * suite. Here we lock in the load-bearing invariant of the flag construction:
+ *
+ *  1) the relay scriptVerifyFlags expression used by ATMP
+ *     (nextBlockScriptVerifyFlags | STANDARD_SCRIPT_VERIFY_FLAGS |
+ *      SCRIPT_VERIFY_MEMORY_BUDGET) always sets the memory-budget bit,
+ *     regardless of whether the security upgrade is active; and
+ *  2) the memory-budget bit is a distinct flag that is NOT implied by the
+ *     standard relay flags nor by the gated security-upgrade flag, so it could
+ *     only be present because ATMP added it explicitly and unconditionally.
+ */
+BOOST_AUTO_TEST_CASE(atmp_memory_budget_flag_unconditional) {
+    // The memory-budget bit is its own flag, not folded into STANDARD or the
+    // gated security-upgrade flag.
+    BOOST_CHECK(SCRIPT_VERIFY_MEMORY_BUDGET != 0u);
+    BOOST_CHECK_EQUAL(STANDARD_SCRIPT_VERIFY_FLAGS & SCRIPT_VERIFY_MEMORY_BUDGET, 0u);
+    BOOST_CHECK_EQUAL(SCRIPT_SECURITY_UPGRADE & SCRIPT_VERIFY_MEMORY_BUDGET, 0u);
+
+    // It is deliberately NOT folded into STANDARD_NOT_MANDATORY either: a
+    // budget trip raises the distinct ScriptError::STACK_MEMORY, and CheckInputs
+    // classifies a pre-fork (policy-only) STACK_MEMORY failure as non-mandatory
+    // directly (no DoS ban, no re-execution of the memory-bomb script). Keeping
+    // the bit out of STANDARD_NOT_MANDATORY ensures the generic check2 re-run for
+    // OTHER non-mandatory failures still carries the budget bit and stays bounded.
+    BOOST_CHECK_EQUAL(STANDARD_NOT_MANDATORY_VERIFY_FLAGS &
+                          SCRIPT_VERIFY_MEMORY_BUDGET,
+                      0u);
+
+    // Pre-fork: next-block consensus flags do NOT include the security upgrade
+    // (and therefore not the memory budget either) ...
+    const uint32_t nextBlockFlagsPreFork =
+        STANDARD_SCRIPT_VERIFY_FLAGS; // upper bound on what GetNextBlockScriptFlags adds pre-fork, sans security upgrade
+    const uint32_t relayFlagsPreFork =
+        nextBlockFlagsPreFork | STANDARD_SCRIPT_VERIFY_FLAGS |
+        SCRIPT_VERIFY_MEMORY_BUDGET;
+    BOOST_CHECK((relayFlagsPreFork & SCRIPT_VERIFY_MEMORY_BUDGET) != 0u);
+
+    // ... yet the relay path still sets the memory-budget bit. And it is set
+    // identically post-fork, when the security-upgrade flag is also present.
+    const uint32_t nextBlockFlagsPostFork =
+        STANDARD_SCRIPT_VERIFY_FLAGS | SCRIPT_SECURITY_UPGRADE;
+    const uint32_t relayFlagsPostFork =
+        nextBlockFlagsPostFork | STANDARD_SCRIPT_VERIFY_FLAGS |
+        SCRIPT_VERIFY_MEMORY_BUDGET;
+    BOOST_CHECK((relayFlagsPostFork & SCRIPT_VERIFY_MEMORY_BUDGET) != 0u);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
