@@ -10,5 +10,7 @@ set -euo pipefail
 # Fetch latest signers' keys. We do this in order to check if a key was revoked.
 while read -r FINGERPRINT _
 do
+  # Skip comment (#...) and blank lines so keys.txt can be documented.
+  case "${FINGERPRINT}" in ''|\#*) continue ;; esac
   gpg --recv-keys "${FINGERPRINT}"
 done < ./keys.txt
