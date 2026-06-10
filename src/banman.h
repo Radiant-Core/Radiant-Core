@@ -57,8 +57,12 @@ class CSubNet;
 class BanMan {
 public:
     ~BanMan();
+    //! M12: persist_discouraged controls whether the discouragement filter is
+    //! loaded from / persisted to discouraged.dat across restarts. Wired from
+    //! -persistdiscouraged in init.cpp; defaults true to preserve prior behavior.
     BanMan(fs::path ban_file, const CChainParams &chainparams,
-           CClientUIInterface *client_interface, int64_t default_ban_time);
+           CClientUIInterface *client_interface, int64_t default_ban_time,
+           bool persist_discouraged = true);
     void Ban(const CNetAddr &net_addr, int64_t ban_time_offset = 0,
              bool since_unix_epoch = false, bool save_to_disk = true);
     void Ban(const CSubNet &sub_net, int64_t ban_time_offset = 0,

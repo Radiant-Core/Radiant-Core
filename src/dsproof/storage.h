@@ -127,6 +127,14 @@ public:
     ///! Takes all extant proofs and marks them as orphans.
     void orphanAll();
 
+    //! H-3: drop the per-peer orphan *counter* entry for a disconnected peer.
+    //! This only removes the bookkeeping entry in m_orphansByPeer so that map
+    //! cannot grow without bound as peers churn; it does NOT touch the resident
+    //! orphan proofs themselves (those are reaped by the normal expiry path),
+    //! so it must not adjust m_numOrphans. Safe to call for a peer with no
+    //! entry (no-op). Call this from net_processing when a peer disconnects.
+    void dropPeer(NodeId nodeId);
+
 private:
     mutable RecursiveMutex m_lock;
 

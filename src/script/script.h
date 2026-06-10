@@ -239,7 +239,15 @@ enum opcodetype {
     // OP_STATESEPARATOR can only appear up to once in an output. The purpose is to allow a contract developer to split an output script
     // into two state and code sections. By defining this OP code, the second half (or "suffix script") can be summarized as a single hash
     // called a "codeScripthash". The first half can be summarized with a "stateScripthash". This is especially useful for the OP code OP_OUTPUTCODESUMMARY which enables a contract to verify the bytecode (logic) of a contract related to each unique reference.
-    // A requirement is that all op codes preceding the `OP_STATESEPARATOR` must strictly be data or reference pushes.
+    //
+    // NOTE on the prefix: by convention the state section (the bytes preceding
+    // OP_STATESEPARATOR) is expected to be data / reference pushes only, but this
+    // is NOT enforced anywhere. CScript::GetPushRefs() (script.cpp) only enforces
+    // "at most one OP_STATESEPARATOR per script" and "no OP_STATESEPARATOR in a
+    // script that also contains OP_RETURN"; it records the separator byte index
+    // but does not require the preceding opcodes to be push-only. EvalScript's
+    // OP_STATESEPARATOR handler is a NOP and likewise does not check the prefix.
+    // Covenants must therefore not assume push-only enforcement of the prefix.
     OP_STATESEPARATOR = 0xbd,
     OP_STATESEPARATORINDEX_UTXO = 0xbe,
     OP_STATESEPARATORINDEX_OUTPUT = 0xbf,

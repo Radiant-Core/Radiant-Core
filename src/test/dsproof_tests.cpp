@@ -253,6 +253,156 @@ BOOST_AUTO_TEST_CASE(dsproof_orphan_autocleaner) {
     SetMockTime(0); // undo mocktime
 }
 
+// H-3: Per-peer DSProof orphan counter must NOT leak on orphan expiry.
+//
+// Regression test for the bug where periodicCleanup()'s orphan-erase branch
+// called decrementOrphans(1) but omitted adjustPeerOrphanCount(nodeId, -1).
+// Because there is no public getter for the per-peer counter, we observe the
+// counter indirectly through the per-peer orphan cap: with the leak, the stale
+// counter for the peer stays >= the cap after expiry, so subsequent orphans
+// from that same peer are wrongly rejected by addOrphan(). With the fix, the
+// counter returns to 0 and the peer can add a full cap's worth of orphans again.
+BOOST_AUTO_TEST_CASE(dsproof_orphan_per_peer_counter_no_leak_on_expiry) {
+    DoubleSpendProofStorage storage;
+
+    constexpr unsigned N = 10;
+    constexpr int SECS = 50;
+    constexpr int64_t mockStart = 3'000'000, spacing = 2;
+    constexpr NodeId thePeer = 1;
+
+    storage.setSecondsToKeepOrphans(SECS);
+    storage.setMaxOrphans(N * 100);   // comfortably large: never reaps via the limit
+    storage.setMaxOrphansPerPeer(N);  // exactly N allowed per peer
+
+    auto proofs = makeUniqueProofs(N);
+    BOOST_CHECK_EQUAL(proofs.size(), N);
+
+    SetMockTime(mockStart);
+    unsigned i = 0;
+    for (const auto &proof : proofs) {
+        // add them all attributed to the same peer, spaced apart in time
+        SetMockTime(mockStart + (i * spacing));
+        BOOST_CHECK(storage.addOrphan(proof, thePeer));
+        ++i;
+    }
+    BOOST_CHECK_EQUAL(storage.numOrphans(), N);
+
+    // The peer is now exactly at its per-peer cap: one more must be refused.
+    {
+        auto extra = makeUniqueProofs(1);
+        BOOST_CHECK(!storage.addOrphan(extra.front(), thePeer));
+    }
+
+    // Advance time well past the expiry window and run the periodic cleaner.
+    // This must reap all N orphans AND bring the per-peer counter back to 0.
+    SetMockTime(mockStart + (N * spacing) + SECS + 1000);
+    storage.periodicCleanup();
+    BOOST_CHECK_EQUAL(storage.numOrphans(), 0u);
+    BOOST_CHECK_EQUAL(storage.size(), 0u);
+
+    // Now the same peer must be able to add a full cap's worth of NEW orphans
+    // again. Without the H-3 fix the leaked counter would still read >= N and
+    // every one of these would be (wrongly) rejected.
+    auto more = makeUniqueProofs(N);
+    unsigned accepted = 0;
+    for (const auto &proof : more) {
+        if (storage.addOrphan(proof, thePeer))
+            ++accepted;
+    }
+    BOOST_CHECK_EQUAL(accepted, N);
+    BOOST_CHECK_EQUAL(storage.numOrphans(), N);
+
+    SetMockTime(0); // undo mocktime
+}
+
+// H-3: dropPeer() removes the per-peer counter entry without disturbing the
+// resident orphan count. We again observe the counter via the per-peer cap:
+// after dropPeer(), the peer must be able to add a full cap's worth of orphans
+// on top of its existing ones (its prior counter was cleared), while the global
+// orphan count reflects every resident orphan.
+BOOST_AUTO_TEST_CASE(dsproof_dropPeer_clears_per_peer_counter) {
+    DoubleSpendProofStorage storage;
+
+    constexpr unsigned N = 8;
+    constexpr NodeId thePeer = 7;
+
+    storage.setMaxOrphans(N * 100);   // never reaps via the global limit
+    storage.setMaxOrphansPerPeer(N);  // exactly N allowed per peer
+
+    auto first = makeUniqueProofs(N);
+    for (const auto &proof : first)
+        BOOST_CHECK(storage.addOrphan(proof, thePeer));
+    BOOST_CHECK_EQUAL(storage.numOrphans(), N);
+
+    // At the cap: a further orphan from this peer is refused.
+    {
+        auto extra = makeUniqueProofs(1);
+        BOOST_CHECK(!storage.addOrphan(extra.front(), thePeer));
+    }
+
+    // dropPeer() clears only the per-peer COUNTER entry; resident orphans stay.
+    storage.dropPeer(thePeer);
+    BOOST_CHECK_EQUAL(storage.numOrphans(), N); // unchanged
+    BOOST_CHECK_EQUAL(storage.size(), N);       // unchanged
+
+    // The peer may now add another full cap's worth of NEW orphans.
+    auto second = makeUniqueProofs(N);
+    unsigned accepted = 0;
+    for (const auto &proof : second) {
+        if (storage.addOrphan(proof, thePeer))
+            ++accepted;
+    }
+    BOOST_CHECK_EQUAL(accepted, N);
+    BOOST_CHECK_EQUAL(storage.numOrphans(), 2 * N); // all resident orphans counted
+
+    // dropPeer() for an unknown / negative peer is a harmless no-op.
+    storage.dropPeer(thePeer + 12345);
+    storage.dropPeer(-1);
+    BOOST_CHECK_EQUAL(storage.numOrphans(), 2 * N);
+}
+
+// M-dsproof: a DSProof whose pushData CompactSize claims more than one element
+// must be rejected AT READ TIME (when the count is read), before the outer
+// vector-of-vectors is bulk-allocated. We craft this by serializing a valid
+// proof and flipping the spender-1 pushData count byte from 0x01 to 0x02 at its
+// (deterministic) fixed offset, then assert deserialization throws.
+BOOST_AUTO_TEST_CASE(dsproof_pushdata_count_gt1_rejected_at_read) {
+    auto proofs = makeDupeProofs(1);
+    BOOST_CHECK_EQUAL(proofs.size(), 1u);
+
+    // Round-trip sanity: a well-formed (count == 1) proof serializes and
+    // deserializes cleanly through the count-guarded read path.
+    CDataStream good(SER_NETWORK, PROTOCOL_VERSION);
+    good << proofs.front();
+    {
+        CDataStream in(good.begin(), good.end(), SER_NETWORK, PROTOCOL_VERSION);
+        DoubleSpendProof rt;
+        BOOST_CHECK_NO_THROW(in >> rt);
+        BOOST_CHECK(rt == proofs.front());
+    }
+
+    // Deterministic offset of the spender-1 pushData CompactSize byte:
+    //   COutPoint : TxId(32) + uint32 n(4)                              = 36
+    //   spender1  : txVersion(4) + outSequence(4) + lockTime(4)         = 12
+    //             + 4 * uint256 (hashPrevOutputs/Sequence/OutputHashes/
+    //               Outputs, 32 each)                                   = 128
+    //   => 36 + 12 + 128                                                = 176
+    constexpr size_t kPushDataCountOffset = 176;
+    std::vector<uint8_t> bytes(good.begin(), good.end());
+    BOOST_REQUIRE(bytes.size() > kPushDataCountOffset);
+    // The legal serialized count is exactly 1 (single CompactSize byte 0x01).
+    BOOST_CHECK_EQUAL(bytes[kPushDataCountOffset], uint8_t(0x01));
+
+    // Tamper: claim 2 pushData elements. Deserialization must throw on the count
+    // check, before allocating/reading the inner element vectors.
+    bytes[kPushDataCountOffset] = 0x02;
+    {
+        CDataStream in(bytes, SER_NETWORK, PROTOCOL_VERSION);
+        DoubleSpendProof bad;
+        BOOST_CHECK_THROW(in >> bad, std::ios_base::failure);
+    }
+}
+
 static std::pair<bool, CValidationState> ToMemPool(const CMutableTransaction &tx, CTransactionRef *pref = nullptr)
 EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     CValidationState state;

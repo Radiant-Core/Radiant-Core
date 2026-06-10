@@ -303,6 +303,17 @@ void BlockAssembler::AddToBlock(CTxMemPool::txiter iter) {
     nBlockSigChecks += iter->GetSigChecks();
     nFees += iter->GetFee();
 
+    // Defense-in-depth: mirror ConnectBlock's block-fee MoneyRange guard so a
+    // template can never accumulate an out-of-range total fee (which would in
+    // turn produce an out-of-range coinbase value). Mempool admission already
+    // bounds each tx's fee, so in normal operation this never triggers; if it
+    // somehow does, abort template assembly rather than build an invalid block.
+    if (!MoneyRange(nFees)) {
+        throw std::runtime_error(
+            strprintf("%s: accumulated fee in the block template out of range "
+                      "(%d)", __func__, nFees));
+    }
+
     if (fPrintPriority) {
         LogPrintf(
             "fee %s txid %s\n",

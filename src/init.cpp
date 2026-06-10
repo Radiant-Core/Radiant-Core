@@ -1117,6 +1117,16 @@ void SetupServerArgs() {
                  "Require RPC authentication for the /metrics endpoint "
                  "(default: 1)",
                  ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-restauth",
+                 "Require RPC authentication for the public REST interface "
+                 "(-rest): clients must supply the same Basic-auth credentials "
+                 "(or cookie) used for JSON-RPC. Disabled by default to preserve "
+                 "compatibility for existing credential-less REST consumers. "
+                 "STRONGLY RECOMMENDED (-restauth=1) whenever the RPC port is "
+                 "exposed beyond loopback (-rpcallowip/-rpcbind); a startup "
+                 "warning is logged when REST is reachable unauthenticated "
+                 "beyond loopback (default: 0)",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
     gArgs.AddArg("-persistdiscouraged",
                  "Persist the peer discouragement filter across restarts "
                  "(default: 1)",
@@ -2346,9 +2356,14 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     // need to reindex later.
 
     assert(!g_banman);
+    // M12 (L-persistdiscouraged): wire -persistdiscouraged so it actually
+    // controls persistence of the discouragement filter. Passed into the
+    // constructor so m_persist_discouraged is set BEFORE LoadDiscouraged() runs.
+    // Default true preserves prior behavior.
     g_banman = std::make_unique<BanMan>(
         GetDataDir() / "banlist.dat", config.GetChainParams(), &uiInterface,
-        gArgs.GetArg("-bantime", DEFAULT_MANUAL_BANTIME));
+        gArgs.GetArg("-bantime", DEFAULT_MANUAL_BANTIME),
+        gArgs.GetBoolArg("-persistdiscouraged", true));
     assert(!g_connman);
     g_connman = std::make_unique<CConnman>(
         config, GetRand(std::numeric_limits<uint64_t>::max()),

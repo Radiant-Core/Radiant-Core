@@ -8,11 +8,14 @@
 
 #include <chainparams.h>
 #include <clientversion.h>
+#include <coins.h>
 #include <config.h>
 #include <consensus/consensus.h>
 #include <net.h>
 #include <primitives/transaction.h>
+#include <script/script.h>
 #include <streams.h>
+#include <uint256.h>
 #include <util/system.h>
 
 #include <test/setup_common.h>
@@ -20,8 +23,10 @@
 #include <boost/signals2/signal.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <vector>
 
 BOOST_FIXTURE_TEST_SUITE(validation_tests, TestingSetup)
@@ -171,6 +176,69 @@ BOOST_AUTO_TEST_CASE(min_relay_fee_upgrade_test) {
 
     // Restore global state
     ::minRelayTxFee = originalMinRelayTxFee;
+}
+
+/**
+ * Append a single OP_PUSHINPUTREF opcode followed by its 36-byte (288-bit)
+ * reference operand to a script, in the raw on-the-wire encoding the parser
+ * (CScript::GetPushRefs / GetScriptOp) expects.
+ */
+static void AppendPushInputRef(CScript &script, const std::array<uint8_t, 36> &ref) {
+    script.insert(script.end(), static_cast<uint8_t>(OP_PUSHINPUTREF));
+    script.insert(script.end(), ref.begin(), ref.end());
+}
+
+/**
+ * Build N distinct 36-byte references deterministically (counter encoded in the
+ * leading bytes) and append them as OP_PUSHINPUTREF opcodes to `script`.
+ */
+static void AppendDistinctPushRefs(CScript &script, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        std::array<uint8_t, 36> ref{};
+        ref[0] = static_cast<uint8_t>(i & 0xff);
+        ref[1] = static_cast<uint8_t>((i >> 8) & 0xff);
+        ref[2] = static_cast<uint8_t>((i >> 16) & 0xff);
+        ref[3] = static_cast<uint8_t>((i >> 24) & 0xff);
+        // a fixed marker in the high bytes so these never collide with the
+        // input-outpoint-derived refs the validator also tracks.
+        ref[35] = 0xab;
+        AppendPushInputRef(script, ref);
+    }
+}
+
+/**
+ * 2026-06 security-audit (M-ref-validation): a small token-style tx whose output
+ * push-refs are fully backed by the spent input's refs is accepted by
+ * validateTransactionReferenceOperations. This locks in that the always-on
+ * reserve() perf change (and the removal of the earlier ineffective+over-counting
+ * distinct-ref cap) did not alter the induction-rule result for a normal backed
+ * tx. (Bounded ref-flood resource use is covered by the MAX_TX_SIZE limit, not a
+ * separate cap -- see the note in validateTransactionReferenceOperations.)
+ */
+BOOST_AUTO_TEST_CASE(ref_validation_accepts_backed_refs) {
+    CCoinsView dummy;
+    CCoinsViewCache coins(&dummy);
+
+    const size_t kRefs = 4;
+
+    CScript inputSpk;
+    AppendDistinctPushRefs(inputSpk, kRefs);
+    CScript outputSpk;
+    AppendDistinctPushRefs(outputSpk, kRefs);
+
+    const COutPoint in(TxId(uint256S(
+        "0202020202020202020202020202020202020202020202020202020202020202")), 0);
+    coins.AddCoin(in, Coin(CTxOut(1 * SATOSHI, inputSpk), 1, false), false);
+
+    CMutableTransaction mtx;
+    mtx.vin.resize(1);
+    mtx.vin[0].prevout = in;
+    mtx.vout.resize(1);
+    mtx.vout[0].nValue = 1 * SATOSHI;
+    mtx.vout[0].scriptPubKey = outputSpk;
+    const CTransaction tx(mtx);
+
+    BOOST_CHECK(ReferenceParser::validateTransactionReferenceOperations(tx, coins));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

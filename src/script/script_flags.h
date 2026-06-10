@@ -31,6 +31,15 @@ enum {
     // (BIP62 rule 5).
     SCRIPT_VERIFY_LOW_S = (1U << 3),
 
+    // 2026-06 security-audit hardening (H1): enforce the per-script peak
+    // stack-memory budget (MAX_SCRIPT_STACK_MEMORY_USAGE) in EvalScript as a
+    // relay/policy guard, independent of the future consensus
+    // SCRIPT_SECURITY_UPGRADE activation. This lets the mempool close the
+    // relay-reachable memory bomb *now* (pre-SecurityUpgradeHeight) without
+    // tightening consensus for historical mainnet blocks. It is a policy-only
+    // flag: it MUST NOT be added to any consensus / mandatory flag set.
+    SCRIPT_VERIFY_MEMORY_BUDGET = (1U << 4),
+
     // Using a non-push operator in the scriptSig causes script failure
     // (BIP62 rule 2).
     SCRIPT_VERIFY_SIGPUSHONLY = (1U << 5),

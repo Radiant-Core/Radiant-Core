@@ -10,6 +10,7 @@
 #include <chainparams.h>
 #include <config.h>
 #include <core_io.h>
+#include <httprpc.h>
 #include <httpserver.h>
 #include <index/txindex.h>
 #include <primitives/block.h>
@@ -30,6 +31,24 @@
 
 // Allow a max of 15 outpoints to be queried at once.
 static const size_t MAX_GETUTXOS_OUTPOINTS = 15;
+
+/**
+ * SECURITY (audit 2026-06, H4): default on. When true, every /rest/* endpoint
+ * requires the same authentication as the JSON-RPC interface (single-user,
+ * multi-user, or cookie). This mirrors the /metrics posture (-metricsauth).
+ * The REST interface (-rest) is unauthenticated by DEFAULT to preserve backward
+ * compatibility for existing credential-less REST consumers (it is opt-in and,
+ * by default, only binds to loopback and is gated by the -rpcallowip ACL).
+ * Operators who expose the RPC port beyond loopback should set -restauth=1 to
+ * require the same Basic-auth credentials (or cookie) used for JSON-RPC; a loud
+ * startup warning is emitted when REST is reachable unauthenticated beyond
+ * loopback. Defaulting OFF (rather than ON) is a deliberate no-regression choice
+ * for a point release; consider flipping the default once ecosystem REST
+ * consumers are known to authenticate.
+ */
+static const bool DEFAULT_REST_AUTH = false;
+/** WWW-Authenticate header presented with a 401 from /rest/*. */
+static const char *REST_WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
 
 enum class RetFormat {
     UNDEF,
@@ -118,8 +137,27 @@ static bool CheckWarmup(HTTPRequest *req) {
     return true;
 }
 
+// SECURITY (audit 2026-06, H4): require RPC authentication for /rest/* unless
+// explicitly opted out with -restauth=0. Returns true if the request is allowed
+// to proceed; otherwise writes a 401 (with a WWW-Authenticate challenge) and
+// returns false so the handler aborts. This is relay/policy-only (does not touch
+// consensus) and is safe to apply always: it only affects access to the opt-in
+// REST interface.
+static bool CheckRESTAuth(HTTPRequest *req) {
+    if (gArgs.GetBoolArg("-restauth", DEFAULT_REST_AUTH) &&
+        !RPCAuthorizedRequest(req)) {
+        req->WriteHeader("WWW-Authenticate", REST_WWW_AUTH_HEADER_DATA);
+        req->WriteReply(HTTP_UNAUTHORIZED, "");
+        return false;
+    }
+    return true;
+}
+
 static bool rest_headers(Config &config, HTTPRequest *req,
                          const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -209,6 +247,9 @@ static bool rest_headers(Config &config, HTTPRequest *req,
 
 static bool rest_block(const Config &config, HTTPRequest *req,
                        const std::string &strURIPart, bool showTxDetails) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -294,6 +335,9 @@ static bool rest_block_notxdetails(Config &config, HTTPRequest *req,
 
 static bool rest_chaininfo(Config &config, HTTPRequest *req,
                            const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -320,6 +364,9 @@ static bool rest_chaininfo(Config &config, HTTPRequest *req,
 
 static bool rest_mempool_info(Config &config, HTTPRequest *req,
                               const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -345,6 +392,9 @@ static bool rest_mempool_info(Config &config, HTTPRequest *req,
 
 static bool rest_mempool_contents(Config &config, HTTPRequest *req,
                                   const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -370,6 +420,9 @@ static bool rest_mempool_contents(Config &config, HTTPRequest *req,
 
 static bool rest_tx(Config &config, HTTPRequest *req,
                     const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -436,6 +489,9 @@ static bool rest_tx(Config &config, HTTPRequest *req,
 
 static bool rest_getutxos(Config &config, HTTPRequest *req,
                           const std::string &strURIPart) {
+    if (!CheckRESTAuth(req)) {
+        return false;
+    }
     if (!CheckWarmup(req)) {
         return false;
     }
@@ -667,21 +723,24 @@ static const struct {
 };
 
 void StartREST() {
-    // SECURITY (audit 2026-06, H4): the REST interface is intentionally
-    // UNAUTHENTICATED by design (read-only public chain data) and is opt-in
-    // (-rest, off by default). It shares the single HTTP listener with RPC, so
-    // it only ever binds where RPC binds (see HTTPBindAddresses) and is gated by
-    // the same -rpcallowip ACL. However, because it has no per-request auth, an
-    // operator who exposes the RPC port beyond loopback also exposes REST. Emit
-    // a loud startup warning in that case so it is never enabled accidentally on
-    // a public interface.
-    if (gArgs.IsArgSet("-rpcallowip")) {
-        LogPrintf("WARNING: the REST interface (-rest) is ENABLED and is "
-                  "UNAUTHENTICATED. Because -rpcallowip is set, REST may be "
-                  "reachable from non-loopback addresses. Anyone able to reach "
-                  "the RPC port can read chain/mempool data via /rest/*. "
-                  "Restrict access with -rpcallowip/-rpcbind and/or front it "
-                  "with an authenticating reverse proxy.\n");
+    // SECURITY (audit 2026-06, H4): the REST interface is opt-in (-rest, off by
+    // default). Per-request RPC authentication is available via -restauth but is
+    // DISABLED by default to preserve compatibility for existing credential-less
+    // REST consumers. It shares the single HTTP listener with RPC, so it only
+    // ever binds where RPC binds (see HTTPBindAddresses) and is gated by the same
+    // -rpcallowip ACL. When REST auth is disabled (the default) AND the RPC port
+    // is exposed beyond loopback (-rpcallowip), chain/mempool data under /rest/*
+    // is reachable unauthenticated. Emit a loud startup warning in that case so
+    // it is never done accidentally on a public interface; operators should set
+    // -restauth=1 there.
+    if (!gArgs.GetBoolArg("-restauth", DEFAULT_REST_AUTH) &&
+        gArgs.IsArgSet("-rpcallowip")) {
+        LogPrintf("WARNING: the REST interface (-rest) is ENABLED with "
+                  "authentication DISABLED (-restauth=0). Because -rpcallowip is "
+                  "set, REST may be reachable from non-loopback addresses. Anyone "
+                  "able to reach the RPC port can read chain/mempool data via "
+                  "/rest/*. Restrict access with -rpcallowip/-rpcbind and/or "
+                  "front it with an authenticating reverse proxy.\n");
     }
     for (size_t i = 0; i < std::size(uri_prefixes); ++i) {
         RegisterHTTPHandler(uri_prefixes[i].prefix, false,

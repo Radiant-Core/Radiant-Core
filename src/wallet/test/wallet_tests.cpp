@@ -810,4 +810,172 @@ BOOST_FIXTURE_TEST_CASE(wallet_bip69, ListCoinsTestingSetup) {
     }
 }
 
+// SECURITY (audit 2026-06, H-4): a wallet restored with a pre-v3 legacy-path
+// seed (funds at m/0'/0'/k) under the default BIP44 derivation (m/44'/512'/0'/
+// 0/k) must NOT silently present a 0-balance wallet. CWallet::
+// ScanSeedDerivationActivity is the probe that detects this, and it backs both
+// the sethdseed RPC reconciliation and the on-load auto-detect.
+//
+// This test exercises the REAL detection path: it mines a block whose coinbase
+// pays a LEGACY-derived (m/0'/0'/0') scriptPubKey for a fresh seed, so the coin
+// lands in the node's live UTXO set, then runs the probe and proves it
+// attributes the funds to the legacy style. Crucially it does NOT call
+// AddToWallet()/touch mapWallet, and the seed's keys are NOT in any keystore --
+// exactly the conditions under which the old mapWallet/IsMine-based probe failed
+// silently. The match comes purely from scanning pcoinsdbview (as scantxoutset
+// does). The end-to-end sethdseed restore flow is additionally covered by the
+// regtest functional phase.
+BOOST_FIXTURE_TEST_CASE(seed_derivation_activity_detects_legacy_via_utxo_set,
+                        TestChain100Setup) {
+    auto chain = interfaces::MakeChain();
+
+    // A fresh candidate seed, unknown to any wallet/keystore.
+    CKey seedKey;
+    seedKey.MakeNewKey(true);
+
+    // Derive the LEGACY external address m/0'/0'/0' from that seed (all levels
+    // hardened), matching CWallet::DeriveNewChildKey()'s legacy style.
+    static const uint32_t HARDENED = 0x80000000;
+    CExtKey masterKey;
+    masterKey.SetSeed(seedKey.begin(), seedKey.size());
+    CExtKey legacyAccount, legacyExternal, legacyChild;
+    masterKey.Derive(legacyAccount, HARDENED);          // m/0'
+    legacyAccount.Derive(legacyExternal, HARDENED + 0); // m/0'/0'
+    legacyExternal.Derive(legacyChild, HARDENED + 0);   // m/0'/0'/0'
+    const CScript legacyScript =
+        GetScriptForDestination(legacyChild.key.GetPubKey().GetID());
+
+    // A dummy wallet only so we can call the (chainstate-backed) probe; the
+    // wallet itself holds none of the seed's keys and has empty history.
+    CWallet wallet(Params(), *chain, WalletLocation(),
+                   WalletDatabase::CreateDummy());
+
+    // Before the coin exists, the live UTXO set has no matching output: the
+    // probe must find NOTHING on either style, and report the scan succeeded.
+    {
+        const CWallet::HDSeedDerivationActivity none =
+            wallet.ScanSeedDerivationActivity(seedKey);
+        BOOST_CHECK(none.scanAvailable);
+        BOOST_CHECK_EQUAL(none.legacyHits, 0);
+        BOOST_CHECK_EQUAL(none.bip44Hits, 0);
+    }
+
+    // Mine a block paying the legacy P2PKH script. Its coinbase output enters the
+    // live UTXO set immediately (immaturity is irrelevant -- the probe iterates
+    // every coin in the set).
+    CreateAndProcessBlock({}, legacyScript);
+
+    // The probe must now attribute the UTXO to the LEGACY style, with ZERO hits
+    // on the BIP44 style -- the exact "restored a legacy seed under the default
+    // derivation" signal that sethdseed / on-load auto-detect act on. No
+    // AddToWallet(), no mapWallet, no IsMine involved.
+    const CWallet::HDSeedDerivationActivity act =
+        wallet.ScanSeedDerivationActivity(seedKey);
+    BOOST_CHECK(act.scanAvailable);
+    BOOST_CHECK_EQUAL(act.bip44Hits, 0);
+    BOOST_CHECK(act.legacyHits >= 1);
+    BOOST_CHECK_EQUAL(act.legacyMaxIndex, 0);
+}
+
+// SECURITY (audit 2026-06, H-4): the symmetric case -- a seed funded on the
+// BIP44 (default) path must be attributed to the BIP44 style and NOT the legacy
+// style. Together with the test above this proves the probe distinguishes the
+// two derivation styles against the real UTXO set rather than guessing.
+BOOST_FIXTURE_TEST_CASE(seed_derivation_activity_detects_bip44_via_utxo_set,
+                        TestChain100Setup) {
+    auto chain = interfaces::MakeChain();
+
+    CKey seedKey;
+    seedKey.MakeNewKey(true);
+
+    // Derive the BIP44 external address m/44'/512'/0'/0/0 (purpose/coin/account
+    // hardened, change/index non-hardened), matching the BIP44 style.
+    static const uint32_t HARDENED = 0x80000000;
+    CExtKey masterKey;
+    masterKey.SetSeed(seedKey.begin(), seedKey.size());
+    CExtKey purpose, coinType, account, change, child;
+    masterKey.Derive(purpose, HARDENED + 44);    // m/44'
+    purpose.Derive(coinType, HARDENED + 512);    // m/44'/512'
+    coinType.Derive(account, HARDENED + 0);      // m/44'/512'/0'
+    account.Derive(change, 0);                    // m/44'/512'/0'/0
+    change.Derive(child, 0);                       // m/44'/512'/0'/0/0
+    const CScript bip44Script =
+        GetScriptForDestination(child.key.GetPubKey().GetID());
+
+    CWallet wallet(Params(), *chain, WalletLocation(),
+                   WalletDatabase::CreateDummy());
+
+    CreateAndProcessBlock({}, bip44Script);
+
+    const CWallet::HDSeedDerivationActivity act =
+        wallet.ScanSeedDerivationActivity(seedKey);
+    BOOST_CHECK(act.scanAvailable);
+    BOOST_CHECK_EQUAL(act.legacyHits, 0);
+    BOOST_CHECK(act.bip44Hits >= 1);
+    BOOST_CHECK_EQUAL(act.bip44MaxIndex, 0);
+}
+
+// SECURITY (audit 2026-06, M-split-brain / Defect 2): when sethdseed detects
+// that an EXPLICITLY pinned coin_type mismatches the derivation style the seed
+// is actually funded on, it must throw and leave the wallet's HD seed UNCHANGED
+// (no half-applied seed, no flushed-against-a-new-seed keypool). The throw
+// decision is driven entirely by the dual-path UTXO probe, which this test
+// drives end-to-end against the live UTXO set.
+//
+// We assert the two properties that make the RPC's throw-before-mutation correct
+// and observable here at unit scope:
+//   (1) the probe is a pure read-only operation: running it does NOT change the
+//       wallet's existing HD seed (the foundation of "no partial state"); and
+//   (2) it produces the precise funded-on-legacy / not-on-bip44 signal that the
+//       sethdseed explicit-pin branch throws on.
+// The actual JSONRPCError throw + the atomic SetHDSeed/NewKeyPool tail are
+// covered by the regtest functional phase (the sethdseed RPC is file-static and
+// needs full HTTP/IBD/unlock plumbing not available to a unit test).
+BOOST_FIXTURE_TEST_CASE(seed_derivation_probe_is_readonly_for_mismatch,
+                        TestChain100Setup) {
+    auto chain = interfaces::MakeChain();
+
+    // A candidate restore seed funded on the LEGACY path.
+    CKey candidateSeed;
+    candidateSeed.MakeNewKey(true);
+    static const uint32_t HARDENED = 0x80000000;
+    CExtKey masterKey;
+    masterKey.SetSeed(candidateSeed.begin(), candidateSeed.size());
+    CExtKey legacyAccount, legacyExternal, legacyChild;
+    masterKey.Derive(legacyAccount, HARDENED);
+    legacyAccount.Derive(legacyExternal, HARDENED + 0);
+    legacyExternal.Derive(legacyChild, HARDENED + 0);
+    const CScript legacyScript =
+        GetScriptForDestination(legacyChild.key.GetPubKey().GetID());
+    CreateAndProcessBlock({}, legacyScript);
+
+    // A wallet that already has an UNRELATED, existing HD seed installed.
+    CWallet wallet(Params(), *chain, WalletLocation(),
+                   WalletDatabase::CreateDummy());
+    CKeyID original_seed_id;
+    {
+        LOCK(wallet.cs_wallet);
+        CKey existingSeedKey;
+        existingSeedKey.MakeNewKey(true);
+        const CPubKey existing_pub = wallet.DeriveNewSeed(existingSeedKey);
+        wallet.SetHDSeed(existing_pub);
+        original_seed_id = wallet.GetHDChain().seed_id;
+    }
+    BOOST_CHECK(!original_seed_id.IsNull());
+
+    // (2) The probe on the candidate reports funds on legacy, none on BIP44 --
+    // the exact signal sethdseed's explicit-pin branch throws on when the user
+    // pinned coin_type=512.
+    const CWallet::HDSeedDerivationActivity act =
+        wallet.ScanSeedDerivationActivity(candidateSeed);
+    BOOST_CHECK(act.scanAvailable);
+    BOOST_CHECK(act.legacyHits >= 1);
+    BOOST_CHECK_EQUAL(act.bip44Hits, 0);
+
+    // (1) Running the probe mutated nothing: the wallet's existing HD seed is
+    // exactly as it was. This is what guarantees that when the RPC throws on the
+    // mismatch (BEFORE its SetHDSeed tail), the wallet is left untouched.
+    BOOST_CHECK(wallet.GetHDChain().seed_id == original_seed_id);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

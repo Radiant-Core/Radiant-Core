@@ -1388,6 +1388,66 @@ public:
     void SetHDSeed(const CPubKey &key);
 
     /**
+     * Result of scanning a candidate HD seed across both supported derivation
+     * styles (legacy pre-v3 m/0'/0'/k and BIP44 Radiant Standard
+     * m/44'/512'/0'/0/k). Counts how many derived addresses, within a gap-limit
+     * window, are paid by an UNSPENT output in the node's live UTXO set. Used by
+     * the sethdseed RPC (and the on-load auto-detect) to detect the "restored a
+     * legacy seed under the default BIP44 derivation" case and avoid silently
+     * presenting a 0-balance wallet.
+     *
+     * Detection is grounded in the chainstate (UTXO set), NOT in mapWallet /
+     * IsMine: the alternate-style keys are never in the keystore (the active
+     * derivation only derives one style), so an IsMine/mapWallet probe can never
+     * see them. Scanning the UTXO set the same way `scantxoutset` does sidesteps
+     * that chicken-and-egg entirely.
+     */
+    struct HDSeedDerivationActivity {
+        // Number of derived (external+internal) addresses with an UNSPENT coin.
+        int legacyHits{0};
+        int bip44Hits{0};
+        // Highest used index seen per style (-1 if none), for diagnostics.
+        int legacyMaxIndex{-1};
+        int bip44MaxIndex{-1};
+        // False when the live UTXO set could not be scanned (e.g. pruned node,
+        // no chainstate, or a scan already in progress). In that case the hit
+        // counts are not authoritative and callers must NOT auto-switch the
+        // derivation type off them; they should fall back to a clear warning.
+        bool scanAvailable{true};
+    };
+
+    /**
+     * Derive a gap-limit window of receive/change addresses from a candidate
+     * seed under BOTH the legacy (m/0'/0'/k, m/0'/1'/k) and BIP44 Radiant
+     * Standard (m/44'/512'/0'/0/k, m/44'/512'/0'/1/k) derivation styles, then
+     * report which style(s) are funded by scanning the node's live UTXO set
+     * (chainstate) exactly the way the `scantxoutset` RPC does.
+     *
+     * This is a pure, read-only probe: it does NOT add keys, touch the keypool,
+     * mutate the HD chain counters, or otherwise persist anything. Because it
+     * takes the seed key directly (rather than looking it up by id), it can be
+     * run on a candidate seed BEFORE SetHDSeed() commits it -- which is what lets
+     * sethdseed validate/reconcile before any wallet mutation.
+     *
+     * Does not require cs_wallet (it touches no wallet state); it takes cs_main
+     * internally to snapshot the chainstate cursor.
+     */
+    HDSeedDerivationActivity
+    ScanSeedDerivationActivity(const CKey &seed_key, int gap_limit = 20) const;
+
+    /**
+     * Convenience overload: look the seed private key up by id (must already be
+     * in the keystore, e.g. after SetHDSeed/DeriveNewSeed) and probe it. Returns
+     * an empty result (scanAvailable=false) if the key is not held.
+     *
+     * Does not require cs_wallet (GetKey is guarded by cs_KeyStore, and the scan
+     * itself takes only cs_main). Callers MUST NOT hold cs_wallet across this
+     * call, to preserve the cs_main-before-cs_wallet lock order.
+     */
+    HDSeedDerivationActivity
+    ScanSeedDerivationActivity(const CKeyID &seed_id, int gap_limit = 20) const;
+
+    /**
      * Blocks until the wallet state is up-to-date to /at least/ the current
      * chain at the time this function is entered.
      * Obviously holding cs_main/cs_wallet when going into this call may cause

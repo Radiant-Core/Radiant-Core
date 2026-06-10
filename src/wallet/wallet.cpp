@@ -28,6 +28,7 @@
 #include <script/sign.h>
 #include <shutdown.h>
 #include <timedata.h>
+#include <txdb.h>
 #include <txmempool.h>
 #include <ui_interface.h>
 #include <util/moneystr.h>
@@ -340,6 +341,155 @@ void CWallet::DeriveNewChildKey(WalletBatch &batch, CKeyMetadata &metadata,
         throw std::runtime_error(std::string(__func__) +
                                  ": Writing HD chain model failed");
     }
+}
+
+namespace {
+//! Per-style derived scriptPubKey windows for a candidate seed. Each map keys a
+//! P2PKH script to the child index it was derived at, so a UTXO-set match can be
+//! attributed to the right style and the highest used index recorded.
+struct SeedActivityScripts {
+    std::map<CScript, int> legacy;
+    std::map<CScript, int> bip44;
+};
+
+//! Derive [0, gap_limit) external+internal P2PKH scripts for BOTH derivation
+//! styles from `seedKey`. Pure: no wallet/keystore/chainstate access. Mirrors
+//! the exact derivation used by CWallet::DeriveNewChildKey():
+//!   legacy: m/0'/0'/k and m/0'/1'/k (child index hardened)
+//!   bip44:  m/44'/512'/0'/0/k and m/44'/512'/0'/1/k (child index non-hardened)
+SeedActivityScripts DeriveSeedActivityScripts(const CKey &seedKey,
+                                              int gap_limit) {
+    SeedActivityScripts out;
+
+    CExtKey masterKey;
+    masterKey.SetSeed(seedKey.begin(), seedKey.size());
+
+    // Legacy (pre-v3): m/0' -> m/0'/0' (external) / m/0'/1' (internal).
+    CExtKey legacyAccountKey;
+    masterKey.Derive(legacyAccountKey, BIP32_HARDENED_KEY_LIMIT);
+    CExtKey legacyExternalKey;
+    CExtKey legacyInternalKey;
+    legacyAccountKey.Derive(legacyExternalKey, BIP32_HARDENED_KEY_LIMIT + 0);
+    legacyAccountKey.Derive(legacyInternalKey, BIP32_HARDENED_KEY_LIMIT + 1);
+
+    // BIP44 Radiant Standard: m/44'/512'/0'/0 (external) / .../1 (internal).
+    static const uint32_t BIP44_PURPOSE = 44;
+    static const uint32_t RADIANT_COIN_TYPE = 512;
+    static const uint32_t ACCOUNT_INDEX = 0;
+    CExtKey purposeKey;
+    masterKey.Derive(purposeKey, BIP32_HARDENED_KEY_LIMIT + BIP44_PURPOSE);
+    CExtKey coinTypeKey;
+    purposeKey.Derive(coinTypeKey, BIP32_HARDENED_KEY_LIMIT + RADIANT_COIN_TYPE);
+    CExtKey bip44AccountKey;
+    coinTypeKey.Derive(bip44AccountKey, BIP32_HARDENED_KEY_LIMIT + ACCOUNT_INDEX);
+    CExtKey bip44ExternalKey;
+    CExtKey bip44InternalKey;
+    bip44AccountKey.Derive(bip44ExternalKey, 0);
+    bip44AccountKey.Derive(bip44InternalKey, 1);
+
+    auto deriveWindow = [&](const CExtKey &parent, bool hardened,
+                            std::map<CScript, int> &dest) {
+        for (int i = 0; i < gap_limit; i++) {
+            CExtKey childKey;
+            uint32_t childIndex = hardened
+                                      ? (BIP32_HARDENED_KEY_LIMIT + uint32_t(i))
+                                      : uint32_t(i);
+            parent.Derive(childKey, childIndex);
+            CScript script =
+                GetScriptForDestination(childKey.key.GetPubKey().GetID());
+            // Keep the lowest index if the same script somehow recurs.
+            dest.emplace(std::move(script), i);
+        }
+    };
+
+    deriveWindow(legacyExternalKey, /*hardened=*/true, out.legacy);
+    deriveWindow(legacyInternalKey, /*hardened=*/true, out.legacy);
+    deriveWindow(bip44ExternalKey, /*hardened=*/false, out.bip44);
+    deriveWindow(bip44InternalKey, /*hardened=*/false, out.bip44);
+
+    return out;
+}
+} // namespace
+
+CWallet::HDSeedDerivationActivity
+CWallet::ScanSeedDerivationActivity(const CKey &seed_key, int gap_limit) const {
+    HDSeedDerivationActivity result;
+    if (gap_limit <= 0 || !seed_key.IsValid()) {
+        return result;
+    }
+
+    // Derive the candidate scriptPubKey windows for both styles. This is a pure
+    // computation on the supplied seed -- it does NOT consult mapWallet/IsMine,
+    // so it works even though the alternate-style keys are not in the keystore.
+    const SeedActivityScripts scripts =
+        DeriveSeedActivityScripts(seed_key, gap_limit);
+
+    // Detection is grounded in the node's live UTXO set, scanned exactly the way
+    // the `scantxoutset` RPC does: snapshot the chainstate cursor under cs_main
+    // after flushing, then iterate the whole UTXO set once, matching each coin's
+    // scriptPubKey against the derived windows.
+    //
+    // On a pruned node (or before the chainstate exists) the UTXO set is still
+    // complete -- pruning only removes block/undo data, not coins -- so this
+    // remains authoritative. We only mark the scan unavailable when there is
+    // genuinely no cursor to read (no chainstate, or a concurrent scan).
+    std::unique_ptr<CCoinsViewCursor> pcursor;
+    {
+        LOCK(cs_main);
+        if (pcoinsdbview == nullptr) {
+            result.scanAvailable = false;
+            return result;
+        }
+        FlushStateToDisk();
+        pcursor = std::unique_ptr<CCoinsViewCursor>(pcoinsdbview->Cursor());
+    }
+    if (!pcursor) {
+        result.scanAvailable = false;
+        return result;
+    }
+
+    auto recordHit = [](const std::map<CScript, int> &window,
+                        const CScript &script, int &hits, int &maxIndex) {
+        auto it = window.find(script);
+        if (it == window.end()) {
+            return;
+        }
+        hits++;
+        if (it->second > maxIndex) {
+            maxIndex = it->second;
+        }
+    };
+
+    while (pcursor->Valid()) {
+        COutPoint key;
+        Coin coin;
+        if (!pcursor->GetKey(key) || !pcursor->GetValue(coin)) {
+            // Cursor read failure: the result so far is not trustworthy.
+            result.scanAvailable = false;
+            return result;
+        }
+        const CScript &spk = coin.GetTxOut().scriptPubKey;
+        recordHit(scripts.legacy, spk, result.legacyHits, result.legacyMaxIndex);
+        recordHit(scripts.bip44, spk, result.bip44Hits, result.bip44MaxIndex);
+        pcursor->Next();
+    }
+
+    return result;
+}
+
+CWallet::HDSeedDerivationActivity
+CWallet::ScanSeedDerivationActivity(const CKeyID &seed_id,
+                                    int gap_limit) const {
+    // GetKey is guarded internally by cs_KeyStore; we deliberately do NOT take
+    // cs_wallet here so that the cs_main acquired by the CKey overload below
+    // never nests inside cs_wallet (cs_main must be taken first).
+    CKey seed;
+    if (!GetKey(seed_id, seed)) {
+        HDSeedDerivationActivity empty;
+        empty.scanAvailable = false;
+        return empty;
+    }
+    return ScanSeedDerivationActivity(seed, gap_limit);
 }
 
 bool CWallet::AddKeyPubKeyWithDB(WalletBatch &batch, const CKey &secret,
@@ -4789,6 +4939,36 @@ std::shared_ptr<CWallet> CWallet::CreateWalletFromFile(
                 "This wallet was created with a legacy derivation path. "
                 "Legacy mode has been automatically enabled. If you restore from seed, "
                 "use coin_type=0 or -derivationtype=legacy to access your funds."));
+        } else if (!hasLegacyPathKeys && !hasBip44PathKeys &&
+                   walletInstance->IsHDEnabled()) {
+            // SECURITY (audit 2026-06, H-4): the metadata heuristic above only
+            // works once the wallet already has classified m/0'/0' or m/44'/512'
+            // key metadata, so it cannot help a FRESH restore whose keypool was
+            // generated under the (default) BIP44 path while the seed's funds
+            // live on the legacy path. Couple the legacy decision to the same
+            // seed-derivation probe used by the sethdseed RPC: derive both
+            // gap-limit windows from the active seed and check which style is
+            // funded in the node's live UTXO set. This is read-only and cannot
+            // mutate keys or the HD chain, so it never breaks the existing-wallet
+            // rescue path above (which is only reached when path metadata
+            // exists). We take the seed id WITHOUT holding cs_wallet across the
+            // probe, because the probe takes cs_main internally and cs_main must
+            // be acquired before cs_wallet.
+            const CKeyID seed_id = walletInstance->GetHDChain().seed_id;
+            const CWallet::HDSeedDerivationActivity activity =
+                walletInstance->ScanSeedDerivationActivity(seed_id);
+            if (activity.scanAvailable && activity.legacyHits > 0 &&
+                activity.bip44Hits == 0) {
+                walletInstance->SetWalletFlag(WALLET_FLAG_LEGACY_DERIVATION);
+                walletInstance->WalletLogPrintf(
+                    "Auto-enabled legacy derivation mode: seed has on-chain "
+                    "history on the legacy path (m/0'/0'/k) but none on the "
+                    "BIP44 path (m/44'/512'/0'/0/k).\n");
+                InitWarning(_(
+                    "This wallet's seed has funds on the legacy derivation path. "
+                    "Legacy mode has been automatically enabled. Run 'rescan' if "
+                    "balances do not appear immediately."));
+            }
         }
     }
 

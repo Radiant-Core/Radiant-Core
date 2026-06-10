@@ -552,12 +552,31 @@ CFeeRate CTxMemPool::estimateFee() const {
     return std::max(::minRelayTxFee, GetMinFee(maxMempoolSize));
 }
 
+// Clamp a fee/fee-delta value into [-MAX_MONEY, MAX_MONEY]. Operator-supplied
+// fee deltas (a local-RPC-only path) otherwise accumulate without bound and can
+// drive the modified fee arbitrarily large or negative, which in turn feeds the
+// fee-rate arithmetic in CFeeRate. Bounding the magnitude here keeps that
+// downstream math well-defined while leaving every in-range value untouched, so
+// normal prioritisation behaviour is identical.
+static Amount ClampFeeDelta(const Amount value) {
+    if (value > MAX_MONEY) {
+        return MAX_MONEY;
+    }
+    if (value < -MAX_MONEY) {
+        return -MAX_MONEY;
+    }
+    return value;
+}
+
 void CTxMemPool::PrioritiseTransaction(const TxId &txid,
                                        const Amount nFeeDelta) {
     {
         LOCK(cs);
         Amount &delta = mapDeltas[txid];
-        delta += nFeeDelta;
+        // Clamp the incoming delta before accumulating, then clamp the
+        // accumulated total, so a sequence of large deltas cannot overflow or
+        // grow without bound. In-range deltas are unaffected.
+        delta = ClampFeeDelta(delta + ClampFeeDelta(nFeeDelta));
         txiter it = mapTx.find(txid);
         if (it != mapTx.end()) {
             mapTx.modify(it, update_fee_delta(delta));
@@ -573,7 +592,11 @@ void CTxMemPool::ApplyDelta(const TxId &txid, Amount &nFeeDelta) const {
     auto pos = mapDeltas.find(txid);
     if (pos == mapDeltas.end())
         return;
-    nFeeDelta += pos->second;
+    // Defensively clamp the resulting modified fee into [-MAX_MONEY, MAX_MONEY].
+    // mapDeltas entries are already clamped on insertion, but bounding the sum
+    // guards callers that pass a non-zero base fee in nFeeDelta against driving
+    // the modified fee out of the safe range.
+    nFeeDelta = ClampFeeDelta(nFeeDelta + pos->second);
 }
 
 void CTxMemPool::ClearPrioritisation(const TxId &txid) {

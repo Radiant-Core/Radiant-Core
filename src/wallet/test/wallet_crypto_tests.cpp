@@ -160,4 +160,53 @@ BOOST_AUTO_TEST_CASE(decrypt) {
     }
 }
 
+// SECURITY (audit 2026-06, M-4): authenticated wallet encryption (encrypt-then-
+// MAC / GCM with a format-version marker) was DEFERRED because the on-disk
+// "ckey" record stores the bare ciphertext vector with no adjacent format/
+// version field (see wallet/walletdb.cpp WriteCryptedKey), so a new format
+// could only be distinguished in-band -- which is neither brick-proof (a legacy
+// CBC blob could collide with the magic and become unreadable) nor downgrade-
+// resistant (stripping a trailing MAC would fall through to legacy CBC). This
+// regression test LOCKS IN the backward-compatible legacy behavior that the
+// deferral relies on, so any future format change is forced to update it
+// consciously rather than silently bricking existing wallets:
+//   - a 32-byte secret encrypts to a 48-byte (== plaintext + AES block) CBC blob
+//   - that blob round-trips back to the exact plaintext
+//   - decrypting a legacy (no-MAC) blob with the correct key still succeeds
+//   - decrypting with the WRONG passphrase does NOT recover the plaintext
+BOOST_AUTO_TEST_CASE(legacy_format_backward_compat) {
+    const std::vector<uint8_t> vchSalt = ParseHex("0000deadbeef0000");
+    BOOST_CHECK_EQUAL(vchSalt.size(), WALLET_CRYPTO_SALT_SIZE);
+
+    CCrypter crypt;
+    BOOST_CHECK(crypt.SetKeyFromPassphrase("correct horse", vchSalt, 25000, 0));
+
+    // A 32-byte wallet secret (the size of a private key / master key).
+    const uint256 secretHash(GetRandHash());
+    const CKeyingMaterial vchPlaintext(secretHash.begin(), secretHash.end());
+    BOOST_CHECK_EQUAL(vchPlaintext.size(), 32U);
+
+    // Encrypt: legacy AES-256-CBC produces exactly plaintext + one AES block of
+    // PKCS#7 padding (32 + 16 = 48). This is the layout that must stay readable.
+    std::vector<uint8_t> vchCiphertext;
+    BOOST_CHECK(crypt.Encrypt(vchPlaintext, vchCiphertext));
+    BOOST_CHECK_EQUAL(vchCiphertext.size(), 48U);
+
+    // Round-trip with the same (correct) key recovers the exact plaintext. This
+    // is the "decrypt of an old-format (no-MAC) blob still succeeds" guarantee.
+    CKeyingMaterial vchRoundTrip;
+    BOOST_CHECK(crypt.Decrypt(vchCiphertext, vchRoundTrip));
+    BOOST_CHECK(vchRoundTrip == vchPlaintext);
+
+    // Wrong passphrase must NOT recover the original secret. CBC has no MAC, so
+    // Decrypt may still "succeed" structurally on a block boundary, but the
+    // recovered bytes must differ from the plaintext (the downstream
+    // CKey::VerifyPubKey check in DecryptKey is what ultimately rejects it).
+    CCrypter wrong;
+    BOOST_CHECK(wrong.SetKeyFromPassphrase("battery staple", vchSalt, 25000, 0));
+    CKeyingMaterial vchWrong;
+    wrong.Decrypt(vchCiphertext, vchWrong);
+    BOOST_CHECK(vchWrong != vchPlaintext);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

@@ -47,17 +47,26 @@ inline constexpr int COINBASE_MATURITY = 100;
 inline constexpr int MAX_COINBASE_SCRIPTSIG_SIZE = 2048;
 
 /**
- * Per-script peak memory budget (bytes) enforced only when the 2026-06
- * SCRIPT_SECURITY_UPGRADE flag is active. Caps the cumulative byte size of all
- * elements held across the main stack + altstack at any instant, so a script
- * cannot balloon to multiple GB via repeated OP_DUP/OP_CAT/etc. of a large
- * element. Chosen at 64 MB = 2x MAX_SCRIPT_ELEMENT_SIZE (32 MB), comfortably
- * above any realistic legitimate script (a single max element is 32 MB; this
- * permits two of them simultaneously plus headroom) while rejecting a memory
- * bomb that would otherwise consume up to MAX_STACK_SIZE * MAX_SCRIPT_ELEMENT_SIZE
- * (~1 PB) of address space.
+ * Per-script peak memory budget (bytes). Enforced when the 2026-06
+ * SCRIPT_SECURITY_UPGRADE flag is active (future consensus, mainnet block
+ * SecurityUpgradeHeight) and, as a relay/policy guard, when
+ * SCRIPT_VERIFY_MEMORY_BUDGET is set (mempool acceptance, active now). Caps the
+ * cumulative byte size of all elements held across the main stack + altstack at
+ * any instant, so a script cannot balloon to multiple GB via repeated
+ * OP_DUP/OP_CAT/etc. of a large element.
+ *
+ * Chosen at 128 MB = 4x MAX_SCRIPT_ELEMENT_SIZE (32 MB). This gives genuine
+ * headroom: it admits a few max-size elements plus a working set held
+ * simultaneously (e.g. two 32 MB operands of OP_CAT alongside other live stack
+ * items) rather than the bare 2x that a single in-place OP_CAT could already
+ * approach. It bounds the peak transient address space a single script can
+ * demand while still rejecting a memory bomb that would otherwise consume up to
+ * MAX_STACK_SIZE * MAX_SCRIPT_ELEMENT_SIZE (~1 PB). Raising this value is safe:
+ * it only ever relaxes a never-yet-active budget (consensus enforcement is
+ * future, and the relay guard is new), so it cannot retroactively reject any
+ * historical block.
  */
-inline constexpr uint64_t MAX_SCRIPT_STACK_MEMORY_USAGE = uint64_t(64) * ONE_MEGABYTE;
+inline constexpr uint64_t MAX_SCRIPT_STACK_MEMORY_USAGE = uint64_t(128) * ONE_MEGABYTE;
 
 /**
  * Per-script opcode-cost budget for hashing / bytewise opcodes, enforced only

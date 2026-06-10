@@ -18,7 +18,7 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE
 )
 
 project(radiant-core
-	VERSION 3.1.0
+	VERSION 3.1.1
 	DESCRIPTION "Radiant Core is a full node implementation of the Radiant Blockchain protocol, RXD."
 	HOMEPAGE_URL "https://radiantblockchain.org"
 )

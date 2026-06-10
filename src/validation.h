@@ -879,8 +879,16 @@ class Converters {
 };
 
 /**
- * @brief Contains the logic for the induction proofs using the OP_PUSHINPUTREF, OP_REQUIREINPUTREFs, etc codes.
- * 
+ * @brief Contains the logic for the induction rules for OP_PUSHINPUTREF,
+ *        OP_REQUIREINPUTREF, OP_DISALLOWPUSHINPUTREF(SIBLING) and
+ *        OP_PUSHINPUTREFSINGLETON.
+ *
+ * IMPORTANT: the node only enforces that each output ref is BACKED by some
+ * input ref (a set-subset relation) plus the sibling/singleton uniqueness
+ * constraints. It does NOT enforce ref conservation or any fixed input->output
+ * cardinality: one input ref can back arbitrarily many output copies, and refs
+ * can be burned. Supply/uniqueness/fan-out guarantees, if a token needs them,
+ * are the covenant's responsibility (see validatePushRefRule below).
  */
 class ReferenceParser {
 
@@ -909,12 +917,31 @@ class ReferenceParser {
     }
 
     /**
-     * @brief Validates that the push and require refs are present in the inputs for the outputs
-     * 
-     * @param inputRefSet The input ref set to check
-     * @param outputPushRefSet The output refs requied from the input ref set
-     * @return true 
-     * @return false 
+     * @brief Validates that every output ref is backed by some input ref (subset rule).
+     *
+     * NORMATIVE NOTE ON REF CONSERVATION (read before changing this):
+     * ----------------------------------------------------------------
+     * This is a pure SET-SUBSET test: it succeeds iff every element of
+     * outputPushRefSet is also present in inputRefSet. It deliberately enforces
+     * NO cardinality / conservation constraint. A single input ref R therefore
+     * legitimately backs ANY number (N) of output copies of R; refs may also be
+     * "burned" (present on an input, absent on every output). This is
+     * INTENTIONAL colored-coin / induction-proof design and is NOT a bug.
+     *
+     * Consequently the NODE does NOT guarantee 1:1 (or any fixed-ratio)
+     * conservation of references across a transaction. Any token contract that
+     * needs supply conservation, uniqueness, or fan-out limits MUST enforce it
+     * itself inside its covenant (e.g. via OP_REFOUTPUTCOUNT_* /
+     * OP_REFDATASUMMARY_* style introspection). Do NOT add a conservation check
+     * here: it would be a consensus change and would break the existing
+     * colored-coin model. (The PUSHINPUTREFSINGLETON / DISALLOWPUSHINPUTREFSIBLING
+     * paths add their own, separate sibling/uniqueness constraints; this rule is
+     * only the backing-subset check.)
+     *
+     * @param inputRefSet The input ref set to check against
+     * @param outputPushRefSet The output refs required to be backed by the input ref set
+     * @return true if every output ref is backed by an input ref (subset holds)
+     * @return false otherwise
      */
     static bool validatePushRefRule(const std::set<uint288> &inputRefSet, const std::set<uint288> &outputPushRefSet) {
         // Save the push ref set difference into pushRefResultSet
@@ -982,11 +1009,11 @@ class ReferenceParser {
 
     /**
      * @brief Validate the induction rules for OP_PUSHINPUTREF, OP_REQUIREINPUTREF, and OP_DISALLOWPUSHINPUTREFSIBLING
-     * 
+     *
      * @param tx Transaction to validate
      * @param view Lookup the prev inputs outputs
-     * @return true 
-     * @return false 
+     * @return true
+     * @return false
      */
     static bool validateTransactionReferenceOperations(const CTransaction &tx, CCoinsViewCache &view) {
         if (tx.IsCoinBase()) {
@@ -998,6 +1025,9 @@ class ReferenceParser {
         std::set<uint288> outputRequireRefSet;
         std::map<uint288, size_t> onlyAllowedRefMap;  // Store the only allowed references in a map from ref->outputIndex (generate from OP_DISALLOWPUSHREFSIBLING)
         std::vector<std::set<uint288>> outputVec;
+        // SAFE PERF (always-on): we touch outputVec once per output; reserve up
+        // front to avoid incremental reallocations. Does not change results.
+        outputVec.reserve(tx.vout.size());
         for (size_t o = 0; o < tx.vout.size(); o++) {
             std::set<uint288> outputDisallowSiblingRefSet;
             std::set<uint288> outputPushRefSetLocal;
@@ -1053,6 +1083,17 @@ class ReferenceParser {
                 return false;
             }
         }
+
+        // NOTE (M-ref-validation, 2026-06): the transient memory/CPU of building
+        // these reference sets is inherently bounded by MAX_TX_SIZE (12 MB) and
+        // the block size limit, and the outputVec.reserve() above avoids
+        // reallocations. An earlier distinct-ref cap was removed: it was both
+        // ineffective (it bounded distinct-ref set sizes, not the dominant
+        // GetPushRefs parse cost) and over-counting (singletons/outpoints were
+        // multiply counted), creating a post-fork regression risk for legitimate
+        // token txs. If a hard limit is ever wanted, bound the push-ref OPCODE
+        // count inside CScript::GetPushRefs under a future activation height.
+
         // Verify that every push ref in an output is found in the input script (or matches the input outpoint being spent)
         bool pushRefSatisfied = ReferenceParser::validatePushRefRule(inputPushRefSet, outputPushRefSet);
         // Verify that every require ref in an output is found in the input script (or matches the input outpoint being spent)

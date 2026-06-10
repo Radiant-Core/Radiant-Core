@@ -220,28 +220,132 @@ BOOST_AUTO_TEST_CASE(refhash_utxo_twins_disabled_without_er_flag) {
 }
 
 // ---------------------------------------------------------------------------
-// H1/M1: per-script peak stack-memory budget. A script that repeatedly OP_DUPs
+// H1/H2: per-script peak stack-memory budget. A script that repeatedly OP_DUPs
 // a large element balloons stack bytes far past any legitimate use. With
-// SCRIPT_SECURITY_UPGRADE active this is rejected (STACK_SIZE) before it
-// exhausts memory; without the flag the historical behavior (no byte budget)
+// SCRIPT_SECURITY_UPGRADE (consensus, future) OR SCRIPT_VERIFY_MEMORY_BUDGET
+// (relay/policy, active now) the bomb is rejected (STACK_SIZE) before it
+// exhausts memory; without either flag the historical behavior (no byte budget)
 // is preserved and the same script succeeds.
-// MAX_SCRIPT_STACK_MEMORY_USAGE is 64 MB; we use a 1 MB element and 70 dups so
-// total bytes (~71 MB) crosses the budget while keeping the test lightweight.
+//
+// The byte budget is MAX_SCRIPT_STACK_MEMORY_USAGE (128 MB). The dup count is
+// derived from that constant so these tests stay correct if the budget changes.
+// We use a 2 MB element to keep the script (opcode count) and per-element
+// overhead small relative to the budget.
 // ---------------------------------------------------------------------------
+static constexpr size_t MEM_ELEM = size_t{2} * 1000 * 1000; // 2 MB element
+
+// Smallest number of dups whose resulting stack (1 seed + dups copies) strictly
+// exceeds the budget.
+static int DupsToExceedBudget() {
+    // (1 + dups) * MEM_ELEM > MAX_SCRIPT_STACK_MEMORY_USAGE
+    size_t needElems = (size_t(MAX_SCRIPT_STACK_MEMORY_USAGE) / MEM_ELEM) + 1;
+    return int(needElems); // dups; total elems = needElems + 1, strictly over
+}
+
 BOOST_AUTO_TEST_CASE(stack_memory_bomb_rejected_under_security_upgrade) {
-    valtype big(size_t{1} * 1000 * 1000, 0x00); // 1 MB element
+    valtype big(MEM_ELEM, 0x00);
+    int const dups = DupsToExceedBudget();
     CScript script;
-    for (int i = 0; i < 70; ++i) {
+    for (int i = 0; i < dups; ++i) {
         script << OP_DUP;
     }
 
-    // With the security upgrade active, the byte budget rejects the bomb.
-    RunErr({big}, script, SECURITY_FLAGS, ScriptError::STACK_SIZE);
+    // (1) Rejected under SCRIPT_SECURITY_UPGRADE (consensus, post-fork).
+    RunErr({big}, script, SECURITY_FLAGS, ScriptError::STACK_MEMORY);
 
-    // Without the flag, the historical element-count limit (MAX_STACK_SIZE) is
-    // not exceeded by 71 elements, so the same script still succeeds.
+    // (1) Also rejected under a flag-set that only carries the relay/policy
+    // SCRIPT_VERIFY_MEMORY_BUDGET bit (no SecurityUpgrade) — proving the mempool
+    // guard closes the memory bomb pre-fork.
+    RunErr({big}, script, ER_FLAGS | SCRIPT_VERIFY_MEMORY_BUDGET,
+           ScriptError::STACK_MEMORY);
+
+    // (3) Under plain ER_FLAGS (neither budget flag) the bomb SUCCEEDS: this is
+    // the historical mainnet behavior and must be unchanged before the fork, so
+    // the element-count cap (MAX_STACK_SIZE) is the only limit and is not hit.
     stacktype result = RunOk({big}, script, ER_FLAGS);
-    BOOST_CHECK_EQUAL(result.size(), size_t{71});
+    BOOST_CHECK_EQUAL(result.size(), size_t(dups) + 1);
+}
+
+// (2) A script that drives the stack to just UNDER the budget must pass under
+// both budget-enforcing flag sets. We seed one 2 MB element and dup it up to
+// one element short of the budget.
+BOOST_AUTO_TEST_CASE(stack_memory_just_under_budget_passes) {
+    valtype big(MEM_ELEM, 0x11);
+    // Largest element count whose total stays <= budget.
+    size_t maxElems = size_t(MAX_SCRIPT_STACK_MEMORY_USAGE) / MEM_ELEM;
+    BOOST_REQUIRE(maxElems >= 2);
+    int const dups = int(maxElems) - 1; // seed (1) + dups == maxElems
+    CScript script;
+    for (int i = 0; i < dups; ++i) {
+        script << OP_DUP;
+    }
+
+    stacktype result = RunOk({big}, script, SECURITY_FLAGS);
+    BOOST_CHECK_EQUAL(result.size(), maxElems);
+    result = RunOk({big}, script, ER_FLAGS | SCRIPT_VERIFY_MEMORY_BUDGET);
+    BOOST_CHECK_EQUAL(result.size(), maxElems);
+}
+
+// (1, boundary) Crossing the budget by a single byte must reject. Seed the
+// stack to exactly the budget with full 2 MB elements plus a 1-byte element,
+// then OP_DUP so the cumulative total ticks over the budget.
+BOOST_AUTO_TEST_CASE(stack_memory_one_byte_over_budget_rejected) {
+    size_t maxElems = size_t(MAX_SCRIPT_STACK_MEMORY_USAGE) / MEM_ELEM;
+    BOOST_REQUIRE_EQUAL(size_t(MAX_SCRIPT_STACK_MEMORY_USAGE) % MEM_ELEM, 0u);
+    valtype big(MEM_ELEM, 0x22);
+    valtype onebyte{0x33};
+    // Seed: maxElems full elements summing to exactly the budget, plus a 1-byte
+    // element on top. Initial total = budget + 1, so the very first post-opcode
+    // check rejects. Use OP_DUP of the 1-byte top to trigger an opcode whose
+    // post-check sees total > budget.
+    stacktype seed;
+    for (size_t i = 0; i < maxElems; ++i) {
+        seed.push_back(big);
+    }
+    seed.push_back(onebyte);
+    // total now = budget + 1; an OP_NOP-free op that mutates then checks:
+    CScript script;
+    script << OP_DUP; // pushes another 1-byte copy; total = budget + 2
+    RunErr(seed, script, SECURITY_FLAGS, ScriptError::STACK_MEMORY);
+    RunErr(seed, script, ER_FLAGS | SCRIPT_VERIFY_MEMORY_BUDGET,
+           ScriptError::STACK_MEMORY);
+}
+
+// (4) The incremental counter must equal the naive full-sum across a mixed
+// push / dup / cat / drop sequence, so a LEGITIMATE script that holds two large
+// elements simultaneously (well under budget) is NOT falsely rejected. This
+// exercises the size-changing paths (OP_DUP/OP_2DUP push copies, OP_CAT grows a
+// top element in place then pops, OP_SIZE pushes then OP_DROP/OP_2DROP shrink)
+// that the incremental accounting must track exactly.
+BOOST_AUTO_TEST_CASE(stack_memory_incremental_matches_naive_mixed_ops) {
+    // Two 8 MB elements -> 16 MB live, far below the 128 MB budget.
+    valtype a(size_t{8} * 1000 * 1000, 0xaa);
+    valtype b(size_t{8} * 1000 * 1000, 0xbb);
+
+    // Sequence: stack starts {a, b}.
+    //  OP_2DUP  -> {a, b, a, b}        (push two copies; 32 MB)
+    //  OP_CAT   -> {a, b, (a||b)}      (cat top two into one 16 MB element)
+    //  OP_SIZE  -> {a, b, (a||b), len} (push numeric size of top)
+    //  OP_DROP  -> {a, b, (a||b)}      (drop the size)
+    //  OP_DUP   -> {a, b, (a||b), (a||b)} (duplicate the 16 MB concat; 48 MB)
+    //  OP_2DROP -> {a, b}              (drop the two concatenations)
+    // Final stack: {a, b}. No intermediate peak exceeds the budget.
+    CScript script;
+    script << OP_2DUP << OP_CAT << OP_SIZE << OP_DROP << OP_DUP << OP_2DROP;
+
+    // Must pass under the security flag (budget enforced) — proving the
+    // incremental counter never spuriously exceeds the budget for a legitimate
+    // two-large-element working set.
+    stacktype result = RunOk({a, b}, script, SECURITY_FLAGS);
+    BOOST_REQUIRE_EQUAL(result.size(), size_t{2});
+    BOOST_CHECK(result[0] == a);
+    BOOST_CHECK(result[1] == b);
+
+    // And identically under plain ER_FLAGS (no budget) — same accept decision,
+    // confirming the accounting did not change behavior.
+    stacktype result2 = RunOk({a, b}, script, ER_FLAGS);
+    BOOST_CHECK_EQUAL(result2.size(), size_t{2});
+    BOOST_CHECK(result2[1] == b);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
