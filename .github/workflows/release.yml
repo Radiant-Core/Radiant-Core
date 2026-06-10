@@ -571,6 +571,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout
+        # Needed so the committed release notes are available for body_path.
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
       - name: Download all artifacts
         uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
@@ -579,8 +583,24 @@ jobs:
       - name: List artifacts
         run: find artifacts -type f
 
+      - name: Resolve release-notes path
+        id: notes
+        run: |
+          REF="${{ github.event.inputs.version || github.ref_name }}"
+          VER="${REF#v}"
+          NOTES="doc/release-notes/release-notes-${VER}.md"
+          if [ -f "$NOTES" ]; then
+            echo "path=$NOTES" >> "$GITHUB_OUTPUT"
+          else
+            echo "WARNING: $NOTES not found; release body will be empty." >&2
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
         # SECURITY (audit H18): pinned to a full commit SHA. v2.0.4 release SHA.
+        # Use the committed release notes as the body. (generate_release_notes
+        # calls the GitHub generate-notes API, which returned "Not Found" for the
+        # v3.1.1 tag and failed the job after the artifacts had already uploaded.)
         uses: softprops/action-gh-release@9d7c94cfd0a1f3ed45544c887983e9fa900f0564 # v2.0.4
         if: startsWith(github.ref, 'refs/tags/')
         with:
@@ -590,4 +610,5 @@ jobs:
             artifacts/**/*.dmg
             artifacts/**/*.sha256
           draft: true
-          generate_release_notes: true
+          body_path: ${{ steps.notes.outputs.path }}
+          fail_on_unmatched_files: false
