@@ -35,7 +35,27 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 
 ---
 
+## Radiant Core 3.1.1
+
+**Release type:** Security release (follow-up to 3.1.0). Closes the residual High/Medium/Low findings from a second audit pass, with full `test_bitcoin` coverage and regtest validation.
+**Consensus activation moved earlier:** `SCRIPT_SECURITY_UPGRADE` now activates on **mainnet at block 440000** (was 444444 in 3.1.0), testnet/scalenet from block 1, regtest from genesis. The rules still only *tighten* script acceptance (clean soft fork) and 440000 remains ahead of the live tip, so it is non-retroactive.
+**Upgrade window:** **All mainnet nodes — including 3.1.0 nodes — must upgrade before block 440000.** A node left on 3.1.0 (which expects 444444) would not enforce the tightened rules in [440000, 444444) and could diverge from 3.1.1 nodes there if a violating block is produced.
+
+### What's new in 3.1.1
+
+- **Memory-bomb DoS closed at relay now** (not only at the fork): the per-script peak-stack-memory budget is enforced as always-on mempool policy (`SCRIPT_VERIFY_MEMORY_BUDGET`); pre-fork trips are non-mandatory (`STACK_MEMORY`) — no peer ban, no unbounded re-execution. The budget accounting is now **O(1)** (was O(n²)) and raised to **128 MB**.
+- **DSProof per-peer orphan counter leak** fixed (decrement on expiry + clear on disconnect).
+- **Restore-from-seed** (`sethdseed`) now scans the UTXO set for legacy vs BIP44 path activity before mutating wallet state — no more silent zero-balance restore.
+- **Authenticated wallet encryption** — newly-encrypted wallets use encrypt-then-MAC (HMAC-SHA512) via the existing `nDerivationMethod` selector; fully backward-compatible (legacy wallets unchanged); old binaries refuse new-format wallets (`TOO_NEW`).
+- **REST authentication** (`-restauth`) now **default on**; DSProof pushData alloc cap; RPC cookie created 0600 before write; `O_NOFOLLOW` dumpwallet/import; `CFeeRate` 128-bit math; miner fee `MoneyRange` guard; `OP_AND/OR/XOR/INVERT` opcode-cost charge.
+
+See [`doc/release-notes/release-notes-3.1.1.md`](doc/release-notes/release-notes-3.1.1.md) for full detail.
+
+---
+
 ## Radiant Core 3.1.0
+
+> **Note:** 3.1.0's `SCRIPT_SECURITY_UPGRADE` activation height (block 444444 below) was **moved to block 440000** by 3.1.1 — upgrade to 3.1.1. The 3.1.0 notes below are retained for history.
 
 **Release type:** Security hardening + consensus soft fork. GUI, RPC, wallet, P2P, and build/supply-chain patches from 3.0.1 are included. The new consensus rules (`SCRIPT_SECURITY_UPGRADE`) activate on **mainnet at block 444444** (~225 days from the v3.0.x audit baseline), testnet/scalenet from block 1, regtest from genesis.
 **Upgrade window:** All node operators should upgrade before block 444444. 3.0.x nodes remain consensus-compatible until that height (the new rules only *tighten* script acceptance — a clean soft fork).
