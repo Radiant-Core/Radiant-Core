@@ -78,7 +78,7 @@ except ImportError:
     VALID_WORD_COUNTS = (12, 15, 18, 21, 24)
 
 # GitHub release configuration
-RELEASE_VERSION = "v3.1.0"
+RELEASE_VERSION = "v3.1.1"
 GITHUB_RELEASE_URL = f"https://github.com/Radiant-Core/Radiant-Core/releases/download/{RELEASE_VERSION}"
 # C4 Security: SHA-256 hashes for release asset verification
 # Computed via: shasum -a 256 <asset_file>
@@ -87,33 +87,33 @@ RELEASE_ASSETS = {
         "filename": "radiant-core-macos-arm64.zip",
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Apple Silicon)",
-        "sha256": "037ef08edf62f0caf4b8e5a2bb52843a9446cf30ba96d8420fd81ae4e1ad51f5",
+        "sha256": "a323427cfbf826de67a0eb29cacb26692032bb1459a000a0cd0f01788a4f482c",
     },
     "darwin_x86_64": {
         "filename": "radiant-core-macos-arm64.zip",  # Use ARM64 for now, x64 not available
         "folder": "radiant-core-macos-arm64",
         "display": "macOS (Intel) - Using ARM64 binary via Rosetta",
-        "sha256": "037ef08edf62f0caf4b8e5a2bb52843a9446cf30ba96d8420fd81ae4e1ad51f5",
+        "sha256": "a323427cfbf826de67a0eb29cacb26692032bb1459a000a0cd0f01788a4f482c",
     },
     "linux_x86_64": {
-        # Linux binary: radiant-v3.1.0-linux-x64.tar.gz (version-prefixed in CI)
+        # Linux binary: radiant-v3.1.1-linux-x64.tar.gz (version-prefixed in CI)
         "filename": f"radiant-{RELEASE_VERSION}-linux-x64.tar.gz",
         "folder": f"radiant-{RELEASE_VERSION}-linux-x64",
         "display": "Linux (x86_64)",
-        "sha256": "0f224c5744de4f1d6ab58ad0b5f9c0da7713d667c647b5446c857e37f9ada711",
+        "sha256": "db70a8c153058bcf4ac359f15f67ca4ea228cc524c7e201827500b0f4e3a8a18",
     },
     "linux_aarch64": {
         "filename": f"radiant-{RELEASE_VERSION}-linux-x64.tar.gz",  # ARM Linux not available yet
         "folder": f"radiant-{RELEASE_VERSION}-linux-x64",
         "display": "Linux (ARM64) - x64 binary (requires emulation)",
-        "sha256": "0f224c5744de4f1d6ab58ad0b5f9c0da7713d667c647b5446c857e37f9ada711",
+        "sha256": "db70a8c153058bcf4ac359f15f67ca4ea228cc524c7e201827500b0f4e3a8a18",
     },
     "windows_x64": {
         "filename": "radiant-core-windows-x64.zip",
         "folder": "radiant-core-windows-x64",
         "display": "Windows (x64)",
         # N1: empty hash is rejected (fail-closed) until configured at release time
-        "sha256": "",
+        "sha256": "a9e6a796b67d1173c0ff9a2387debe0e1feba2438a1fc09fa14dd74a13cca210",
     },
 }
 
@@ -1982,7 +1982,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                 </div>
                 <div class="download-status" id="downloadStatus"></div>
                 <div class="manual-download">
-                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.0" target="_blank">GitHub Releases</a></small>
+                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.1" target="_blank">GitHub Releases</a></small>
                 </div>
             </div>
             
