@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.release
       args:
-        GIT_TAG: main
+        GIT_TAG: v3.1.2
         BUILD_TYPE: Release
     image: radiant-core:latest
     container_name: radiant-node
@@ -44,7 +44,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.seeder
       args:
-        GIT_TAG: main
+        GIT_TAG: v3.1.2
     image: radiant-seeder:latest
     container_name: radiant-seeder
     restart: unless-stopped

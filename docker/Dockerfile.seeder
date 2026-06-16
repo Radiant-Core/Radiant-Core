@@ -15,8 +15,9 @@ LABEL description="Radiant Seeder built from GitHub repository"
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Build arguments
-ARG GIT_TAG=main
+# Build arguments. Pin to the current release tag for a reproducible build
+# (override with --build-arg GIT_TAG=<ref>).
+ARG GIT_TAG=v3.1.2
 ARG BUILD_TYPE=Release
 
 RUN apt-get update && apt-get install -y \
