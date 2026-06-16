@@ -15,7 +15,10 @@ NSEEDS = 512
 
 MAX_SEEDS_PER_ASN = 2
 
-MIN_BLOCKS = 540000
+# Radiant mainnet canonical chain post 2026-06-15 fork fix; checkpoint at 438,204.
+# Set well below current tip so any node that has the post-fork canonical chain
+# passes; update this after each major checkpoint is added.
+MIN_BLOCKS = 438204
 
 # These are hosts that have been observed to be behaving strangely (e.g.
 # aggressively connecting to every node).
@@ -34,10 +37,9 @@ PATTERN_IPV6 = re.compile(r"^\[([0-9a-z:]+)\]:(\d+)$")
 PATTERN_ONION = re.compile(
     r"^([abcdefghijklmnopqrstuvwxyz234567]{16}\.onion):(\d+)$")
 
-# Used to only select nodes with a user agent string compatible with the
-# Radiant specification.
+# Match Radiant Core 2.x and 3.x user agents; exclude unmaintained forks.
 PATTERN_AGENT = re.compile(
-    r"^(/Radiant Node:1\.(\d+)\.(\d+)[^/]*/")
+    r"^(/Radiant Node:[23]\.(\d+)\.(\d+)[^/]*/")
 
 
 def parseline(line):

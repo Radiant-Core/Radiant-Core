@@ -5,14 +5,16 @@
  *
  * Each string must be numeric IPv4 dot-notation or numeric
  * IPv6 hex notation, followed by a colon and a port.
+ *
+ * Last audited 2026-06-16 (post 438,203 chain-split fix):
+ * - Added 82.180.136.182 (Radiant Foundation VPS, v3.1.2, canonical chain)
+ * - Removed 4 IPs confirmed unreachable: 38.114.121.180, 45.82.246.57,
+ *   51.68.155.69, 57.129.64.36
  */
 static const SeedSpec6 pnSeed6_main[] = {
-    { "38.114.121.180:7333" },
-    { "45.82.246.57:7333" },
-    { "51.68.155.69:7333" },
+    { "82.180.136.182:7333" },  /* Radiant Foundation VPS — v3.1.2, canonical chain */
     { "51.161.136.131:7333" },
     { "51.195.34.205:7333" },
-    { "57.129.64.36:7333" },
     { "88.99.173.150:7333" },
     { "108.231.238.248:7333" },
     { "139.99.16.105:7333" },
