@@ -8,8 +8,15 @@
 #include <uint256.h>
 
 namespace ChainParamsConstants {
-    const BlockHash MAINNET_DEFAULT_ASSUME_VALID = BlockHash::fromHex("000000000000000e7fbf20f83b1b0ac4881b95da9248f746ba9d82e24ca78f05");
-    const uint256 MAINNET_MINIMUM_CHAIN_WORK = uint256S("00000000000000000000000000000000000000000000147765080014b58e296e");
+    // NOTE: the two MAINNET_* values below were MANUALLY updated for v3.1.2 to
+    // anchor the canonical chain at block 438,204 (the first block above the
+    // 2026-06-15 fork base 438,203). If contrib/devtools/chainparams/
+    // generate_chainparams_constants.py is ever re-run, it MUST regenerate from
+    // the canonical (most-work) chain, not the abandoned minority fork, so these
+    // are not reverted. assume-valid = block 438,204; minimum-chain-work = its
+    // chainwork (verified against the live canonical node).
+    const BlockHash MAINNET_DEFAULT_ASSUME_VALID = BlockHash::fromHex("00000000000000660f27b62d38e4e55d74fb253f5845697b268233ccbe78529d");
+    const uint256 MAINNET_MINIMUM_CHAIN_WORK = uint256S("00000000000000000000000000000000000000000000156307d805c8602f7b39");
 
     const BlockHash TESTNET_DEFAULT_ASSUME_VALID = BlockHash::fromHex("00000000fb574b8ace948acaa62a60ef24ee504b9f8fbf430ac77f514ea1f6fc");
     const uint256 TESTNET_MINIMUM_CHAIN_WORK = uint256S("00000000000000000000000000000000000000000000000000000e200e200e20");

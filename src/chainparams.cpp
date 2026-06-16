@@ -207,7 +207,14 @@ public:
             {18206, BlockHash::fromHex("000000000002b08f7be7bce01d53c4ab2f7b3420955866b88b3e6e087f941e07")}, // When ASERT went live
             {19068, BlockHash::fromHex("0000000000021a9928656e3b386b2e352e054fb2344ec0474e003cfabcdf0eff")},
             {410000, BlockHash::fromHex("000000000000006c37fb550b760f7914a00d860ceff46e0b5e7cf3b5379a9353")},
-            {412000, BlockHash::fromHex("000000000000000e7fbf20f83b1b0ac4881b95da9248f746ba9d82e24ca78f05")}
+            {412000, BlockHash::fromHex("000000000000000e7fbf20f83b1b0ac4881b95da9248f746ba9d82e24ca78f05")},
+            // 2026-06-15: a routine orphan race at fork base 438,203 was escalated
+            // into a persistent partition by the v3.x deep-reorg defaults. This
+            // checkpoint pins the first block of the canonical (most-work) chain
+            // above the fork base so a fresh sync can never adopt the abandoned
+            // minority fork (which has a different block at this height). Verified
+            // against the live canonical node: getblockhash 438204.
+            {438204, BlockHash::fromHex("00000000000000660f27b62d38e4e55d74fb253f5845697b268233ccbe78529d")}
         }};
 
         // Data as of block

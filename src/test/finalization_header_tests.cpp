@@ -16,6 +16,21 @@
 #include <util/time.h>
 #include <validation.h>
 
+// v3.1.2 deep-reorg-partition fix (2026-06-15) — compile-time invariants.
+// A finalization disagreement (a per-node timing heuristic) must NEVER be able
+// to ban a peer, or a node stranded on a minority chain self-isolates from the
+// peers relaying the canonical chain and entrenches the split. And finalization
+// must only fire on deep, attack-grade reorgs, not ordinary low-hashrate orphan
+// races. If a future change regresses either property, the build fails here.
+static_assert(DEFAULT_FINALIZE_HEADERS_PENALTY < DEFAULT_BANSCORE_THRESHOLD,
+              "finalization header penalty must stay below the ban threshold so "
+              "a finalization disagreement alone cannot discourage/ban a peer");
+static_assert(DEFAULT_FINALIZE_HEADERS_PENALTY == 0,
+              "v3.1.2 sets the default finalization header penalty to 0 (no ban)");
+static_assert(DEFAULT_MAX_REORG_DEPTH == 69,
+              "v3.1.2 raises the default finalization depth to 69 blocks (~5.75h "
+              "at 5-min spacing) so ordinary orphan races never auto-finalize");
+
 BOOST_FIXTURE_TEST_SUITE(finalization_header_tests, TestChain100Setup)
 
 static COutPoint InsecureRandOutPoint() {
@@ -88,6 +103,27 @@ static void CreateNewHeaderAndCheckIsRejected(const Config &config, CBlockIndex 
         LOCK(cs_main);
         BOOST_CHECK(LookupBlockIndex(header.GetHash()) == nullptr);
     }
+}
+
+// Like CreateNewHeaderAndCheckIsRejected, but also asserts the DoS score the
+// node would apply to the peer that announced the header. net_processing only
+// calls Misbehaving() when this score is > 0, so a score of 0 means the peer is
+// never discouraged/disconnected for a finalization disagreement.
+static void CreateNewHeaderAndCheckRejectedWithDoS(const Config &config,
+                                                   CBlockIndex *hashPrev,
+                                                   int expectedDoS) {
+    const CBlockHeader &header = GetBlock(config, hashPrev).GetBlockHeader();
+    CValidationState state;
+    CBlockHeader invalid;
+    const CBlockIndex *pindex = nullptr;
+    BOOST_CHECK(!ProcessNewBlockHeaders(config, {header}, state, &pindex, &invalid));
+    int nDoS = -1;
+    BOOST_CHECK(state.IsInvalid(nDoS));
+    // The header is still rejected (the finalization protection is retained)...
+    BOOST_CHECK(state.GetRejectCode() == REJECT_AGAINST_FINALIZED);
+    BOOST_CHECK(pindex == nullptr);
+    // ...but the peer-scoring DoS value is exactly the configured penalty.
+    BOOST_CHECK_EQUAL(nDoS, expectedDoS);
 }
 
 BOOST_AUTO_TEST_CASE(headerFinalizationEnabledDefault) {
@@ -280,5 +316,55 @@ BOOST_AUTO_TEST_CASE(headerFinalizationDisabledZero) {
     gArgs.ClearArg("-finalizeheaders");
 
 } // headerFinalizationDisabledZero
+
+// Regression test for the 2026-06-15 deep-reorg partition. With the v3.1.2
+// default finalization penalty (0), a header that forks below the finalized
+// block is still REJECTED (the protection is retained), but the DoS score handed
+// to the peer-scoring path is 0 — so net_processing's `if (nDoS > 0)
+// Misbehaving(...)` guard never fires and the peer announcing the canonical
+// chain is NOT discouraged/disconnected. This pins the validation-layer contract
+// that feeds the peer-scoring path; the end-to-end no-disconnect behavior is
+// covered by the functional test bchn-finalize-headers.py.
+BOOST_AUTO_TEST_CASE(headerFinalizationDefaultPenaltyDoesNotBan) {
+    gArgs.ForceSetArg("-maxreorgdepth", std::string("1"));
+    gArgs.ForceSetArg("-finalizeheaders", std::string("1"));
+    // Deliberately DO NOT set -finalizeheaderspenalty: exercise the default,
+    // which v3.1.2 changed from 100 (== ban threshold) to 0.
+    BOOST_CHECK_EQUAL(
+        gArgs.GetArg("-finalizeheaderspenalty", DEFAULT_FINALIZE_HEADERS_PENALTY),
+        0);
+
+    const Config &config = GetConfig();
+    CScript p2pk_scriptPubKey =
+        CScript() << ToByteVector(coinbaseKey.GetPubKey()) << OP_CHECKSIG;
+    {
+        LOCK(cs_main);
+        BOOST_CHECK(GetFinalizedBlock() == nullptr);
+    }
+
+    // Create a finalized tip by moving up sufficiently in time (maxreorgdepth=1
+    // finalizes the block just below the tip).
+    const int64_t finalizationStartTime =
+        GetTime() + DEFAULT_MIN_FINALIZATION_DELAY;
+    SetMockTime(finalizationStartTime);
+    CreateAndProcessBlock({}, p2pk_scriptPubKey);
+    {
+        LOCK(cs_main);
+        CBlockIndex *blockToFinalize = ::ChainActive().Tip()->pprev;
+        BOOST_CHECK_MESSAGE(GetFinalizedBlock() == blockToFinalize,
+                            "Block finalized at height "
+                                << blockToFinalize->nHeight);
+    }
+
+    // A header that forks at the finalized height is rejected with
+    // REJECT_AGAINST_FINALIZED, but with DoS score 0 (no peer penalty).
+    CBlockIndex *blockAtHeightOfNewHeader =
+        ::ChainActive().Tip()->GetAncestor(::ChainActive().Tip()->nHeight - 1);
+    CreateNewHeaderAndCheckRejectedWithDoS(config, blockAtHeightOfNewHeader->pprev,
+                                           /* expectedDoS= */ 0);
+
+    gArgs.ClearArg("-finalizeheaders");
+    gArgs.ClearArg("-maxreorgdepth");
+} // headerFinalizationDefaultPenaltyDoesNotBan
 
 BOOST_AUTO_TEST_SUITE_END()

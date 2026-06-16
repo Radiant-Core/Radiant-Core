@@ -1808,6 +1808,12 @@ bool AppInitParameterInteraction(Config &config) {
                 return InitError(strprintf(
                     "Invalid header finalization penalty (DoS score) (%s) - must be between 0 and 100",
                     nFinalizeHeadersPenalty));
+        } else if (nFinalizeHeadersPenalty == 0) {
+            // v3.1.2 default: a finalization disagreement (a per-node timing
+            // heuristic) never affects peer reputation, so a stranded node
+            // cannot self-isolate from the peers relaying the canonical chain.
+            LogPrintf("Peers sending headers below finalized block will NOT be "
+                    "penalized (DoS score 0); the headers are still rejected.\n");
         } else {
             LogPrintf("Nodes sending headers below finalized block will be penalized with DoS score %d.\n",
                     nFinalizeHeadersPenalty);
