@@ -11,7 +11,8 @@ Download the standalone macOS application - no dependencies required:
 | Platform | Download | Size |
 |----------|----------|------|
 | **macOS GUI app (Apple Silicon)** | [radiant-core-gui-macos-v3.1.2.dmg](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-macos-v3.1.2.dmg) | ~26 MB |
-| **Windows GUI (standalone, no Python)** | [radiant-core-gui-windows-x64-v3.1.2.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-windows-x64-v3.1.2.zip) | ~16 MB |
+| **Windows single .exe (no Python, no extraction)** | [RadiantCore-Node-Wallet-v3.1.2.exe](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/RadiantCore-Node-Wallet-v3.1.2.exe) | ~15 MB |
+| **Windows GUI (standalone folder, no Python)** | [radiant-core-gui-windows-x64-v3.1.2.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-windows-x64-v3.1.2.zip) | ~16 MB |
 | **Windows (node binaries + GUI, needs Python)** | [radiant-core-windows-x64.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-windows-x64.zip) | ~9 MB |
 | **Linux GUI (x86_64)** | [radiant-core-gui-linux-x64-v3.1.2.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-linux-x64-v3.1.2.tar.gz) | ~13 MB |
 
@@ -27,21 +28,27 @@ Download the standalone macOS application - no dependencies required:
 xattr -rd com.apple.quarantine /Applications/Radiant\ Core.app
 ```
 
-**Windows — Two GUI Options:**
+**Windows — three options (simplest first):**
 
-**Option A: Standalone GUI (Recommended — no Python needed)**
+**Option A: Single .exe (Recommended — one file, no Python, no extraction)**
+1. Download `RadiantCore-Node-Wallet-v3.1.2.exe` (~15 MB)
+2. Double-click it — nothing to extract or install. The `radiantd.exe`/`radiant-cli.exe`/
+   `radiant-tx.exe` node binaries are bundled inside.
+3. A browser-based GUI opens at `http://127.0.0.1:8765` — one-click node control,
+   built-in wallet, BIP39 seed-phrase backup. (First launch takes a few seconds while the
+   bundle unpacks.)
+4. **Note:** Windows SmartScreen / antivirus may warn on a single-file (unsigned)
+   PyInstaller exe — this is a known false-positive for the format. Verify your download's
+   SHA-256 against `SHA256SUMS.txt` (signed by `SHA256SUMS.txt.asc`) before running.
+
+**Option B: Standalone folder (no Python; faster startup than the single exe)**
 1. Download and extract `radiant-core-gui-windows-x64-v3.1.2.zip` (~16 MB)
-2. Double-click `Radiant Core.exe`
-3. A browser-based GUI opens at `http://127.0.0.1:8765`
-4. One-click node control, built-in wallet, and BIP39 seed-phrase backup. Python is
-   bundled — nothing else to install. The `radiantd.exe`/`radiant-cli.exe`/`radiant-tx.exe`
-   node binaries are included in the bundle.
+2. Double-click `Radiant Core.exe` — node binaries are included beside it
 
-**Option B: Node binaries + GUI (requires Python 3.8+)**
+**Option C: Node binaries + GUI (requires Python 3.8+)**
 1. Download and extract `radiant-core-windows-x64.zip` (~9 MB) — contains
    `radiantd.exe`, `radiant-cli.exe`, `radiant-tx.exe`, the GUI, and the MinGW runtime DLLs
-2. Double-click `start-gui.bat`
-3. The GUI opens at `http://127.0.0.1:8765` (uses your system Python 3)
+2. Double-click `start-gui.bat` (uses your system Python 3)
 
 ### Portable Packages (All Platforms)
 
@@ -239,7 +246,11 @@ sudo apt install python3
 
 ### Windows (Recommended)
 
-**Option A: Standalone GUI (no Python needed)**
+**Simplest — single .exe:** download `RadiantCore-Node-Wallet-v3.1.2.exe` and double-click
+it. No Python, no extraction; the GUI opens at `http://127.0.0.1:8765`. (See the Download
+section above for the SmartScreen/antivirus note and how to verify the file.)
+
+**Option A: Standalone GUI folder (no Python needed)**
 1. Extract `radiant-core-gui-windows-x64-v3.1.2.zip`
 2. Double-click `Radiant Core.exe`
 3. The GUI opens automatically in your browser at `http://127.0.0.1:8765` —
