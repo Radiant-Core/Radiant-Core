@@ -1,10 +1,17 @@
-name: Windows GUI Build
+name: Windows GUI EXE
+
+# Builds a SINGLE self-contained Windows .exe (PyInstaller --onefile) that bundles
+# the browser GUI plus the radiantd/radiant-cli/radiant-tx node binaries and their
+# MinGW runtime DLLs, then uploads it to the given release. Double-click to run —
+# no Python, no extraction, no separate downloads.
+#
+# Run via the Actions tab → "Windows GUI EXE" → Run workflow (pick the version tag).
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g., v3.1.2)'
+        description: 'Release tag to build + attach the exe to (e.g., v3.1.2)'
         required: true
         default: 'v3.1.2'
 
@@ -12,15 +19,20 @@ permissions:
   contents: read
 
 jobs:
-  build-windows-gui:
+  build-windows-exe:
     runs-on: windows-2022
     permissions:
-      contents: read
+      # Needed to upload the built exe to the release.
+      contents: write
     steps:
-      - name: Checkout
+      - name: Checkout the release tag
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          ref: ${{ github.event.inputs.version }}
+          # Full history so we can overlay the patched GUI file from main below.
+          fetch-depth: 0
 
-      - name: Set up MSYS2 / MINGW64 (for node binaries + DLLs)
+      - name: Set up MSYS2 / MINGW64 (node binaries + DLLs)
         uses: msys2/setup-msys2@ddf331adaebd714795f1042345e6ca57bd66cea8 # v2.24.1
         with:
           msystem: MINGW64
@@ -34,7 +46,6 @@ jobs:
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-zeromq
             mingw-w64-x86_64-miniupnpc
-            zip
 
       - name: Build node binaries (MSYS2)
         shell: msys2 {0}
@@ -51,73 +62,80 @@ jobs:
             -DENABLE_UPNP=OFF \
             -DSECP256K1_ECMULT_STATIC_PRECOMPUTATION=OFF
           cmake --build build-win --config Release -j$(nproc)
+          strip --strip-all build-win/src/radiantd.exe build-win/src/radiant-cli.exe build-win/src/radiant-tx.exe || true
 
-      - name: Build Windows GUI bundle (PyInstaller)
-        # Use PowerShell — the windows-2022 runner has Python + pip pre-installed.
-        # MSYS2's mingw-w64-x86_64-python ships without pip/ensurepip.
+      - name: Overlay the patched GUI from main (PyInstaller --onefile _MEIPASS fix)
+        # The node binaries above are built from the clean release tag (so radiantd
+        # reports a clean v3.1.2). The single-exe binary lookup via sys._MEIPASS was
+        # added after the tag, so overlay ONLY gui/radiant_node_web.py from main —
+        # after the node build, so the bundled binaries keep their clean version.
+        shell: bash
+        run: |
+          git fetch origin main
+          git checkout FETCH_HEAD -- gui/radiant_node_web.py
+          grep -q "_MEIPASS" gui/radiant_node_web.py || { echo "GUI _MEIPASS fix missing"; exit 1; }
+
+      - name: Build single self-contained exe (PyInstaller --onefile)
+        # PowerShell: the windows-2022 runner ships Python + pip. MSYS2's python
+        # has no pip/ensurepip, so we cannot use the msys2 shell here.
         shell: pwsh
         run: |
           $VERSION = "${{ github.event.inputs.version }}"
           $VNUM    = $VERSION.TrimStart('v')
-
-          # System Python on windows-2022 already has pip
           pip install pyinstaller
 
-          # Build standalone GUI bundle; ';' is the Windows os.pathsep
-          Set-Location gui
-          pyinstaller `
-            --onedir `
-            --name "Radiant Core" `
-            --add-data "bip39.py;." `
-            radiant_node_web.py
-          Set-Location ..
-
-          $GUI_STAGE = "radiant-core-gui-windows-x64"
-          New-Item -ItemType Directory -Force -Path $GUI_STAGE | Out-Null
-
-          # Copy PyInstaller --onedir output into the stage directory
-          Copy-Item -Recurse "gui\dist\Radiant Core\*" "$GUI_STAGE\"
-
-          # Place node binaries next to Radiant Core.exe so _find_binary
-          # resolves:  Path(sys.executable).parent / "radiantd.exe"
-          foreach ($exe in @("radiantd.exe", "radiant-cli.exe", "radiant-tx.exe")) {
-            $src = "build-win\src\$exe"
-            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
-          }
-
-          # Bundle MinGW runtime DLLs required by the node .exe files.
-          # setup-msys2 installs MSYS2 at C:\msys64 on the windows-2022 runner.
-          $MINGW_BIN = "C:\msys64\mingw64\bin"
-          foreach ($dll in @(
+          $MINGW = "C:\msys64\mingw64\bin"
+          $dlls = @(
             "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll",
             "libboost_chrono-mt-x64.dll", "libboost_thread-mt-x64.dll",
             "libboost_filesystem-mt-x64.dll", "libboost_system-mt-x64.dll",
             "libevent-2-1-7.dll", "libevent_pthreads-2-1-7.dll",
             "libzmq.dll", "libssl-3-x64.dll", "libcrypto-3-x64.dll", "zlib1.dll"
-          )) {
-            $src = Join-Path $MINGW_BIN $dll
-            if (Test-Path $src) { Copy-Item $src "$GUI_STAGE\" }
+          )
+
+          # Assemble --add-binary args: each node exe + DLL is bundled into the
+          # onefile payload (extracted to sys._MEIPASS at runtime; the GUI's
+          # _find_binary checks _MEIPASS, so radiantd.exe resolves there).
+          $addBin = @()
+          foreach ($exe in @("radiantd.exe", "radiant-cli.exe", "radiant-tx.exe")) {
+            $p = "build-win\src\$exe"
+            if (-not (Test-Path $p)) { throw "missing node binary: $p" }
+            $addBin += @("--add-binary", "$p;.")
+          }
+          foreach ($dll in $dlls) {
+            $p = Join-Path $MINGW $dll
+            if (Test-Path $p) { $addBin += @("--add-binary", "$p;.") }
           }
 
-          # Write README without a here-string (here-strings break YAML block scalars)
-          $readme  = "Radiant Core GUI v$VNUM - Windows x64`n"
-          $readme += "=========================================`n`n"
-          $readme += "Double-click 'Radiant Core.exe' to start the GUI.`n"
-          $readme += "The node starts automatically and opens in`n"
-          $readme += "your default browser at http://127.0.0.1:8765`n`n"
-          $readme += "No additional software required - Python is bundled.`n`n"
-          $readme += "Support: https://radiantblockchain.org`n"
-          $readme | Out-File -FilePath "$GUI_STAGE\README.txt" -Encoding utf8
+          $assetBase = "RadiantCore-Node-Wallet-$VERSION"
+          Set-Location gui
+          pyinstaller --onefile --name $assetBase `
+            --add-data "bip39.py;." `
+            @addBin `
+            radiant_node_web.py
+          Set-Location ..
 
-          $ZIP = "radiant-core-gui-windows-x64-v$VNUM.zip"
-          Compress-Archive -Path "$GUI_STAGE\*" -DestinationPath $ZIP
-          $hash = (Get-FileHash $ZIP -Algorithm SHA256).Hash.ToLower()
-          "$hash  $ZIP" | Out-File -FilePath "$ZIP.sha256" -Encoding ascii
+          $built = "gui\dist\$assetBase.exe"
+          if (-not (Test-Path $built)) { throw "PyInstaller did not produce $built" }
+          Copy-Item $built ".\$assetBase.exe"
+          $hash = (Get-FileHash ".\$assetBase.exe" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $assetBase.exe" | Out-File -FilePath ".\$assetBase.exe.sha256" -Encoding ascii
+          Get-Item ".\$assetBase.exe" | Select-Object Name, Length
 
-      - name: Upload Windows GUI artifact
+      - name: Upload the exe to the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $VERSION = "${{ github.event.inputs.version }}"
+          $asset = "RadiantCore-Node-Wallet-$VERSION.exe"
+          gh release upload $VERSION $asset "$asset.sha256" `
+            --repo ${{ github.repository }} --clobber
+
+      - name: Upload as workflow artifact (backup)
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
-          name: radiant-windows-gui
+          name: radiant-windows-exe
           path: |
-            radiant-core-gui-windows-x64-*.zip
-            radiant-core-gui-windows-x64-*.zip.sha256
+            RadiantCore-Node-Wallet-*.exe
+            RadiantCore-Node-Wallet-*.exe.sha256

@@ -695,7 +695,13 @@ class NodeManager:
         if getattr(sys, 'frozen', False) and platform.system() != 'Darwin':
             exe_dir = Path(sys.executable).parent
             paths.append(exe_dir / name)
-        
+            # PyInstaller --onefile extracts bundled binaries (--add-binary) into a
+            # temp dir exposed as sys._MEIPASS. Check it so a single self-contained
+            # .exe (with radiantd/radiant-cli/radiant-tx bundled in) can find them.
+            meipass = getattr(sys, '_MEIPASS', None)
+            if meipass:
+                paths.append(Path(meipass) / name)
+
         # Check downloaded binaries (but only if not in app bundle)
         downloaded_path = self.download_manager.get_binary_path()
         if downloaded_path:
