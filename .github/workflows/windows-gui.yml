@@ -96,11 +96,14 @@ jobs:
           # Assemble --add-binary args: each node exe + DLL is bundled into the
           # onefile payload (extracted to sys._MEIPASS at runtime; the GUI's
           # _find_binary checks _MEIPASS, so radiantd.exe resolves there).
+          # Resolve to ABSOLUTE paths now (before the Set-Location gui below) — the
+          # --add-binary sources must not be relative to the changed cwd.
           $addBin = @()
           foreach ($exe in @("radiantd.exe", "radiant-cli.exe", "radiant-tx.exe")) {
             $p = "build-win\src\$exe"
             if (-not (Test-Path $p)) { throw "missing node binary: $p" }
-            $addBin += @("--add-binary", "$p;.")
+            $abs = (Resolve-Path $p).Path
+            $addBin += @("--add-binary", "$abs;.")
           }
           foreach ($dll in $dlls) {
             $p = Join-Path $MINGW $dll
