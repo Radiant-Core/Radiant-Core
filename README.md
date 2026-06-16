@@ -35,6 +35,25 @@ network based on the original Bitcoin design. RXD is the native token of Radiant
 
 ---
 
+## Radiant Core 3.1.2
+
+**Release type:** Network-stability release (deep-reorg / finalization hardening) in response to the 2026-06-15 mainnet partition. **No consensus change**; the `SCRIPT_SECURITY_UPGRADE` soft fork still activates at **mainnet block 440000** (so 3.1.2 is fully compatible with 3.1.1). Full `test_bitcoin` + functional coverage for the changed finalization behavior, plus a multi-agent adversarial design + security review.
+**Why upgrade:** a routine orphan race can no longer silently partition the network, while genuine deep-reorg (51%/double-spend) protection is retained. Since every mainnet node must already be on 3.1.1's rules before block 440000 (~2026-06-21), upgrade straight to 3.1.2 and get the partition fix at the same time.
+
+### What's new in 3.1.2
+
+- **A finalization disagreement no longer bans peers** (`-finalizeheaderspenalty` default **100 → 0**). The old default equalled the ban threshold, so a single honest announcement of the canonical chain discouraged/disconnected the peer — a stranded node self-isolated and entrenched the split. The below-finalized header is still rejected; only peer reputation is left untouched. A compile-time invariant now keeps the penalty below the ban threshold.
+- **Auto-finalization only fires on attack-grade reorgs** (`-maxreorgdepth` default **6 → 69**, ~5.75 h at 5-min spacing). Ordinary orphan races (observed 13–28 deep) now converge by most-work instead of finalizing and rejecting the heavier canonical chain. Deep reorgs below this depth are still resisted *reversibly* by `parkdeepreorg` (≈2× post-fork work to switch).
+- **Deep-reorg protection retained** (`-finalizeheaders` stays **on** by default): with the two changes above it now only triggers on a >69-block reorg and never bans, so the irreversible 51%/double-spend backstop is preserved without the partition footgun.
+- **Canonical-chain checkpoint at block 438204** (`00000000…be78529d`, the first block above the fork base 438203) plus matching `defaultAssumeValid` / `nMinimumChainWork` bumps, so a fresh sync can never adopt the abandoned minority fork.
+- **Indexer coordination:** RXinDexer's Radiant `REORG_LIMIT` is raised to **69** to match the node; operators must clear any stale `REORG_LIMIT=6` override. The `Dockerfile.radiantd` pin is bumped to v3.1.2.
+
+> **All changes are local network-policy defaults** that only relax strictness toward following most-work — they cannot create a new fork (a more-permissive node only ever converges toward the most-work chain stricter nodes also accept). See the release notes for the full heterogeneous-version fork-safety analysis and the recovery runbook for nodes still stranded from the incident.
+
+See [`doc/release-notes/release-notes-3.1.2.md`](doc/release-notes/release-notes-3.1.2.md) for full detail.
+
+---
+
 ## Radiant Core 3.1.1
 
 **Release type:** Security release (follow-up to 3.1.0). Closes the residual High/Medium/Low findings from a second audit pass, with full `test_bitcoin` coverage and regtest validation.

@@ -10,12 +10,12 @@
 #     requirements-macos-app.txt). Versions: py2app==0.28.8, pywebview==5.1.
 #
 # Usage: ./scripts/build-macos-app.sh [version]
-# Example: ./scripts/build-macos-app.sh 3.1.1
+# Example: ./scripts/build-macos-app.sh 3.1.2
 #
 
 set -e
 
-VERSION="${1:-3.1.1}"
+VERSION="${1:-3.1.2}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 GUI_DIR="$ROOT_DIR/gui"

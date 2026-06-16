@@ -78,10 +78,16 @@ except ImportError:
     VALID_WORD_COUNTS = (12, 15, 18, 21, 24)
 
 # GitHub release configuration
-RELEASE_VERSION = "v3.1.1"
+RELEASE_VERSION = "v3.1.2"
 GITHUB_RELEASE_URL = f"https://github.com/Radiant-Core/Radiant-Core/releases/download/{RELEASE_VERSION}"
 # C4 Security: SHA-256 hashes for release asset verification
 # Computed via: shasum -a 256 <asset_file>
+# TODO(v3.1.2 post-release): the sha256 values below are still v3.1.1's. The
+# v3.1.2 SHA256SUMS.txt does not exist until CI builds the binaries, so these
+# must be refreshed (and the GUI DMG rebuilt) AFTER the release is published —
+# same one-time fixup done for 3.1.1 (commit 9cc07120). Until then the
+# auto-download verify is fail-closed (a v3.1.2 asset will mismatch and be
+# rejected), so manual download from GitHub Releases is the safe path.
 RELEASE_ASSETS = {
     "darwin_arm64": {
         "filename": "radiant-core-macos-arm64.zip",
@@ -96,7 +102,7 @@ RELEASE_ASSETS = {
         "sha256": "a323427cfbf826de67a0eb29cacb26692032bb1459a000a0cd0f01788a4f482c",
     },
     "linux_x86_64": {
-        # Linux binary: radiant-v3.1.1-linux-x64.tar.gz (version-prefixed in CI)
+        # Linux binary: radiant-v3.1.2-linux-x64.tar.gz (version-prefixed in CI)
         "filename": f"radiant-{RELEASE_VERSION}-linux-x64.tar.gz",
         "folder": f"radiant-{RELEASE_VERSION}-linux-x64",
         "display": "Linux (x86_64)",
@@ -1982,7 +1988,7 @@ HTML_PAGE = '''<!DOCTYPE html>
                 </div>
                 <div class="download-status" id="downloadStatus"></div>
                 <div class="manual-download">
-                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.1" target="_blank">GitHub Releases</a></small>
+                    <small>Or download manually from <a href="https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.2" target="_blank">GitHub Releases</a></small>
                 </div>
             </div>
             

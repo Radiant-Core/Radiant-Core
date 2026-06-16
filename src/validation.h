@@ -174,12 +174,37 @@ static constexpr bool DEFAULT_PEERBLOOMFILTERS = true;
 
 /** Default for -stopatheight */
 static constexpr int DEFAULT_STOPATHEIGHT = 0;
-/** Default for -maxreorgdepth */
-static constexpr int DEFAULT_MAX_REORG_DEPTH = 6;
+/**
+ * Default for -maxreorgdepth: the depth at which a block becomes auto-finalized
+ * (irreversible). Raised 6 -> 69 in v3.1.2 after the 2026-06-15 mainnet split:
+ * at 6, an ordinary low-hashrate orphan race (>6 blocks) auto-finalized a branch
+ * and then marked the heavier canonical chain invalid, partitioning the network.
+ * 69 blocks (~5.75h at 5-min spacing) only finalizes on genuinely deep,
+ * attack-grade reorgs, well past any natural race (the incident's worst was ~28);
+ * ordinary races converge by most-work instead, and deep reorgs below this depth
+ * are still resisted reversibly by parkdeepreorg (which requires ~2x post-fork
+ * work to switch). This MUST stay matched with RXinDexer's Radiant REORG_LIMIT
+ * (the indexer retains undo data only for that many blocks; a node that reorgs
+ * deeper than the indexer can undo forces an indexer resync).
+ */
+static constexpr int DEFAULT_MAX_REORG_DEPTH = 69;
 /** Default for -finalizeheaders */
 static constexpr bool DEFAULT_FINALIZE_HEADERS = true;
-/** Default DoS score for finalized header violation - range 0..100 */
-static constexpr unsigned int DEFAULT_FINALIZE_HEADERS_PENALTY = 100;
+/**
+ * Default DoS score applied to a peer that announces a header below our locally
+ * finalized block - range 0..100. Lowered 100 -> 0 in v3.1.2. Finalization is a
+ * per-node, timing-dependent heuristic (not a network-wide rule), so two honest
+ * nodes can finalize different blocks; the old default equalled
+ * DEFAULT_BANSCORE_THRESHOLD, so a SINGLE honest announcement of the canonical
+ * most-work chain discouraged/disconnected that peer, causing a stranded node to
+ * self-isolate and entrench the 2026-06-15 split. At 0, Misbehaving() is a no-op
+ * (it early-returns on howmuch==0), so a finalization disagreement never affects
+ * peer reputation - the below-finalized header is still rejected, but the node
+ * keeps its honest peers and re-converges once finalization is cleared. Generic
+ * header-spam DoS is handled by independent, unchanged paths (too-many-headers
+ * etc.). INVARIANT: keep this strictly below DEFAULT_BANSCORE_THRESHOLD.
+ */
+static constexpr unsigned int DEFAULT_FINALIZE_HEADERS_PENALTY = 0;
 /**
  * Default for -finalizationdelay
  * This is the minimum time between a block header reception and the block
