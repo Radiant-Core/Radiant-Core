@@ -15,7 +15,7 @@
 #
 # Usage:
 #   scripts/build-windows-release.sh [version]
-#     version  Tag string (default: v3.1.0).
+#     version  Tag string (default: v3.1.2).
 #
 # Output:
 #   releases/<version>/radiant-core-windows-x64-<version>.zip
@@ -23,7 +23,7 @@
 
 set -euo pipefail
 
-VERSION="${1:-v3.1.0}"
+VERSION="${1:-v3.1.2}"
 HOST_TRIPLE="x86_64-w64-mingw32"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

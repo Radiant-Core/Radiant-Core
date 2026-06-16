@@ -36,11 +36,11 @@
 #
 # Usage:
 #   scripts/build-macos-release.sh [version]
-#     version  Tag string (default: v3.1.0).
+#     version  Tag string (default: v3.1.2).
 
 set -euo pipefail
 
-VERSION="${1:-v3.1.0}"
+VERSION="${1:-v3.1.2}"
 HOST_TRIPLE="aarch64-apple-darwin"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

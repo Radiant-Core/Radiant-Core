@@ -10,11 +10,10 @@ Download the standalone macOS application - no dependencies required:
 
 | Platform | Download | Size |
 |----------|----------|------|
-| **macOS (Apple Silicon/Intel)** | [Radiant-Core-GUI-3.1.0.dmg](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/Radiant-Core-GUI-3.1.0.dmg) | ~19 MB |
-| **Windows (standalone)** | [RadiantCoreNode+Wallet-v.3.1.0.exe](../releases/v3.1.0/Windows/RadiantCoreNode+Wallet-v.3.1.0.exe) | ~9.2 MB |
-| **Windows (Qt classic)** | [RadiantCore.exe](../releases/v3.1.0/Windows/RadiantCore.exe) | ~30 MB |
-| **Windows (all-in-one)** | [radiant-core-windows-x64.zip](../releases/v3.1.0/Windows/radiant-core-windows-x64.zip) | ~65 MB |
-| **Linux (x86_64)** | [radiant-core-gui-linux-x64-v3.1.0.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-gui-linux-x64-v3.1.0.tar.gz) | ~15 MB |
+| **macOS GUI app (Apple Silicon)** | [radiant-core-gui-macos-v3.1.2.dmg](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-macos-v3.1.2.dmg) | ~26 MB |
+| **Windows GUI (standalone, no Python)** | [radiant-core-gui-windows-x64-v3.1.2.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-windows-x64-v3.1.2.zip) | ~16 MB |
+| **Windows (node binaries + GUI, needs Python)** | [radiant-core-windows-x64.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-windows-x64.zip) | ~9 MB |
+| **Linux GUI (x86_64)** | [radiant-core-gui-linux-x64-v3.1.2.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-linux-x64-v3.1.2.tar.gz) | ~13 MB |
 
 **Quick Install (macOS DMG):**
 1. Download the DMG file
@@ -30,17 +29,19 @@ xattr -rd com.apple.quarantine /Applications/Radiant\ Core.app
 
 **Windows — Two GUI Options:**
 
-**Option A: RadiantCoreNode+Wallet (Recommended)**
-1. Download `RadiantCoreNode+Wallet-v.3.1.0.exe` (~9.2 MB)
-2. Double-click to run — no DLLs or installation needed
+**Option A: Standalone GUI (Recommended — no Python needed)**
+1. Download and extract `radiant-core-gui-windows-x64-v3.1.2.zip` (~16 MB)
+2. Double-click `Radiant Core.exe`
 3. A browser-based GUI opens at `http://127.0.0.1:8765`
-4. Includes one-click node control, built-in wallet, and BIP39 seed phrase backup
+4. One-click node control, built-in wallet, and BIP39 seed-phrase backup. Python is
+   bundled — nothing else to install. The `radiantd.exe`/`radiant-cli.exe`/`radiant-tx.exe`
+   node binaries are included in the bundle.
 
-**Option B: RadiantCore Qt GUI (Classic desktop wallet)**
-1. Download and extract `radiant-core-windows-x64.zip` (~65 MB)
-2. Double-click `RadiantCore.exe`
-3. Native Qt desktop wallet and node manager
-4. All required DLLs (Qt5, ICU, MinGW runtime, etc.) are included in the zip
+**Option B: Node binaries + GUI (requires Python 3.8+)**
+1. Download and extract `radiant-core-windows-x64.zip` (~9 MB) — contains
+   `radiantd.exe`, `radiant-cli.exe`, `radiant-tx.exe`, the GUI, and the MinGW runtime DLLs
+2. Double-click `start-gui.bat`
+3. The GUI opens at `http://127.0.0.1:8765` (uses your system Python 3)
 
 ### Portable Packages (All Platforms)
 
@@ -48,15 +49,15 @@ For users who prefer a portable installation or Linux:
 
 | Platform | Download | Size |
 |----------|----------|------|
-| **macOS (Apple Silicon)** | [radiant-core-gui-macos-arm64-v3.1.0.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-gui-macos-arm64-v3.1.0.zip) | ~15 MB |
-| **Linux (x86_64)** | [radiant-core-gui-linux-x64-v3.1.0.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-gui-linux-x64-v3.1.0.tar.gz) | ~15 MB |
+| **macOS GUI (portable, Apple Silicon)** | [radiant-core-gui-macos-v3.1.2.zip](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-macos-v3.1.2.zip) | ~3 MB |
+| **Linux GUI (x86_64)** | [radiant-core-gui-linux-x64-v3.1.2.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-linux-x64-v3.1.2.tar.gz) | ~13 MB |
 
 **macOS Portable:**
 ```bash
 # Download and extract
-curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-gui-macos-arm64-v3.1.0.zip
-unzip radiant-core-gui-macos-arm64-v3.1.0.zip
-cd radiant-core-gui-macos-arm64-v3.1.0
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-macos-v3.1.2.zip
+unzip radiant-core-gui-macos-v3.1.2.zip
+cd radiant-core-gui-macos-v3.1.2
 
 # Remove quarantine (required for downloaded apps)
 xattr -rd com.apple.quarantine .
@@ -67,9 +68,9 @@ xattr -rd com.apple.quarantine .
 
 **Linux:**
 ```bash
-curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-gui-linux-x64-v3.1.0.tar.gz
-tar xzf radiant-core-gui-linux-x64-v3.1.0.tar.gz
-cd radiant-core-gui-linux-x64-v3.1.0
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-gui-linux-x64-v3.1.2.tar.gz
+tar xzf radiant-core-gui-linux-x64-v3.1.2.tar.gz
+cd radiant-core-gui-linux-x64-v3.1.2
 ./start-gui.sh
 ```
 
@@ -137,33 +138,37 @@ make -j$(nproc)
 
 **Option 2: Use pre-built binaries with wallet support**
 
-Download wallet-enabled binaries from the [GitHub Releases page](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.0):
+Download wallet-enabled binaries from the [GitHub Releases page](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.2):
 
 | Platform | Download |
 |----------|----------|
-| macOS (Apple Silicon) | [radiant-core-macos-arm64.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-macos-arm64.tar.gz) |
-| Linux (x86_64) | [radiant-core-linux-x64.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-linux-x64.tar.gz) |
-| Docker (x86_64) | [radiant-core-docker-v3.1.0.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-docker-v3.1.0.tar.gz) |
+| macOS (Apple Silicon) | [radiant-core-macos-arm64.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-macos-arm64.tar.gz) |
+| Linux (x86_64) | [radiant-v3.1.2-linux-x64.tar.gz](https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-v3.1.2-linux-x64.tar.gz) |
+
+> The macOS standalone **GUI app** (`radiant-core-gui-macos-v3.1.2.dmg`, above)
+> bundles all required libraries. The raw `radiant-core-macos-arm64` node binaries
+> link against Homebrew libraries, so to run them directly you need
+> `brew install berkeley-db@4 boost libevent miniupnpc zeromq openssl@3`.
 
 **Quick setup (macOS):**
 ```bash
 # Download and extract
-curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-macos-arm64.tar.gz
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-core-macos-arm64.tar.gz
 tar xzf radiant-core-macos-arm64.tar.gz
 
 # Remove quarantine (required for downloaded binaries)
 xattr -rd com.apple.quarantine radiant-core-macos-arm64
 
-# Run the GUI
+# Run the GUI (raw binaries need the Homebrew libs noted above)
 cd radiant-core-macos-arm64
 python3 ../gui/radiant_node_web.py
 ```
 
 **Quick setup (Linux):**
 ```bash
-curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.0/radiant-core-linux-x64.tar.gz
-tar xzf radiant-core-linux-x64.tar.gz
-cd radiant-core-linux-x64
+curl -LO https://github.com/Radiant-Core/Radiant-Core/releases/download/v3.1.2/radiant-v3.1.2-linux-x64.tar.gz
+tar xzf radiant-v3.1.2-linux-x64.tar.gz
+cd radiant-v3.1.2-linux-x64
 ./radiantd -server -txindex=1
 ```
 
@@ -234,23 +239,24 @@ sudo apt install python3
 
 ### Windows (Recommended)
 
-**Option A: RadiantCoreNode+Wallet (standalone, no DLLs needed)**
-1. Double-click `RadiantCoreNode+Wallet-v.3.1.0.exe`
-2. The GUI opens automatically in your browser at `http://127.0.0.1:8765`
-3. One-click node control, built-in wallet, BIP39 seed phrase backup
+**Option A: Standalone GUI (no Python needed)**
+1. Extract `radiant-core-gui-windows-x64-v3.1.2.zip`
+2. Double-click `Radiant Core.exe`
+3. The GUI opens automatically in your browser at `http://127.0.0.1:8765` —
+   one-click node control, built-in wallet, BIP39 seed-phrase backup. Python is bundled.
 
-**Option B: RadiantCore Qt GUI (classic desktop wallet)**
+**Option B: Node binaries + GUI (requires Python 3.8+)**
 1. Extract `radiant-core-windows-x64.zip` to a folder
-2. Double-click `RadiantCore.exe`
-3. Requires all DLLs in the same folder (included in the zip)
+2. Double-click `start-gui.bat`
+3. The GUI opens at `http://127.0.0.1:8765` (uses your system Python 3)
 
 **Files included in radiant-core-windows-x64.zip:**
-- `RadiantCoreNode+Wallet-v.3.1.0.exe` - Standalone Node+Wallet GUI (no DLLs needed)
-- `RadiantCore.exe` - Classic Qt GUI wallet (requires DLLs)
 - `radiantd.exe` - The Radiant node daemon
 - `radiant-cli.exe` - Command-line interface
 - `radiant-tx.exe` - Transaction utility
-- All required DLLs (Qt5, ICU, MinGW runtime, BerkeleyDB, etc.)
+- `radiant_node_web.py` + `bip39.py` - The browser GUI
+- `start-gui.bat` - Launches the GUI (requires Python 3)
+- MinGW runtime DLLs (libgcc, libstdc++, boost, libevent, zmq, ssl, etc.)
 
 ### macOS
 1. Double-click `run_node_gui.command`
@@ -323,7 +329,7 @@ The GUI looks for the node binary in these locations:
 
 **Solutions:**
 - Build the node from source: See [INSTALL.md](../INSTALL.md)
-- Or download pre-built binaries from [GitHub Releases](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.0)
+- Or download pre-built binaries from [GitHub Releases](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.2)
 - Or use the GUI's built-in **Download Binaries** feature (auto-detects your platform)
 
 ### Node won't start
@@ -346,7 +352,7 @@ The GUI uses your system's native theme. Appearance may vary between:
 
 The GUI can automatically download the correct binaries for your platform. Just click **Download Binaries** when prompted.
 
-Or download manually from [GitHub Releases](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.0).
+Or download manually from [GitHub Releases](https://github.com/Radiant-Core/Radiant-Core/releases/tag/v3.1.2).
 
 ### Option 2: Build from Source
 
