@@ -105,13 +105,13 @@ docker build -f docker/Dockerfile.testnet -t radiant-testnet .
 ## Ports
 
 ### Mainnet
-- `7332`: P2P network port
-- `7333`: RPC port
+- `7332`: RPC port
+- `7333`: P2P network port
 - `29000`: ZMQ notifications (if enabled)
 
 ### Testnet
-- `27332`: P2P network port
-- `27333`: RPC port
+- `27332`: RPC port
+- `27333`: P2P network port
 
 ### Seeder
 - `53/udp`: DNS port
