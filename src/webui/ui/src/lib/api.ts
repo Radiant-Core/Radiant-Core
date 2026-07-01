@@ -56,8 +56,9 @@ export const api = {
     request<{ valid: boolean }>('POST', '/verifymessage', { address, signature, message }),
 
   // RPC console
-  rpc: (method: string, params: unknown[]) =>
-    request<{ result: unknown; error: unknown }>('POST', '/rpc', { method, params }),
+  rpc: (method: string, params: unknown[], wallet?: string) =>
+    request<{ result: unknown; error: unknown }>('POST', '/rpc',
+      wallet ? { method, params, wallet } : { method, params }),
 
   // Wallets
   walletsLoaded:    ()                => request<WalletsLoaded>('GET', '/wallets/loaded'),

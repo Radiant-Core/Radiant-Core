@@ -353,6 +353,14 @@ static bool HandleRPC(Config &config, HTTPRequest *req)
         jreq.strMethod = methodVal.get_str();
         jreq.params    = paramsVal.isArray() ? paramsVal : UniValue(UniValue::VARR);
 
+        // If the caller supplies a wallet name, set the URI so wallet-scoped
+        // RPCs (signrawtransactionwithwallet, gettransaction, etc.) find the
+        // right wallet even when multiple wallets are loaded.
+        const UniValue &walletVal = body["wallet"];
+        if (walletVal.isStr() && !walletVal.get_str().empty()) {
+            jreq.URI = "/wallet/" + walletVal.get_str();
+        }
+
         UniValue result = tableRPC.execute(config, jreq);
         UniValue::Object reply;
         reply.emplace_back("result", result);

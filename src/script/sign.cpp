@@ -97,9 +97,52 @@ static bool SignStep(const SigningProvider &provider,
     whichTypeRet = Solver(scriptPubKey, vSolutions);
 
     switch (whichTypeRet) {
-        case TX_NONSTANDARD:
         case TX_NULL_DATA:
             return false;
+        case TX_NONSTANDARD: {
+            // Radiant glyph token scripts embed a P2PKH inside a non-standard
+            // wrapper.  Solver returns TX_NONSTANDARD but we can still produce a
+            // valid {sig}{pubkey} scriptSig if the wallet owns the embedded key.
+            // CreateSig uses the FULL scriptPubKey as the scriptCode so the
+            // sighash is identical to what the network computes during validation.
+            //
+            // Recognised formats:
+            //   Simple glyph:    {d0|d8} <36B ref> OP_DROP OP_DUP OP_HASH160
+            //                    <20B PKH> OP_EQUALVERIFY OP_CHECKSIG  (63 bytes)
+            //   Photonic FT:     OP_DUP OP_HASH160 <20B PKH> OP_EQUALVERIFY
+            //                    OP_CHECKSIG <covenant suffix>          (>25 bytes)
+            const size_t n = scriptPubKey.size();
+            if (n >= 1) {
+                const uint8_t *d = scriptPubKey.data();
+                CKeyID glyphKeyID;
+                bool isGlyph = false;
+
+                if (n == 63 && (d[0] == 0xd0 || d[0] == 0xd8) &&
+                    d[37] == 0x75 && d[38] == 0x76 && d[39] == 0xa9 && d[40] == 0x14 &&
+                    d[61] == 0x88 && d[62] == 0xac) {
+                    std::copy(d + 41, d + 61, glyphKeyID.begin());
+                    isGlyph = true;
+                } else if (n > 25 && d[0] == 0x76 && d[1] == 0xa9 && d[2] == 0x14 &&
+                           d[23] == 0x88 && d[24] == 0xac) {
+                    std::copy(d + 3, d + 23, glyphKeyID.begin());
+                    isGlyph = true;
+                }
+
+                if (isGlyph) {
+                    CPubKey pubkey;
+                    if (!provider.GetPubKey(glyphKeyID, pubkey)) {
+                        return false;
+                    }
+                    if (!CreateSig(creator, sigdata, provider, sig, pubkey, scriptPubKey)) {
+                        return false;
+                    }
+                    ret.push_back(std::move(sig));
+                    ret.push_back(ToByteVector(pubkey));
+                    return true;
+                }
+            }
+            return false;
+        }
         case TX_PUBKEY:
             if (!CreateSig(creator, sigdata, provider, sig,
                            CPubKey(vSolutions[0]), scriptPubKey)) {

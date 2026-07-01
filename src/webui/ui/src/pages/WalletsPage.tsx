@@ -542,7 +542,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
     // Fetch a wallet-tracked tx via gettransaction + decoderawtransaction.
     async function fetchWalletTx(txid: string): Promise<{ tx: RawTx; blockhash?: string } | null> {
       try {
-        const wres = await api.rpc('gettransaction', [txid])
+        const wres = await api.rpc('gettransaction', [txid], walletName ?? undefined)
         const wtx = wres.result as { hex?: string; blockhash?: string } | null
         if (wtx?.hex) {
           const dres = await api.rpc('decoderawtransaction', [wtx.hex])
@@ -978,11 +978,11 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
           [{ [consDest]: total }],
           0,
           { subtractFeeFromOutputs: [0] },
-        ])
+        ], walletName ?? undefined)
         if (psbt.error) throw new Error(String((psbt.error as Record<string,unknown>).message ?? psbt.error))
         const psbtStr = (psbt.result as Record<string,unknown>).psbt as string
 
-        const signed = await api.rpc('walletprocesspsbt', [psbtStr])
+        const signed = await api.rpc('walletprocesspsbt', [psbtStr], walletName ?? undefined)
         if (signed.error) throw new Error(String((signed.error as Record<string,unknown>).message ?? signed.error))
         const signedPsbt = (signed.result as Record<string,unknown>).psbt as string
 
@@ -1071,7 +1071,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
         { txid: rxdUTXO.txid, vout: rxdUTXO.vout, scriptPubKey: rxdUTXO.scriptPubKey, amount: rxdUTXO.amount },
       ]
 
-      const signed = await api.rpc('signrawtransactionwithwallet', [rawTx, prevtxs])
+      const signed = await api.rpc('signrawtransactionwithwallet', [rawTx, prevtxs], walletName)
       if (signed.error) throw new Error(String((signed.error as Record<string,unknown>).message ?? signed.error))
       const signedRes = signed.result as Record<string, unknown>
       if (!signedRes.complete) throw new Error('Could not fully sign (wallet locked?)')
@@ -1220,7 +1220,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
           dmintMimeType,
           dmintDataHex,
           dmintUrl,
-        ])
+        ], walletName)
         if (mintRes.error) throw new Error(String((mintRes.error as Record<string,unknown>).message ?? mintRes.error))
 
         const r = mintRes.result as Record<string, unknown>
@@ -1282,7 +1282,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
         mainMimeType,
         mainDataHex,
         mainUrl,
-      ])
+      ], walletName)
       if (mintRes.error) throw new Error(String((mintRes.error as Record<string,unknown>).message ?? mintRes.error))
 
       const mintResult = mintRes.result as Record<string, unknown>
