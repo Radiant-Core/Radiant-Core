@@ -4,8 +4,9 @@ import { api, WalletSummary, AddressEntry, UTXOEntry, CoinEntry, GlyphRPCEntry, 
 import SeedImport from '../components/SeedImport'
 import {
   parseGlyphOpReturn, decodeCBOR, buildGlyphOpReturn,
-  buildGlyphOutputScript, buildP2PKHScript, buildRawTx,
+  buildP2PKHScript, buildRawTx,
   addressToPKH, refToTxidVout, displayBalance, metaToDataUrl, hex2buf,
+  replaceGlyphScriptPKH, isTokenBearing,
   GlyphToken, GlyphMeta, GlyphUTXO,
 } from '../lib/glyph'
 
@@ -322,6 +323,16 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
   const [tokenSendRef, setTokenSendRef]         = useState<GlyphToken | null>(null)
   const [tokenSendAmt, setTokenSendAmt]         = useState('')
   const [tokenSendAddr, setTokenSendAddr]       = useState('')
+  const [pendingTokenTx, setPendingTokenTx]     = useState<{
+    signedHex: string
+    txid: string
+    vout: Array<{ value: number; n: number; scriptPubKey: { hex: string; type?: string; addresses?: string[]; address?: string } }>
+    fee: number
+    ticker: string
+    decimals: number
+    tokenAmtSats: number
+  } | null>(null)
+  const [showRawHex, setShowRawHex]             = useState(false)
   const [selectedTokenRef, setSelectedTokenRef] = useState<string | null>(null)
   const glyphLoadingRef                         = useRef(false)
   const rpcGlyphEntriesRef                      = useRef<GlyphRPCEntry[] | null>(null)
@@ -1000,7 +1011,9 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
     clearMsg()
     const meta = glyphMeta.get(tokenSendRef.ref)
     const decimals = meta?.decimals ?? 0
-    const amtSats = Math.round(parseFloat(tokenSendAmt) * Math.pow(10, decimals))
+    const amtSats = tokenSendRef.isSingleton
+      ? tokenSendRef.totalSats
+      : Math.round(parseFloat(tokenSendAmt) * Math.pow(10, decimals))
     if (isNaN(amtSats) || amtSats <= 0) { toast('Invalid amount', 'error'); return }
 
     try {
@@ -1021,21 +1034,30 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
 
       // Find a non-glyph RXD UTXO for fees
       const FEE_SATS = 2000
-      const rxdUTXO = utxos?.find(u => u.spendable && !u.scriptPubKey?.startsWith('24') && Math.round(u.amount * 1e8) >= FEE_SATS)
+      const rxdUTXO = utxos?.find(u => u.spendable && !isTokenBearing(u.scriptPubKey ?? '') && Math.round(u.amount * 1e8) >= FEE_SATS)
       if (!rxdUTXO) { toast('No spendable RXD available for fees (need at least 0.00002 RXD)', 'error'); return }
 
       const senderPKH = addressToPKH(rxdUTXO.address)
       const rxdSats   = Math.round(rxdUTXO.amount * 1e8)
+
+      // Preserve the exact on-chain script format by replacing only the PKH.
+      // Photonic FT scripts start with 76a914 (P2PKH + covenant); simple d0/d8
+      // scripts start with the ref opcode. Using the wrong format would produce
+      // outputs with a different script hash that Photonic wallet can't find.
+      const templateScript = selected[0].scriptPubKey
+      const recipientScript = replaceGlyphScriptPKH(templateScript, recipientPKH)
+      const senderScript    = replaceGlyphScriptPKH(templateScript, senderPKH)
+      if (!recipientScript) { toast('Unknown token script format — cannot build output', 'error'); return }
 
       const inputs = [
         ...selected.map(u => ({ txid: u.txid, vout: u.vout })),
         { txid: rxdUTXO.txid, vout: rxdUTXO.vout },
       ]
       const outputs: Array<{ scriptHex: string; satoshis: number }> = [
-        { scriptHex: buildGlyphOutputScript(tokenSendRef.ref, recipientPKH, tokenSendRef.isSingleton), satoshis: amtSats },
+        { scriptHex: recipientScript, satoshis: amtSats },
       ]
-      if (change > 0) {
-        outputs.push({ scriptHex: buildGlyphOutputScript(tokenSendRef.ref, senderPKH, tokenSendRef.isSingleton), satoshis: change })
+      if (change > 0 && senderScript) {
+        outputs.push({ scriptHex: senderScript, satoshis: change })
       }
       const rxdChange = rxdSats - FEE_SATS
       if (rxdChange > 0) {
@@ -1054,20 +1076,44 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
       const signedRes = signed.result as Record<string, unknown>
       if (!signedRes.complete) throw new Error('Could not fully sign (wallet locked?)')
 
-      const broadcast = await api.rpc('sendrawtransaction', [signedRes.hex])
-      if (broadcast.error) throw new Error(String((broadcast.error as Record<string,unknown>).message ?? broadcast.error))
+      const decoded = await api.rpc('decoderawtransaction', [signedRes.hex])
+      if (decoded.error) throw new Error(String((decoded.error as Record<string,unknown>).message ?? decoded.error))
+      const decodedTx = decoded.result as {
+        txid: string
+        vout: Array<{ value: number; n: number; scriptPubKey: { hex: string; type?: string; addresses?: string[]; address?: string } }>
+      }
 
-      toast(`Token sent! txid: ${broadcast.result}`, 'success')
-      setTokenSendRef(null); setTokenSendAmt(''); setTokenSendAddr('')
-      loadUTXOs(walletName)
+      setTokenSendRef(null)
+      setPendingTokenTx({
+        signedHex: signedRes.hex as string,
+        txid: decodedTx.txid,
+        vout: decodedTx.vout,
+        fee: FEE_SATS,
+        ticker: meta?.ticker ?? 'tokens',
+        decimals,
+        tokenAmtSats: amtSats,
+      })
     } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Token send failed', 'error') }
+  }
+
+  const confirmBroadcastToken = async () => {
+    if (!pendingTokenTx || walletName === null) return
+    try {
+      const broadcast = await api.rpc('sendrawtransaction', [pendingTokenTx.signedHex])
+      if (broadcast.error) throw new Error(String((broadcast.error as Record<string,unknown>).message ?? broadcast.error))
+      toast(`Token sent! txid: ${broadcast.result}`, 'success')
+      setPendingTokenTx(null)
+      setShowRawHex(false)
+      setTokenSendAmt(''); setTokenSendAddr('')
+      loadUTXOs(walletName)
+    } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Broadcast failed', 'error') }
   }
 
   // ── Token mint ──
 
   // Spendable non-glyph UTXOs available to fund a mint, sorted largest first.
   const fundingUtxos = (utxos ?? [])
-    .filter(u => u.spendable && !u.scriptPubKey?.startsWith('24'))
+    .filter(u => u.spendable && !isTokenBearing(u.scriptPubKey ?? ''))
     .sort((a, b) => b.amount - a.amount)
 
   // Resolve the UTXO the user selected (or fall back to largest available).
@@ -1506,13 +1552,92 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                 <button onClick={() => setTokenSendRef(null)}>Cancel</button>
                 <button className="primary"
-                  onClick={() => {
-                    if (tokenSendRef.isSingleton) setTokenSendAmt(String(tokenSendRef.totalSats))
-                    handleSendToken()
-                  }}
+                  onClick={handleSendToken}
                   disabled={!tokenSendAddr || (!tokenSendRef.isSingleton && !tokenSendAmt)}>
                   Send
                 </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Token send preview / confirm modal */}
+      {pendingTokenTx && (() => {
+        const feeRXD = pendingTokenTx.fee / 1e8
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1001,
+            background: 'rgba(0,0,0,0.80)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div className="card" style={{ width: '100%', maxWidth: 560, padding: '2rem', border: '1px solid var(--border)', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}>
+              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>Review Transaction</h2>
+              <p style={{ margin: '0 0 1rem', fontSize: '0.78rem', color: 'var(--text2)' }}>Verify the outputs below, then confirm to broadcast.</p>
+
+              <table className="table" style={{ marginBottom: '0.75rem' }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 24 }}>#</th>
+                    <th>Address / Script</th>
+                    <th style={{ textAlign: 'right' }}>Amount</th>
+                    <th>Type</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingTokenTx.vout.map(vout => {
+                    const addr = vout.scriptPubKey.address ?? vout.scriptPubKey.addresses?.[0]
+                    const isToken = isTokenBearing(vout.scriptPubKey.hex)
+                    const amtDisplay = isToken
+                      ? `${(vout.value * 1e8 / Math.pow(10, pendingTokenTx.decimals)).toLocaleString()} ${pendingTokenTx.ticker}`
+                      : `${vout.value.toFixed(8)} RXD`
+                    return (
+                      <tr key={vout.n}>
+                        <td style={{ color: 'var(--text2)' }}>{vout.n}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', wordBreak: 'break-all', maxWidth: 220 }}>
+                          {addr ?? (vout.scriptPubKey.hex.slice(0, 32) + '…')}
+                        </td>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '0.82rem' }}>{amtDisplay}</td>
+                        <td><span className={`badge ${isToken ? 'amber' : 'blue'}`}>{isToken ? 'Token' : 'RXD'}</span></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+
+              <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.65rem 0.75rem', marginBottom: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+                  <span style={{ color: 'var(--text2)' }}>Network fee</span>
+                  <span style={{ fontFamily: 'monospace' }}>{feeRXD.toFixed(8)} RXD</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+                  <span style={{ color: 'var(--text2)', flexShrink: 0 }}>TxID</span>
+                  <code style={{ flex: 1, fontSize: '0.72rem', wordBreak: 'break-all', color: 'var(--text)' }}>
+                    {pendingTokenTx.txid.slice(0, 24)}…{pendingTokenTx.txid.slice(-8)}
+                  </code>
+                  <button title="Copy TxID" onClick={() => navigator.clipboard?.writeText(pendingTokenTx.txid)}
+                    style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}>
+                    <CopyIcon size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '1rem' }}>
+                <button onClick={() => setShowRawHex(v => !v)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text2)', fontSize: '0.78rem', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>{showRawHex ? '▼' : '▶'}</span>
+                  Raw hex
+                </button>
+                {showRawHex && (
+                  <div style={{ marginTop: '0.4rem', background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.5rem 0.65rem' }}>
+                    <code style={{ fontSize: '0.67rem', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>{pendingTokenTx.signedHex}</code>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                <button onClick={() => { setPendingTokenTx(null); setShowRawHex(false) }}>Cancel</button>
+                <button className="primary" onClick={confirmBroadcastToken}>Confirm &amp; Broadcast</button>
               </div>
             </div>
           </div>

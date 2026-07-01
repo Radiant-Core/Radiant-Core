@@ -138,15 +138,73 @@ export function addressToPKH(address: string): string {
 
 // ── Script utilities ──────────────────────────────────────────────────────
 
+// Walk a scriptPubKey as an opcode stream and return true if any opcode in
+// opcode position is in the OP_PUSHINPUTREF family (0xd0–0xd8). This correctly
+// handles Photonic FT scripts (which start with a P2PKH segment so 0xd0 appears
+// mid-script, not at byte 0) and avoids false positives where 0xd0–0xd8 appear
+// inside a push payload (e.g. as part of a pubkey hash).
+export function isTokenBearing(scriptHex: string): boolean {
+  if (!scriptHex || scriptHex.length % 2 !== 0) return false
+  const bytes = hex2buf(scriptHex)
+  const n = bytes.length
+  let pos = 0
+  while (pos < n) {
+    const op = bytes[pos]
+    if (op >= 0xd0 && op <= 0xd8) return true
+    let next: number
+    if (op >= 0x01 && op <= 0x4b) {
+      next = pos + 1 + op
+    } else if (op === 0x4c) {
+      if (pos + 1 >= n) return false
+      next = pos + 2 + bytes[pos + 1]
+    } else if (op === 0x4d) {
+      if (pos + 2 >= n) return false
+      next = pos + 3 + (bytes[pos + 1] | (bytes[pos + 2] << 8))
+    } else if (op === 0x4e) {
+      if (pos + 4 >= n) return false
+      next = pos + 5 + ((bytes[pos + 1] | (bytes[pos + 2] << 8) | (bytes[pos + 3] << 16) | (bytes[pos + 4] << 24)) >>> 0)
+    } else {
+      next = pos + 1
+    }
+    if (next <= pos || next > n) return false
+    pos = next
+  }
+  return false
+}
+
 // Detect a glyph UTXO from its scriptPubKey hex.
-// Glyph FT:  d0 <36 bytes ref> 75 76 a9 14 <20 bytes PKH> 88 ac  (63 bytes)
-// Glyph NFT: d8 <36 bytes ref> 75 76 a9 14 <20 bytes PKH> 88 ac  (63 bytes)
+// Simple d0/d8 format (used by mints and NFTs):
+//   d0/d8 <36 bytes ref> 75 76 a9 14 <20 bytes PKH> 88 ac  (63 bytes)
+// Photonic FT format (P2PKH first, then supply-conservation covenant):
+//   76a914 <20 bytes PKH> 88ac bd d0 <ref> de c0 e9 aa 76 e3 78 e4 a2 69 e6 9d
 export function parseGlyphScript(scriptHex: string): { ref: string; isSingleton: boolean } | null {
   const s = scriptHex.toLowerCase()
   if (s.length < 126) return null  // 63 bytes minimum
   const op = s.slice(0, 2)
   if (op !== 'd0' && op !== 'd8') return null  // OP_PUSHINPUTREF / OP_PUSHINPUTREFSINGLETON
   return { ref: s.slice(2, 74), isSingleton: op === 'd8' }
+}
+
+// Replace just the PKH in a glyph output script, preserving the full script
+// format (Photonic FT covenant, simple d0/d8, etc.) so that recipients using
+// Photonic wallet can find and spend the output.
+// Returns null if the script format is not recognised.
+export function replaceGlyphScriptPKH(srcHex: string, newPKH: string): string | null {
+  const s = srcHex.toLowerCase()
+  const p = newPKH.toLowerCase()
+  if (p.length !== 40) return null
+
+  // Simple d0/d8: (d0|d8){ref:72} 75 76a914 {pkh:40} 88ac [tail]
+  if ((s.startsWith('d0') || s.startsWith('d8')) && s.length >= 82 + 40 + 4) {
+    return s.slice(0, 82) + p + s.slice(82 + 40)
+  }
+
+  // Photonic FT: 76a914 {pkh:40} 88ac bd d0 {ref:72} ...
+  if (s.startsWith('76a914') && s.length > 50) {
+    return '76a914' + p + s.slice(6 + 40)
+  }
+
+  return null
 }
 
 // Get the display txid and vout from a 36-byte ref (72 hex chars).
