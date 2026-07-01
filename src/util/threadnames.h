@@ -19,6 +19,6 @@ void ThreadSetInternalName(std::string&&);
 
 //! Get the thread's internal (in-memory) name; used e.g. for identification in
 //! logging.
-const std::string& ThreadGetInternalName();
+std::string ThreadGetInternalName();
 
 } // namespace util

@@ -8,6 +8,7 @@
 #endif
 
 #include <atomic>
+#include <cstring>
 #include <thread>
 
 #if (defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__))
@@ -38,11 +39,16 @@ static void SetThreadName(const char* name)
 #endif
 }
 
-static thread_local std::string g_thread_name;
-const std::string& util::ThreadGetInternalName() { return g_thread_name; }
+// Use a POD char array rather than std::string to avoid MinGW's double-destructor
+// bug on Windows.
+static thread_local char g_thread_name[128] = {};
+std::string util::ThreadGetInternalName() { return g_thread_name; }
 //! Set the in-memory internal name for this thread. Does not affect the process
 //! name.
-static void SetInternalName(std::string name) { g_thread_name = std::move(name); }
+static void SetInternalName(std::string name) {
+    strncpy(g_thread_name, name.c_str(), sizeof(g_thread_name) - 1);
+    g_thread_name[sizeof(g_thread_name) - 1] = '\0';
+}
 
 void util::ThreadRename(std::string&& name)
 {
