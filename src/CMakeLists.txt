@@ -372,7 +372,7 @@ file(MAKE_DIRECTORY "${OBJ_DIR}")
 set(BUILD_HEADER "${OBJ_DIR}/build.h")
 set(BUILD_HEADER_TMP "${BUILD_HEADER}.tmp")
 
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows")
   set(GENBUILD_SCRIPT "${CMAKE_SOURCE_DIR}/share/genbuild.bat")
 else()
   set(GENBUILD_SCRIPT "${CMAKE_SOURCE_DIR}/share/genbuild.sh")
@@ -445,6 +445,9 @@ endif()
 # Target specific configs
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
   set(Boost_THREADAPI win32)
+  set(Boost_USE_STATIC_LIBS ON)
+  set(Boost_USE_MULTITHREADED ON)
+  set(Boost_USE_STATIC_RUNTIME ON)
 
   find_package(SHLWAPI REQUIRED)
   # We cannot use the imported target here, because cmake will introduce an
@@ -717,6 +720,12 @@ endif()
 if(BUILD_RADIANT_ZMQ)
   add_subdirectory(zmq)
   target_link_libraries(server zmq)
+endif()
+
+# WebUI (optional, requires WITH_WEBUI=ON at the top-level cmake invocation)
+if(WITH_WEBUI)
+  add_subdirectory(webui)
+  target_link_libraries(server bitcoin_webui)
 endif()
 
 # RPC client support

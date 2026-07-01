@@ -33,20 +33,20 @@
 static const size_t MAX_GETUTXOS_OUTPOINTS = 15;
 
 /**
- * SECURITY (audit 2026-06, H4): default ON. When true, every /rest/* endpoint
+ * SECURITY (audit 2026-06, H4): default ON. When true, every /rest/... endpoint
  * requires the same authentication as the JSON-RPC interface (single-user,
  * multi-user, or cookie). This mirrors the /metrics posture (-metricsauth).
  * Defaulting ON is safe: an ecosystem-wide audit (RXinDexer, ElectrumX, the
  * stratum proxy, Consigliere, node-helper, the wallets, and the MCP server)
  * confirmed every node consumer uses authenticated JSON-RPC or ZMQ — none issue
- * credential-less GET /rest/*, and production radiantd is not even launched with
- * -rest. Operators who deliberately expose an unauthenticated REST surface (e.g.
- * behind their own authenticating reverse proxy) can opt out with -restauth=0; a
- * loud startup warning is then emitted if the RPC port is also exposed beyond
- * loopback via -rpcallowip.
+ * credential-less GET requests to /rest/..., and production radiantd is not even
+ * launched with -rest. Operators who deliberately expose an unauthenticated REST
+ * surface (e.g. behind their own authenticating reverse proxy) can opt out with
+ * -restauth=0; a loud startup warning is then emitted if the RPC port is also
+ * exposed beyond loopback via -rpcallowip.
  */
 static const bool DEFAULT_REST_AUTH = true;
-/** WWW-Authenticate header presented with a 401 from /rest/*. */
+/** WWW-Authenticate header presented with a 401 from /rest/... endpoints. */
 static const char *REST_WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
 
 enum class RetFormat {
@@ -136,7 +136,7 @@ static bool CheckWarmup(HTTPRequest *req) {
     return true;
 }
 
-// SECURITY (audit 2026-06, H4): require RPC authentication for /rest/* unless
+// SECURITY (audit 2026-06, H4): require RPC authentication for /rest/... unless
 // explicitly opted out with -restauth=0. Returns true if the request is allowed
 // to proceed; otherwise writes a 401 (with a WWW-Authenticate challenge) and
 // returns false so the handler aborts. This is relay/policy-only (does not touch
@@ -728,7 +728,7 @@ void StartREST() {
     // binds (see HTTPBindAddresses) and is gated by the same -rpcallowip ACL. If
     // an operator explicitly disables per-request auth (-restauth=0) AND exposes
     // the RPC port beyond loopback (-rpcallowip), chain/mempool data under
-    // /rest/* becomes reachable unauthenticated. Emit a loud startup warning in
+    // /rest/... becomes reachable unauthenticated. Emit a loud startup warning in
     // that specific case so it is never done accidentally on a public interface.
     if (!gArgs.GetBoolArg("-restauth", DEFAULT_REST_AUTH) &&
         gArgs.IsArgSet("-rpcallowip")) {
@@ -736,7 +736,7 @@ void StartREST() {
                   "authentication DISABLED (-restauth=0). Because -rpcallowip is "
                   "set, REST may be reachable from non-loopback addresses. Anyone "
                   "able to reach the RPC port can read chain/mempool data via "
-                  "/rest/*. Restrict access with -rpcallowip/-rpcbind and/or "
+                  "/rest/... endpoints. Restrict access with -rpcallowip/-rpcbind and/or "
                   "front it with an authenticating reverse proxy.\n");
     }
     for (size_t i = 0; i < std::size(uri_prefixes); ++i) {

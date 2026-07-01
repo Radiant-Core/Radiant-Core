@@ -925,6 +925,58 @@ std::string HTTPRequest::GetURI() const {
     return evhttp_request_get_uri(req);
 }
 
+struct evhttp_connection *HTTPRequest::GetConnection() const {
+    return req ? evhttp_request_get_connection(req) : nullptr;
+}
+
+void HTTPRequest::StartChunkedReply(int nStatus) {
+    assert(!replySent && req);
+    replySent = true;
+    // Schedule on the libevent thread.  req is NOT nulled: SendChunk() and
+    // GetRaw() must remain usable after this call returns.
+    auto req_copy = req;
+    HTTPEvent *ev = new HTTPEvent(eventBase, /*deleteWhenTriggered=*/true,
+        [req_copy, nStatus] {
+            evhttp_send_reply_start(req_copy, nStatus, nullptr);
+        });
+    ev->trigger(nullptr);
+}
+
+void HTTPRequest::SendChunk(const std::string &chunk) {
+    assert(replySent && req);
+    auto req_copy = req;
+    std::string data = chunk;
+    HTTPEvent *ev = new HTTPEvent(eventBase, /*deleteWhenTriggered=*/true,
+        [req_copy, data] {
+            evbuffer *buf = evbuffer_new();
+            evbuffer_add(buf, data.data(), data.size());
+            evhttp_send_reply_chunk(req_copy, buf);
+            evbuffer_free(buf);
+        });
+    ev->trigger(nullptr);
+}
+
+std::optional<std::string> HTTPRequest::GetQueryParameter(const std::string &name) const {
+    if (!req) return std::nullopt;
+    const char *uri_str = evhttp_request_get_uri(req);
+    if (!uri_str) return std::nullopt;
+    // Parse using libevent's URI helpers.
+    struct evhttp_uri *parsed = evhttp_uri_parse(uri_str);
+    if (!parsed) return std::nullopt;
+    const char *query_str = evhttp_uri_get_query(parsed);
+    std::optional<std::string> result;
+    if (query_str) {
+        struct evkeyvalq params;
+        if (evhttp_parse_query_str(query_str, &params) == 0) {
+            const char *val = evhttp_find_header(&params, name.c_str());
+            if (val) result = val;
+            evhttp_clear_headers(&params);
+        }
+    }
+    evhttp_uri_free(parsed);
+    return result;
+}
+
 HTTPRequest::RequestMethod HTTPRequest::GetRequestMethod() const {
     switch (evhttp_request_get_command(req)) {
         case EVHTTP_REQ_GET:

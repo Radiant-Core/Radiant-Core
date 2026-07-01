@@ -35,8 +35,8 @@ string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${
 # Add path for custom modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
-# Apply portable Windows configuration if on Windows
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows" AND NOT DEFINED ENV{RADIANT_SKIP_PORTABLE_CONFIG})
+# Apply portable Windows configuration if on Windows (native build only, not cross-compilation)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Windows" AND NOT CMAKE_CROSSCOMPILING AND NOT DEFINED ENV{RADIANT_SKIP_PORTABLE_CONFIG})
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PortableWindowsConfig.cmake)
 endif()
 
@@ -86,6 +86,7 @@ exclude_from_source_package(
 
 option(ENABLE_COVERAGE "Enable coverage" OFF)
 option(ENABLE_BRANCH_COVERAGE "Enable branch coverage" OFF)
+option(WITH_WEBUI "Enable local Web UI HTTP endpoint (requires -webui=1 at runtime)." ON)
 
 if(ENABLE_COVERAGE)
 	include(Coverage)

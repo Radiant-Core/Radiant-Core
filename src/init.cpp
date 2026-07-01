@@ -29,6 +29,9 @@
 #include <hash.h>
 #include <httprpc.h>
 #include <httpserver.h>
+#ifdef ENABLE_WEBUI
+#include <webui/webui.h>
+#endif
 #include <index/swapindex.h>
 #include <index/txindex.h>
 #include <interfaces/chain.h>
@@ -198,6 +201,9 @@ static boost::thread_group threadGroup;
 static CScheduler scheduler;
 
 void Interrupt() {
+#ifdef ENABLE_WEBUI
+    InterruptWebUI();
+#endif
     InterruptHTTPServer();
     InterruptHTTPRPC();
     InterruptRPC();
@@ -232,6 +238,9 @@ void Shutdown(NodeContext &node) {
 
     StopHTTPRPC();
     StopREST();
+#ifdef ENABLE_WEBUI
+    StopWebUI();
+#endif
     StopRPC();
     StopPrometheusMetrics();
     StopHTTPServer();
@@ -1094,6 +1103,18 @@ void SetupServerArgs() {
                  strprintf("Accept public REST requests (default: %d)",
                            DEFAULT_REST_ENABLE),
                  ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+#ifdef ENABLE_WEBUI
+    gArgs.AddArg("-webui",
+                 strprintf("Enable local Web UI endpoint at /webui/ on the RPC port (default: %d)",
+                           DEFAULT_WEBUI_ENABLE),
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-webuipassword",
+                 "Fixed password for Web UI authentication (default: cookie-based)",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+    gArgs.AddArg("-webuiassets",
+                 "Serve Web UI static files from this directory instead of embedded assets (development)",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::RPC);
+#endif
     gArgs.AddArg(
         "-rpcbind=<addr>[:port]",
         "Bind to given address to listen for JSON-RPC connections. This option "
@@ -1455,6 +1476,11 @@ static bool AppInitServers(Config &config,
     }
 
     StartPrometheusMetrics(config);
+#ifdef ENABLE_WEBUI
+    if (gArgs.GetBoolArg("-webui", DEFAULT_WEBUI_ENABLE)) {
+        StartWebUI();
+    }
+#endif
     StartHTTPServer();
     return true;
 }

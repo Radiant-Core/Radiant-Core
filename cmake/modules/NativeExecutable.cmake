@@ -50,7 +50,7 @@ function(add_native_executable NAME)
 		set(NATIVE_BINARY "${NATIVE_BUILD_DIR}/${NATIVE_TARGET}")
 		set(NATIVE_LINK "${CMAKE_CURRENT_BINARY_DIR}/native-${NAME}")
 
-		if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+		if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows")
 			configure_file(
 				"${CMAKE_SOURCE_DIR}/cmake/templates/NativeBuildRunner.bat.in"
 				"${CMAKE_CURRENT_BINARY_DIR}/build_native_${NAME}.bat"
@@ -139,7 +139,7 @@ function(_gen_native_cmake_target)
 
 	file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/config")
 	
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows")
 		configure_file(
 			"${CMAKE_SOURCE_DIR}/cmake/templates/NativeCmakeRunner.bat.in"
 			"${CMAKE_BINARY_DIR}/config/run_native_cmake.bat"
@@ -165,7 +165,7 @@ if(NOT __IS_NATIVE_BUILD AND NOT TARGET native-cmake-build)
 	# Set a hook to execute when everything is set.
 	variable_watch(CMAKE_CURRENT_LIST_DIR _gen_native_cmake_hook)
 
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Windows")
 		set(NATIVE_SCRIPT "${CMAKE_BINARY_DIR}/config/run_native_cmake.bat")
 	else()
 		set(NATIVE_SCRIPT "${CMAKE_BINARY_DIR}/config/run_native_cmake.sh")

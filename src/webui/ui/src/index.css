@@ -1,0 +1,55 @@
+@font-face { font-family: "Inter"; font-weight: 100 900; font-style: normal; font-display: swap; src: url('./assets/fonts/InterVariable.woff2') format('woff2'); }
+@font-face { font-family: "Roboto Mono"; font-weight: 400 700; src: url('./assets/fonts/RobotoMono-Bold.ttf') format('truetype'); }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #000000;
+  --bg2:       #0f0f14;
+  --bg3:       #25252c;
+  --border:    #2a2a35;
+  --text:      #ffffff;
+  --text2:     #8888a0;
+  --accent:    #00f2f2;   /* Electric Teal */
+  --accent2:   #00a8de;   /* Sky Blue */
+  --green:     #007a74;   /* Radiant Light Green */
+  --red:       #ef4444;
+  --blue:      #4495f2;   /* Radiant Blue 1 */
+  --radius:    6px;
+  --font:      'Inter', system-ui, sans-serif;
+}
+
+html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; }
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text);
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  transition: background 0.15s, border-color 0.15s;
+}
+button:hover { background: var(--bg3); border-color: var(--accent); }
+button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+button.primary:hover { background: var(--accent2); border-color: var(--accent2); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+input, textarea, select {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  width: 100%;
+  outline: none;
+  font-family: var(--font);
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85em; }

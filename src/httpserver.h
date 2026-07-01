@@ -154,6 +154,37 @@ public:
      */
     void WriteReply(int nStatus, const std::string &strReply = "");
 
+    /**
+     * Start a chunked HTTP reply (for Server-Sent Events / streaming).
+     * Sets replySent=true so the destructor won't send a second reply.
+     * req is NOT nulled so that SendChunk() and GetRaw() remain usable.
+     */
+    void StartChunkedReply(int nStatus);
+
+    /**
+     * Send a chunk of data on an already-started chunked reply.
+     * Must be called after StartChunkedReply().
+     */
+    void SendChunk(const std::string &chunk);
+
+    /**
+     * Return the raw evhttp_request pointer.
+     * Valid until the connection is closed. Used by SSE to keep a handle
+     * on the request after the HTTPRequest wrapper is destroyed.
+     */
+    struct evhttp_request *GetRaw() const { return req; }
+
+    /**
+     * Return the evhttp_connection for this request, or nullptr.
+     */
+    struct evhttp_connection *GetConnection() const;
+
+    /**
+     * Parse a named query parameter from the request URI.
+     * E.g. for "/foo?bar=baz" GetQueryParameter("bar") returns "baz".
+     */
+    std::optional<std::string> GetQueryParameter(const std::string &name) const;
+
 private:
     std::vector<NameValuePair> GetAllHeaders(bool input) const;
 };

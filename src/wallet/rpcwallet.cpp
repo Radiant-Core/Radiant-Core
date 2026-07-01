@@ -25,10 +25,13 @@
 #include <shutdown.h>
 #include <timedata.h>
 #include <util/moneystr.h>
+#include <util/strencodings.h>
 #include <util/system.h>
 #include <validation.h>
+#include <script/script.h>
 #include <wallet/coincontrol.h>
 #include <wallet/psbtwallet.h>
+#include <wallet/rpcglyph.h>
 #include <wallet/rpcwallet.h>
 #include <wallet/wallet.h>
 #include <wallet/walletdb.h>
@@ -3333,6 +3336,26 @@ static UniValue listunspent(const Config &config,
         const CScript &scriptPubKey = out.tx->tx->vout[out.i].scriptPubKey;
         bool fValidAddress = ExtractDestination(scriptPubKey, address);
 
+        // Glyph token outputs are surfaced by listglyph, not listunspent.
+        // Two recognised patterns:
+        //  • Standard FT/NFT: 63-byte d0/d8-prefix script
+        //  • dMint contract UTXO: ≥63-byte P2PKH + OP_STATESEPARATOR + OP_PUSHINPUTREF
+        {
+            const size_t sz = scriptPubKey.size();
+            const uint8_t *d = scriptPubKey.data();
+            if (sz == 63 && (d[0] == 0xd0 || d[0] == 0xd8) &&
+                d[37] == 0x75 && d[38] == 0x76 && d[39] == 0xa9 && d[40] == 0x14 &&
+                d[61] == 0x88 && d[62] == 0xac) {
+                continue;
+            }
+            if (sz >= 63 &&
+                d[0] == 0x76 && d[1] == 0xa9 && d[2] == 0x14 &&
+                d[23] == 0x88 && d[24] == 0xac &&
+                d[25] == 0xbd && d[26] == 0xd0) {
+                continue;
+            }
+        }
+
         if (destinations.size() &&
             (!fValidAddress || !destinations.count(address))) {
             continue;
@@ -4589,6 +4612,612 @@ static UniValue walletcreatefundedpsbt(const Config &config,
     return result;
 }
 
+// Scan script bytes for the 'gly' magic and return the CBOR payload that
+// immediately follows it.  Handles direct pushes and PUSHDATA1/2/4.
+static std::vector<uint8_t> ExtractGlyphCbor(const uint8_t *data, size_t len) {
+    for (size_t j = 0; j + 3 <= len; j++) {
+        if (data[j] != 'g' || data[j+1] != 'l' || data[j+2] != 'y') continue;
+        size_t pos = j + 3;
+        if (pos >= len) continue;
+        uint8_t op = data[pos];
+        uint64_t cborLen = 0;
+        size_t cborStart = 0;
+        if (op < 0x4c) {
+            cborLen = op; cborStart = pos + 1;
+        } else if (op == 0x4c && pos + 1 < len) {
+            cborLen = data[pos + 1]; cborStart = pos + 2;
+        } else if (op == 0x4d && pos + 2 < len) {
+            cborLen = (uint32_t)data[pos+1] | ((uint32_t)data[pos+2] << 8); cborStart = pos + 3;
+        } else if (op == 0x4e && pos + 4 < len) {
+            cborLen = (uint32_t)data[pos+1] | ((uint32_t)data[pos+2] << 8) |
+                      ((uint32_t)data[pos+3] << 16) | ((uint64_t)data[pos+4] * 0x1000000u);
+            cborStart = pos + 5;
+        } else {
+            continue;
+        }
+        if (cborStart + cborLen > len) continue;
+        return std::vector<uint8_t>(data + cborStart, data + cborStart + cborLen);
+    }
+    return {};
+}
+
+static UniValue listglyph(const Config &config,
+                          const JSONRPCRequest &request) {
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    CWallet *const pwallet = wallet.get();
+
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return UniValue();
+    }
+
+    if (request.fHelp || request.params.size() > 2) {
+        throw std::runtime_error(
+            RPCHelpMan{"listglyph",
+                "\nReturns all unspent glyph token outputs belonging to this wallet.\n",
+                {
+                    {"minconf", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "1", "Minimum confirmations"},
+                    {"maxconf", RPCArg::Type::NUM, /* opt */ true, /* default_val */ "9999999", "Maximum confirmations"},
+                }}
+                .ToString() +
+            "\nResult\n"
+            "[                        (array of json object)\n"
+            "  {\n"
+            "    \"txid\"         : \"txid\",  (string)  current UTXO transaction id\n"
+            "    \"vout\"         : n,        (numeric) output index\n"
+            "    \"ref\"          : \"hex\",   (string)  36-byte token reference LE\n"
+            "    \"type\"         : \"ft|nft\",(string)  ft = fungible, nft = singleton\n"
+            "    \"address\"      : \"addr\",  (string)  Radiant address holding the token\n"
+            "    \"scriptPubKey\" : \"hex\",   (string)  full output script\n"
+            "    \"satoshis\"     : n,        (numeric) value in satoshis\n"
+            "    \"confirmations\": n,        (numeric)\n"
+            "    \"revealoutpoint\": \"txid\" (string)  txid of the reveal/metadata tx containing CBOR (if known)\n"
+            "  }\n"
+            "]\n" +
+            HelpExampleCli("listglyph", "") +
+            HelpExampleRpc("listglyph", ""));
+    }
+
+    int nMinDepth = 1;
+    if (!request.params[0].isNull()) {
+        nMinDepth = request.params[0].get_int();
+    }
+    int nMaxDepth = 9999999;
+    if (!request.params[1].isNull()) {
+        nMaxDepth = request.params[1].get_int();
+    }
+
+    pwallet->BlockUntilSyncedToCurrentChain();
+
+    auto locked_chain = pwallet->chain().lock();
+    LOCK(pwallet->cs_wallet);
+
+    // Build a reverse spend-index over mapWallet: outpoint → txid of the tx that spends it.
+    // Used by findMintTxid to locate the mint tx via the genesis outpoint without txindex.
+    std::map<COutPoint, TxId> spendIdx;
+    for (const auto &[txid, wtx] : pwallet->mapWallet)
+        for (const auto &inp : wtx.tx->vin)
+            spendIdx.emplace(inp.prevout, txid);
+
+    // Find the mint/reveal tx for a glyph token.
+    // Primary: look up which wallet tx spends the genesis outpoint — O(log n), no txindex.
+    //   Works for tokens this wallet minted or where the full history is in mapWallet.
+    // Fallback: backwards walk through mapWallet via vin[0] for partial chains.
+    // Received tokens whose mint tx predates wallet history will return "".
+    auto findMintTxid = [&](const TxId& startId, const COutPoint& genesisOut) -> std::string {
+        // Primary: genesis-outpoint lookup
+        auto sit = spendIdx.find(genesisOut);
+        if (sit != spendIdx.end()) {
+            const TxId &mintId = sit->second;
+            auto wit = pwallet->mapWallet.find(mintId);
+            if (wit != pwallet->mapWallet.end()) {
+                const CTransactionRef &mtx = wit->second.tx;
+                for (const auto &inp : mtx->vin)
+                    if (!ExtractGlyphCbor(inp.scriptSig.data(), inp.scriptSig.size()).empty())
+                        return mintId.GetHex();
+                for (const auto &out : mtx->vout) {
+                    if (out.scriptPubKey.size() < 2 || out.scriptPubKey[0] != OP_RETURN) continue;
+                    if (!ExtractGlyphCbor(out.scriptPubKey.data() + 1, out.scriptPubKey.size() - 1).empty())
+                        return mintId.GetHex();
+                }
+            }
+        }
+        const Consensus::Params &consensus = config.GetChainParams().GetConsensus();
+
+        // Strategy 1.5: Scan the genesis block for the reveal tx.
+        // In the Photonic commit/reveal pattern the reveal is often in the same block as genesis,
+        // so one block read replaces a multi-hop chain walk.  Requires txindex=1.
+        {
+            CTransactionRef genesisRef; BlockHash genesisBlockHash;
+            if (GetTransaction(genesisOut.GetTxId(), genesisRef, consensus, genesisBlockHash, true) &&
+                !genesisBlockHash.IsNull()) {
+                const CBlockIndex *pblockindex = LookupBlockIndex(genesisBlockHash);
+                CBlock genesisBlock;
+                if (pblockindex && ReadBlockFromDisk(genesisBlock, pblockindex, consensus)) {
+                    for (const CTransactionRef &btx : genesisBlock.vtx) {
+                        for (const CTxIn &inp : btx->vin) {
+                            if (inp.prevout != genesisOut) continue;
+                            const std::string btxid = btx->GetId().GetHex();
+                            for (const auto &vin : btx->vin)
+                                if (!ExtractGlyphCbor(vin.scriptSig.data(), vin.scriptSig.size()).empty())
+                                    return btxid;
+                            for (const auto &out : btx->vout) {
+                                if (out.scriptPubKey.size() < 2 || out.scriptPubKey[0] != OP_RETURN) continue;
+                                if (!ExtractGlyphCbor(out.scriptPubKey.data() + 1, out.scriptPubKey.size() - 1).empty())
+                                    return btxid;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: backwards walk through mapWallet, following the glyph-token vin.
+        // Reconstruct the 36-byte ref from genesisOut for script matching.
+        std::vector<uint8_t> refBytesLocal(genesisOut.GetTxId().begin(), genesisOut.GetTxId().end());
+        {
+            uint32_t vn = genesisOut.GetN();
+            refBytesLocal.push_back(vn & 0xff);
+            refBytesLocal.push_back((vn >> 8) & 0xff);
+            refBytesLocal.push_back((vn >> 16) & 0xff);
+            refBytesLocal.push_back((vn >> 24) & 0xff);
+        }
+        // Helper: fetch a tx from mapWallet first, then txindex (if available).
+        auto fetchLocal = [&](const TxId &txid) -> CTransactionRef {
+            auto wit = pwallet->mapWallet.find(txid);
+            if (wit != pwallet->mapWallet.end()) return wit->second.tx;
+            CTransactionRef out; BlockHash blk;
+            if (GetTransaction(txid, out, consensus, blk, true)) return out;
+            return nullptr;
+        };
+
+        TxId cur = startId;
+        std::set<TxId> bwVisited;
+        for (int hop = 0; hop < 30; ++hop) {
+            if (!bwVisited.insert(cur).second) break;
+            CTransactionRef tx = fetchLocal(cur);
+            if (!tx) break;
+            for (const auto &inp : tx->vin)
+                if (!ExtractGlyphCbor(inp.scriptSig.data(), inp.scriptSig.size()).empty())
+                    return cur.GetHex();
+            for (const auto &out : tx->vout) {
+                if (out.scriptPubKey.size() < 2 || out.scriptPubKey[0] != OP_RETURN) continue;
+                if (!ExtractGlyphCbor(out.scriptPubKey.data() + 1, out.scriptPubKey.size() - 1).empty())
+                    return cur.GetHex();
+            }
+            if (tx->vin.empty() || tx->IsCoinBase()) break;
+            // Identify which vin carries the glyph token by peeking at prev output scripts.
+            TxId nextId = tx->vin[0].prevout.GetTxId(); // fallback
+            if (tx->vin.size() > 1) {
+                for (const auto &inp : tx->vin) {
+                    const TxId &prevId = inp.prevout.GetTxId();
+                    uint32_t prevVout = inp.prevout.GetN();
+                    CTransactionRef prevTx = fetchLocal(prevId);
+                    if (!prevTx || prevVout >= prevTx->vout.size()) continue;
+                    const CScript &ps = prevTx->vout[prevVout].scriptPubKey;
+                    const size_t psz = ps.size(); const uint8_t *pd = ps.data();
+                    // Standard 63-byte glyph: (d0|d8) + ref[36]
+                    if (psz == 63 && (pd[0] == 0xd0 || pd[0] == 0xd8) &&
+                        std::equal(refBytesLocal.begin(), refBytesLocal.end(), pd + 1))
+                        { nextId = prevId; break; }
+                    // dMint contract: 76 a9 14 [pkh20] 88 ac bd d0 [ref36]
+                    if (psz >= 63 && pd[0] == 0x76 && pd[1] == 0xa9 && pd[2] == 0x14 &&
+                        pd[23] == 0x88 && pd[24] == 0xac && pd[25] == 0xbd && pd[26] == 0xd0 &&
+                        std::equal(refBytesLocal.begin(), refBytesLocal.end(), pd + 27))
+                        { nextId = prevId; break; }
+                }
+            }
+            if (nextId == cur) break;
+            cur = nextId;
+        }
+        return "";
+    };
+
+    UniValue::Array results;
+
+    for (const auto &pairWtx : pwallet->mapWallet) {
+        const TxId &walletTxId = pairWtx.first;
+        const CWalletTx &wtx = pairWtx.second;
+
+        for (size_t i = 0; i < wtx.tx->vout.size(); i++) {
+            const CScript &script = wtx.tx->vout[i].scriptPubKey;
+            const size_t sz = script.size();
+            if (sz < 63) continue;
+
+            const uint8_t *d = script.data();
+
+            // ── Pattern 1: standard glyph FT/NFT (exactly 63 bytes) ──────────────
+            // d0/d8 <ref:36> 75 76 a9 14 <pkh:20> 88 ac
+            if (sz == 63 &&
+                (d[0] == 0xd0 || d[0] == 0xd8) &&
+                d[37] == 0x75 && d[38] == 0x76 && d[39] == 0xa9 && d[40] == 0x14 &&
+                d[61] == 0x88 && d[62] == 0xac) {
+
+                // PKH at bytes 41-60. Use HaveKey directly: IsMine fails on glyph
+                // scripts because the script parser doesn't recognise them.
+                CKeyID keyID;
+                std::copy(d + 41, d + 61, keyID.begin());
+                if (!pwallet->HaveKey(keyID)) continue;
+
+                const COutPoint outpoint(walletTxId, i);
+                if (pwallet->IsSpent(*locked_chain, outpoint)) continue;
+
+                int depth = wtx.GetDepthInMainChain(*locked_chain);
+                if (depth < nMinDepth || depth > nMaxDepth) continue;
+
+                const std::string refHex = HexStr(std::vector<uint8_t>(d + 1, d + 37));
+                TxId genesisId;
+                std::copy(d + 1, d + 33, genesisId.begin());
+                uint32_t genesisVout = (uint32_t)d[33] | ((uint32_t)d[34] << 8)
+                                     | ((uint32_t)d[35] << 16) | ((uint32_t)d[36] << 24);
+
+                UniValue::Object entry;
+                entry.emplace_back("txid", walletTxId.GetHex());
+                entry.emplace_back("vout", (int)i);
+                entry.emplace_back("ref", refHex);
+                entry.emplace_back("type", d[0] == 0xd8 ? "nft" : "ft");
+                entry.emplace_back("address", EncodeDestination(CTxDestination(keyID), config));
+                entry.emplace_back("scriptPubKey", HexStr(script));
+                entry.emplace_back("photons", wtx.tx->vout[i].nValue / SATOSHI);
+                entry.emplace_back("confirmations", depth);
+                entry.emplace_back("revealoutpoint", findMintTxid(walletTxId, COutPoint(genesisId, genesisVout)));
+                results.emplace_back(std::move(entry));
+                continue;
+            }
+
+            // ── Pattern 2: dMint contract UTXO (≥63 bytes) ───────────────────────
+            // 76 a9 14 <pkh:20> 88 ac  bd  d0 <ref:36>  <contract_opcodes>
+            // P2PKH spending condition  SEP  PUSHINPUTREF  enforcement code
+            if (sz >= 63 &&
+                d[0] == 0x76 && d[1] == 0xa9 && d[2] == 0x14 &&
+                d[23] == 0x88 && d[24] == 0xac &&
+                d[25] == 0xbd && d[26] == 0xd0) {
+
+                // PKH at bytes 3-22
+                CKeyID keyID;
+                std::copy(d + 3, d + 23, keyID.begin());
+                if (!pwallet->HaveKey(keyID)) continue;
+
+                const COutPoint outpoint(walletTxId, i);
+                if (pwallet->IsSpent(*locked_chain, outpoint)) continue;
+
+                int depth = wtx.GetDepthInMainChain(*locked_chain);
+                if (depth < nMinDepth || depth > nMaxDepth) continue;
+
+                // Ref at bytes 27-62: first 32 bytes = genesis txid (LE), last 4 = vout LE
+                const std::string refHex = HexStr(std::vector<uint8_t>(d + 27, d + 63));
+                TxId genesisId;
+                std::copy(d + 27, d + 59, genesisId.begin());
+                uint32_t genesisVout = (uint32_t)d[59] | ((uint32_t)d[60] << 8)
+                                     | ((uint32_t)d[61] << 16) | ((uint32_t)d[62] << 24);
+
+                UniValue::Object entry;
+                entry.emplace_back("txid", walletTxId.GetHex());
+                entry.emplace_back("vout", (int)i);
+                entry.emplace_back("ref", refHex);
+                entry.emplace_back("type", "ft");  // dMint tokens are always fungible
+                entry.emplace_back("address", EncodeDestination(CTxDestination(keyID), config));
+                entry.emplace_back("scriptPubKey", HexStr(script));
+                entry.emplace_back("photons", wtx.tx->vout[i].nValue / SATOSHI);
+                entry.emplace_back("confirmations", depth);
+                // For dMint the CBOR metadata lives in the genesis contract tx;
+                // use findMintTxid from the genesis outpoint to locate it.
+                entry.emplace_back("revealoutpoint", findMintTxid(walletTxId, COutPoint(genesisId, genesisVout)));
+                results.emplace_back(std::move(entry));
+            }
+        }
+    }
+
+    return results;
+}
+
+// Recursively decode a CBOR item into a UniValue for JSON output.
+// Binary strings > 256 bytes are summarised as "<bytes:N>" to keep output readable.
+static UniValue CborToUniValue(const uint8_t *d, size_t len, size_t &pos, int depth = 0) {
+    if (pos >= len || depth > 64) return UniValue();
+
+    const uint8_t initial = d[pos++];
+    const uint8_t mt = (initial >> 5) & 7;
+    const uint8_t ai = initial & 0x1f;
+
+    auto readN = [&]() -> uint64_t {
+        if (ai <= 23) return ai;
+        if (ai == 24 && pos < len)        return d[pos++];
+        if (ai == 25 && pos + 2 <= len) { uint64_t v=((uint64_t)d[pos]<<8)|d[pos+1];   pos+=2; return v; }
+        if (ai == 26 && pos + 4 <= len) { uint64_t v=((uint64_t)d[pos]<<24)|((uint64_t)d[pos+1]<<16)|((uint64_t)d[pos+2]<<8)|d[pos+3]; pos+=4; return v; }
+        if (ai == 27 && pos + 8 <= len) { uint64_t v=0; for(int i=0;i<8;i++) v=(v<<8)|d[pos+i]; pos+=8; return v; }
+        return 0;
+    };
+
+    switch (mt) {
+    case 0: return UniValue(static_cast<int64_t>(readN()));
+    case 1: return UniValue(-static_cast<int64_t>(readN()) - 1);
+    case 2: { // byte string: 36-byte refs → hex, everything else → base64 (for image data URLs)
+        if (ai == 31) return UniValue("<indefinite-bytes>");
+        uint64_t n = readN();
+        if (pos + n > len) return UniValue("<truncated>");
+        std::string out;
+        if (n == 36)
+            out = HexStr(Span<const uint8_t>(d + pos, n));
+        else
+            out = EncodeBase64(Span<const uint8_t>(d + pos, n));
+        pos += n;
+        return UniValue(out);
+    }
+    case 3: { // text string
+        if (ai == 31) return UniValue("");
+        uint64_t n = readN();
+        if (pos + n > len) return UniValue("<truncated>");
+        std::string s(reinterpret_cast<const char *>(d + pos), n);
+        pos += n;
+        return UniValue(s);
+    }
+    case 4: { // array
+        UniValue::Array arr;
+        if (ai == 31) {
+            while (pos < len && d[pos] != 0xff)
+                arr.push_back(CborToUniValue(d, len, pos, depth + 1));
+            if (pos < len) pos++;
+        } else {
+            uint64_t n = readN();
+            for (uint64_t i = 0; i < n && pos < len; i++)
+                arr.push_back(CborToUniValue(d, len, pos, depth + 1));
+        }
+        return UniValue(std::move(arr));
+    }
+    case 5: { // map
+        UniValue::Object obj;
+        if (ai == 31) {
+            while (pos < len && d[pos] != 0xff) {
+                UniValue k = CborToUniValue(d, len, pos, depth + 1);
+                UniValue v = CborToUniValue(d, len, pos, depth + 1);
+                obj.emplace_back(k.getValStr(), std::move(v));
+            }
+            if (pos < len) pos++;
+        } else {
+            uint64_t n = readN();
+            for (uint64_t i = 0; i < n && pos < len; i++) {
+                UniValue k = CborToUniValue(d, len, pos, depth + 1);
+                UniValue v = CborToUniValue(d, len, pos, depth + 1);
+                obj.emplace_back(k.getValStr(), std::move(v));
+            }
+        }
+        return UniValue(std::move(obj));
+    }
+    case 6: readN(); return CborToUniValue(d, len, pos, depth + 1); // tag: skip
+    case 7:
+        if (ai == 20) return UniValue(false);
+        if (ai == 21) return UniValue(true);
+        if (ai == 22 || ai == 23) return UniValue();
+        readN();
+        return UniValue("(float)");
+    default: return UniValue();
+    }
+}
+
+// Extract the raw CBOR bytes following a 'gly' magic push in a script.
+// Returns empty vector if not found.
+static UniValue getglyphmetadata(const Config &config,
+                                 const JSONRPCRequest &request) {
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3) {
+        throw std::runtime_error(
+            RPCHelpMan{"getglyphmetadata",
+                       "\nFetch and return the CBOR metadata for a glyph token.\n"
+                       "\nSearch order: mint tx (if provided) → genesis tx → forward walk from genesis\n"
+                       "via wallet spend index (catches reveal txs not accessible via txindex).\n"
+                       "\nThe Photonic wallet embeds CBOR in the scriptSig of the mint/reveal transaction.\n",
+                       {
+                           {"ref", RPCArg::Type::STR, /* opt */ false, /* default_val */ "",
+                            "36-byte token reference (72-char hex, txid LE + vout LE)"},
+                           {"revealoutpoint", RPCArg::Type::STR, /* opt */ true, /* default_val */ "",
+                            "Optional: txid of the reveal/metadata transaction to search first"},
+                           {"decode", RPCArg::Type::BOOL, /* opt */ true, /* default_val */ "true",
+                            "Set to false to omit the decoded JSON field (useful when binary fields are large)"},
+                       }}
+                .ToString() +
+            "\nResult:\n"
+            "{\n"
+            "  \"metadata\" : \"hex\",    (string) CBOR-encoded metadata bytes (hex)\n"
+            "  \"decoded\"  : {...},      (object) Decoded CBOR as JSON (omitted when decode=0; binary fields are "
+            "base64)\n"
+            "  \"source\"   : \"string\", (string) Where metadata was found: \"opreturn\" or \"scriptsig\"\n"
+            "  \"txid\"     : \"string\", (string) The transaction where metadata was found\n"
+            "}\n" +
+            HelpExampleCli("getglyphmetadata", "\"ad3719dd...eb00000000\"") +
+            HelpExampleCli("getglyphmetadata", "\"ad3719dd...eb00000000\" \"0236eca840...\"") +
+            HelpExampleCli("getglyphmetadata", "\"ad3719dd...eb00000000\" \"\" 0") +
+            HelpExampleRpc("getglyphmetadata", "\"ad3719dd...eb00000000\", \"0236eca840...\", 1"));
+    }
+
+    // Parse the 36-byte reference: 32 bytes txid (LE) + 4 bytes vout (LE)
+    std::string refHex = request.params[0].get_str();
+    if (refHex.length() != 72) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           "Token reference must be exactly 72 hex characters (36 bytes)");
+    }
+
+    std::vector<uint8_t> refBytes = ParseHex(refHex);
+    if (refBytes.size() != 36) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+                           "Failed to parse token reference as hex");
+    }
+
+    TxId genesisTxid(uint256(std::vector<uint8_t>(refBytes.begin(), refBytes.begin() + 32)));
+    uint32_t genesisVout = (uint32_t)refBytes[32] | ((uint32_t)refBytes[33] << 8)
+                         | ((uint32_t)refBytes[34] << 16) | ((uint32_t)refBytes[35] << 24);
+    COutPoint genesisOut(genesisTxid, genesisVout);
+    const CChainParams &params = config.GetChainParams();
+
+    // Optional wallet access — used for mapWallet lookups and the forward-walk fallback.
+    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
+    CWallet *const pwallet = wallet.get();
+
+    // Fetch a tx: try txindex first, then fall back to the wallet's own tx store.
+    // Without txindex=1, GetTransaction only finds mempool txs; mapWallet covers the rest.
+    auto fetchTx = [&](const TxId &txid, CTransactionRef &txOut) -> bool {
+        BlockHash blk;
+        if (GetTransaction(txid, txOut, params.GetConsensus(), blk, true)) return true;
+        if (pwallet) {
+            LOCK(pwallet->cs_wallet);
+            auto wit = pwallet->mapWallet.find(txid);
+            if (wit != pwallet->mapWallet.end()) { txOut = wit->second.tx; return true; }
+        }
+        return false;
+    };
+
+    // decode=1 (default) includes the full decoded JSON field; decode=0 omits it (faster for large images).
+    // Accept either a bool (true) or a num (>=1) to indicate verbose output.
+    bool doDecode = true;
+    if (!request.params[2].isNull()) {
+        doDecode = request.params[2].isNum() ? request.params[2].get_int() != 0 : request.params[2].get_bool();
+    }
+
+    // Helper: search a transaction for 'gly' CBOR in both vout OP_RETURNs and vin scriptSigs.
+    // For multi-glyph txes the correct CBOR is in the input spending the genesis outpoint,
+    // so we try that input first before falling back to the first CBOR-bearing input.
+    auto searchTx = [doDecode, &genesisOut](const CTransactionRef &tx, const std::string &txidStr,
+                                UniValue::Object &result) -> bool {
+        for (const auto &out : tx->vout) {
+            const CScript &script = out.scriptPubKey;
+            if (script.size() < 6 || script[0] != OP_RETURN) continue;
+            std::vector<uint8_t> cbor = ExtractGlyphCbor(script.data() + 1, script.size() - 1);
+            if (cbor.empty()) continue;
+            // Always include raw hex so the caller can decode with full binary fidelity.
+            result.emplace_back("metadata", HexStr(cbor));
+            if (doDecode) {
+                size_t p = 0;
+                result.emplace_back("decoded", CborToUniValue(cbor.data(), cbor.size(), p));
+            }
+            result.emplace_back("source",   std::string("opreturn"));
+            result.emplace_back("txid",     txidStr);
+            return true;
+        }
+        auto tryInput = [&](const CTxIn &inp) -> bool {
+            const CScript &scriptSig = inp.scriptSig;
+            if (scriptSig.size() < 6) return false;
+            std::vector<uint8_t> cbor = ExtractGlyphCbor(scriptSig.data(), scriptSig.size());
+            if (cbor.empty()) return false;
+            result.emplace_back("metadata", HexStr(cbor));
+            if (doDecode) {
+                size_t p = 0;
+                result.emplace_back("decoded", CborToUniValue(cbor.data(), cbor.size(), p));
+            }
+            result.emplace_back("source",   std::string("scriptsig"));
+            result.emplace_back("txid",     txidStr);
+            return true;
+        };
+        // Prioritised: input spending this token's genesis outpoint
+        for (const auto &inp : tx->vin)
+            if (inp.prevout == genesisOut && tryInput(inp)) return true;
+        // Fallback: any input with CBOR (single-glyph txes, OP_RETURN mints)
+        for (const auto &inp : tx->vin)
+            if (inp.prevout != genesisOut && tryInput(inp)) return true;
+        return false;
+    };
+
+    UniValue::Object result;
+
+    // Step 1: If caller provides the mint/UTXO txid, search that transaction first.
+    // The Photonic wallet embeds CBOR in the scriptSig of the mint tx, not the genesis tx.
+    if (request.params.size() >= 2 && request.params[1].isStr()) {
+        std::string mintHex = request.params[1].get_str();
+        if (mintHex.length() == 64) {
+            TxId mintTxid = TxId(uint256S(mintHex));
+            CTransactionRef mintTx;
+            if (fetchTx(mintTxid, mintTx)) {
+                if (searchTx(mintTx, mintHex, result)) return result;
+            }
+        }
+    }
+
+    // Step 2: Fetch the genesis transaction; capture its block hash for the block-scan step.
+    CTransactionRef genesisTx;
+    BlockHash genesisBlockHash;
+    if (!GetTransaction(genesisTxid, genesisTx, params.GetConsensus(), genesisBlockHash, true)) {
+        // txindex miss — fall back to wallet tx store.
+        if (pwallet) {
+            LOCK(pwallet->cs_wallet);
+            auto wit = pwallet->mapWallet.find(genesisTxid);
+            if (wit != pwallet->mapWallet.end()) genesisTx = wit->second.tx;
+        }
+        if (!genesisTx) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Could not find genesis transaction");
+        }
+    }
+    if (searchTx(genesisTx, genesisTxid.ToString(), result)) return result;
+
+    // Step 2.5: Scan the genesis block for the reveal tx.
+    // In the Photonic commit/reveal pattern the reveal tx is often in the same block as genesis,
+    // so one block read replaces a multi-hop walk.  Only available when txindex provides the block hash.
+    if (!genesisBlockHash.IsNull()) {
+        const CBlockIndex *pblockindex = LookupBlockIndex(genesisBlockHash);
+        CBlock genesisBlock;
+        if (pblockindex && ReadBlockFromDisk(genesisBlock, pblockindex, params.GetConsensus())) {
+            for (const CTransactionRef &btx : genesisBlock.vtx) {
+                for (const CTxIn &inp : btx->vin) {
+                    if (inp.prevout != genesisOut) continue;
+                    UniValue::Object blockResult;
+                    if (searchTx(btx, btx->GetId().ToString(), blockResult)) return blockResult;
+                }
+            }
+        }
+    }
+
+    // Step 3: Forward walk from the genesis outpoint using the wallet's spend index.
+    // This finds the reveal/mint tx even when txindex=0, as long as the reveal is in mapWallet.
+    // Photonic wallet commit/reveal pattern: commit tx (=genesis) → reveal tx (has CBOR) → transfers.
+    if (pwallet) {
+        // Snapshot the spend index once (avoid holding cs_wallet across network calls).
+        std::map<COutPoint, TxId> spendIdx;
+        {
+            LOCK(pwallet->cs_wallet);
+            for (const auto &[wtxid, wtx] : pwallet->mapWallet)
+                for (const auto &inp : wtx.tx->vin)
+                    spendIdx.emplace(inp.prevout, wtxid);
+        }
+
+        COutPoint cur = genesisOut;
+        std::set<TxId> fwdVisited;
+        for (int hop = 0; hop < 20; ++hop) {
+            auto sit = spendIdx.find(cur);
+            if (sit == spendIdx.end()) break;
+
+            const TxId &nextId = sit->second;
+            if (!fwdVisited.insert(nextId).second) break;  // cycle guard
+
+            CTransactionRef nextTx;
+            if (!fetchTx(nextId, nextTx)) break;
+
+            UniValue::Object fwdResult;
+            if (searchTx(nextTx, nextId.ToString(), fwdResult)) return fwdResult;
+
+            // Find the glyph output in this tx that carries our ref, so we can continue walking.
+            bool foundOut = false;
+            for (uint32_t i = 0; i < (uint32_t)nextTx->vout.size(); ++i) {
+                const CScript &s = nextTx->vout[i].scriptPubKey;
+                const size_t sz = s.size();
+                const uint8_t *d = s.data();
+                // Standard 63-byte glyph: (d0|d8) + ref[36] + P2PKH suffix
+                if (sz == 63 && (d[0] == 0xd0 || d[0] == 0xd8) &&
+                    std::equal(refBytes.begin(), refBytes.end(), d + 1)) {
+                    cur = COutPoint(nextId, i); foundOut = true; break;
+                }
+                // dMint contract: 76 a9 14 [pkh20] 88 ac bd d0 [ref36] ...
+                if (sz >= 63 && d[0] == 0x76 && d[1] == 0xa9 && d[2] == 0x14 &&
+                    d[23] == 0x88 && d[24] == 0xac && d[25] == 0xbd && d[26] == 0xd0 &&
+                    std::equal(refBytes.begin(), refBytes.end(), d + 27)) {
+                    cur = COutPoint(nextId, i); foundOut = true; break;
+                }
+            }
+            if (!foundOut) break;
+        }
+    }
+
+    // No metadata found
+    throw JSONRPCError(RPC_MISC_ERROR,
+                       "No CBOR metadata found. If the reveal tx is known, pass it as the second "
+                       "argument: getglyphmetadata <ref> <revealoutpoint>");
+}
+
 // clang-format off
 static const ContextFreeRPCCommand commands[] = {
     //  category            name                            actor (function)              argNames
@@ -4622,6 +5251,8 @@ static const ContextFreeRPCCommand commands[] = {
     { "wallet",             "listunspent",                  listunspent,                  {"minconf","maxconf","addresses","include_unsafe","query_options"} },
     { "wallet",             "listwalletdir",                listwalletdir,                {} },
     { "wallet",             "listwallets",                  listwallets,                  {} },
+    { "wallet",             "listglyph",                    listglyph,                    {"minconf","maxconf"} },
+    { "wallet",             "getglyphmetadata",             getglyphmetadata,             {"ref","revealoutpoint","decode"} },
     { "wallet",             "loadwallet",                   loadwallet,                   {"filename"} },
     { "wallet",             "lockunspent",                  lockunspent,                  {"unlock","transactions"} },
     { "wallet",             "rescanblockchain",             rescanblockchain,             {"start_height", "stop_height"} },
@@ -4645,4 +5276,5 @@ void RegisterWalletRPCCommands(CRPCTable &t) {
     for (unsigned int vcidx = 0; vcidx < std::size(commands); ++vcidx) {
         t.appendCommand(commands[vcidx].name, &commands[vcidx]);
     }
+    RegisterGlyphRPCCommands(t);
 }

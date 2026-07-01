@@ -1300,7 +1300,47 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef &ptx,
     if (fExisted && !fUpdate) {
         return false;
     }
-    if (fExisted || IsMine(tx) || IsFromMe(tx)) {
+
+    // Glyph token outputs are not recognised by the standard IsMine() script
+    // parser. Check them separately so received tokens with no RXD change are
+    // still tracked in mapWallet (and thus visible to listglyph).
+    //
+    // Two recognised patterns:
+    //  • Regular FT/NFT (63 bytes): d0/d8 <ref:36> 75 76 a9 14 <pkh:20> 88 ac
+    //  • dMint contract UTXO (≥63 bytes):
+    //      76 a9 14 <pkh:20> 88 ac  bd  d0 <ref:36>  <contract_opcodes>
+    //      P2PKH spending condition  SEP  PUSHINPUTREF ref  enforcement code
+    auto hasGlyphOutputToMe = [&]() -> bool {
+        for (const CTxOut &txout : tx.vout) {
+            const CScript &script = txout.scriptPubKey;
+            const size_t sz = script.size();
+            if (sz < 63) continue;
+            const uint8_t *d = script.data();
+
+            // Standard 63-byte glyph output (FT or NFT singleton)
+            if (sz == 63 &&
+                (d[0] == 0xd0 || d[0] == 0xd8) &&
+                d[37] == 0x75 && d[38] == 0x76 && d[39] == 0xa9 && d[40] == 0x14 &&
+                d[61] == 0x88 && d[62] == 0xac) {
+                CKeyID keyID;
+                std::copy(d + 41, d + 61, keyID.begin());
+                if (HaveKey(keyID)) return true;
+            }
+
+            // dMint contract UTXO: P2PKH + OP_STATESEPARATOR + OP_PUSHINPUTREF + ref
+            if (sz >= 63 &&
+                d[0] == 0x76 && d[1] == 0xa9 && d[2] == 0x14 &&
+                d[23] == 0x88 && d[24] == 0xac &&
+                d[25] == 0xbd && d[26] == 0xd0) {
+                CKeyID keyID;
+                std::copy(d + 3, d + 23, keyID.begin());
+                if (HaveKey(keyID)) return true;
+            }
+        }
+        return false;
+    };
+
+    if (fExisted || IsMine(tx) || IsFromMe(tx) || hasGlyphOutputToMe()) {
         /**
          * Check if any keys in the wallet keypool that were supposed to be
          * unused have appeared in a new transaction. If so, remove those keys

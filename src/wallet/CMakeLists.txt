@@ -21,6 +21,7 @@ add_library(wallet
 	init.cpp
 	psbtwallet.cpp
 	rpcdump.cpp
+	rpcglyph.cpp
 	rpcwallet.cpp
 	wallet.cpp
 	walletdb.cpp

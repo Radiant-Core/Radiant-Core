@@ -235,6 +235,11 @@ if(ENABLE_DBUS_NOTIFICATIONS)
 	target_link_libraries(radiant-qt-base Qt5::DBus)
 endif()
 
+if(WITH_WEBUI)
+	target_compile_definitions(radiant-qt-base PUBLIC ENABLE_WEBUI=1)
+	target_link_libraries(radiant-qt-base bitcoin_webui)
+endif()
+
 # Wallet
 if(BUILD_RADIANT_WALLET)
 	# Automoc option.

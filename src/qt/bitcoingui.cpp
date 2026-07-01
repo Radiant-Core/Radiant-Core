@@ -37,13 +37,18 @@
 #include <qt/walletmodel.h>
 #include <qt/walletview.h>
 #endif // ENABLE_WALLET
+#include <chainparamsbase.h>
 #include <ui_interface.h>
 #include <util/system.h>
+#ifdef ENABLE_WEBUI
+#include <webui/webui.h>
+#endif
 
 #include <memory>
 
 #include <QAction>
 #include <QApplication>
+#include <QDesktopServices>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDragEnterEvent>
@@ -547,6 +552,21 @@ void BitcoinGUI::createMenuBar() {
 
         m_node_actions.append(tab_action);
     }
+
+#ifdef ENABLE_WEBUI
+    {
+        window_menu->addSeparator();
+        int rpcPort = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+        QAction *openWebuiAction = window_menu->addAction(tr("Open &Web UI"));
+        openWebuiAction->setStatusTip(
+            tr("Open the Radiant Core Web UI in your default browser (requires -webui to be enabled)"));
+        openWebuiAction->setToolTip(openWebuiAction->statusTip());
+        connect(openWebuiAction, &QAction::triggered, [rpcPort] {
+            QDesktopServices::openUrl(
+                QUrl(QString("http://127.0.0.1:%1/webui/").arg(rpcPort)));
+        });
+    }
+#endif
 
     QMenu *help = appMenuBar->addMenu(tr("&Help"));
     help->addAction(showHelpMessageAction);

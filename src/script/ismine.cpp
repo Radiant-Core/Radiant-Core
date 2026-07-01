@@ -58,8 +58,26 @@ IsMineResult IsMineInner(const CKeyStore &keystore, const CScript &scriptPubKey,
 
     CKeyID keyID;
     switch (whichType) {
-        case TX_NONSTANDARD:
         case TX_NULL_DATA:
+            break;
+        case TX_NONSTANDARD:
+            // Glyph token scripts are 63-byte nonstandard scripts:
+            // OP_PUSHINPUTREF[SINGLETON] <36-byte ref> OP_DROP OP_DUP OP_HASH160 <20-byte PKH> OP_EQUALVERIFY OP_CHECKSIG
+            // The embedded PKH is ours, but the photons locked inside cannot be spent as plain RXD —
+            // they can only move as part of a glyph token transfer.  Mark as WATCH_ONLY so that
+            // getbalance (which excludes watch-only by default) does not inflate the spendable balance.
+            if (scriptPubKey.size() == 63) {
+                const uint8_t *d = scriptPubKey.data();
+                if ((d[0] == 0xd0 || d[0] == 0xd8) &&
+                    d[37] == 0x75 && d[38] == 0x76 && d[39] == 0xa9 && d[40] == 0x14 &&
+                    d[61] == 0x88 && d[62] == 0xac) {
+                    CKeyID glyphKeyID;
+                    std::copy(d + 41, d + 61, glyphKeyID.begin());
+                    if (keystore.HaveKey(glyphKeyID)) {
+                        ret = std::max(ret, IsMineResult::WATCH_ONLY);
+                    }
+                }
+            }
             break;
         case TX_PUBKEY:
             keyID = CPubKey(vSolutions[0]).GetID();

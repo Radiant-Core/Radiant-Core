@@ -300,3 +300,8 @@ AUDIT_*.md
 # Chain-scan results from contrib/audit/scan-hash-opcode-usage.py (local only;
 # the scanner tool itself stays tracked, just not its per-run output)
 contrib/audit/scan-hash-opcode-results-*.md
+
+# WebUI frontend build artifacts
+src/webui/ui/node_modules/
+src/webui/ui/dist/
+

@@ -12,7 +12,8 @@ rapidcheck_packages = rapidcheck
 qt_darwin_packages=qt
 qt_mingw32_packages=qt
 
-wallet_packages=bdb
+bdb_packages=bdb
+wallet_packages=$(bdb_packages)
 
 zmq_packages=zeromq
 
