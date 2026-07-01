@@ -13,7 +13,7 @@ import {
 
 interface ToastItem { id: number; msg: string; type: 'success'|'error'|'warning'|'info' }
 
-const TOAST_COLORS = { success: '#22c55e', error: '#ef4444', warning: '#f59e0b', info: 'var(--accent)' }
+const TOAST_COLORS = { success: '#00a8de', error: '#ef4444', warning: '#7fe0ff', info: 'var(--accent)' }
 const TOAST_ICONS  = { success: '✓', error: '✗', warning: '⚠', info: 'ℹ' }
 
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: number) => void }) {
@@ -2286,11 +2286,11 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
           {/* Sub-tab bar */}
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
             <button onClick={() => setMintSubTab('list')}
-              style={{ fontSize: '0.85rem', padding: '0.3rem 1rem', background: mintSubTab === 'list' ? 'var(--accent)' : 'var(--bg3)', color: mintSubTab === 'list' ? '#fff' : 'var(--text)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+              style={{ fontSize: '0.85rem', padding: '0.3rem 1rem', background: mintSubTab === 'list' ? 'var(--accent)' : 'var(--bg3)', color: mintSubTab === 'list' ? '#000' : 'var(--text)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
               My Tokens
             </button>
             <button onClick={() => setMintSubTab('mint')}
-              style={{ fontSize: '0.85rem', padding: '0.3rem 1rem', background: mintSubTab === 'mint' ? 'var(--accent)' : 'var(--bg3)', color: mintSubTab === 'mint' ? '#fff' : 'var(--text)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
+              style={{ fontSize: '0.85rem', padding: '0.3rem 1rem', background: mintSubTab === 'mint' ? 'var(--accent)' : 'var(--bg3)', color: mintSubTab === 'mint' ? '#000' : 'var(--text)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
               + Mint
             </button>
           </div>
@@ -2316,7 +2316,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
                   <button key={s} onClick={() => { setGlyphSort(s); setSelectedTokenRef(null) }}
                     style={{ fontSize: '0.72rem', padding: '2px 8px',
                       background: glyphSort === s ? 'var(--accent)' : 'var(--bg3)',
-                      color: glyphSort === s ? '#fff' : 'var(--text)',
+                      color: glyphSort === s ? '#000' : 'var(--text)',
                       border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                     {s === 'newest' ? '↓ Newest' : s === 'oldest' ? '↑ Oldest' : 'A–Z Name'}
                   </button>
@@ -2326,7 +2326,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
                   <button key={f} onClick={() => { setGlyphFilter(f); setSelectedTokenRef(null) }}
                     style={{ fontSize: '0.72rem', padding: '2px 8px',
                       background: glyphFilter === f ? 'var(--accent)' : 'var(--bg3)',
-                      color: glyphFilter === f ? '#fff' : 'var(--text)',
+                      color: glyphFilter === f ? '#000' : 'var(--text)',
                       border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
                     {f}
                   </button>
@@ -2498,11 +2498,11 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
                                       const sl = socialLink(k, v)!
                                       return sl.href ? (
                                         <a key={k} href={sl.href} target="_blank" rel="noopener noreferrer"
-                                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.7rem', background: '#3b82f6', borderRadius: 20, color: '#fff', fontSize: '0.77rem', textDecoration: 'none', fontWeight: 500 }}>
+                                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.7rem', background: '#356fdb', borderRadius: 20, color: '#fff', fontSize: '0.77rem', textDecoration: 'none', fontWeight: 500 }}>
                                           {sl.icon} {v}
                                         </a>
                                       ) : (
-                                        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.7rem', background: '#3b82f6', borderRadius: 20, color: '#fff', fontSize: '0.77rem', fontWeight: 500 }}>
+                                        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', padding: '0.3rem 0.7rem', background: '#356fdb', borderRadius: 20, color: '#fff', fontSize: '0.77rem', fontWeight: 500 }}>
                                           {sl.icon} {v}
                                         </span>
                                       )
@@ -2631,7 +2631,7 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
                                 style={{
                                   display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
                                   padding: '0.35rem 0.8rem', borderRadius: 6,
-                                  background: 'var(--accent)', color: '#fff', border: 'none',
+                                  background: 'var(--accent)', color: '#000', border: 'none',
                                   fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
                                 }}
                               >

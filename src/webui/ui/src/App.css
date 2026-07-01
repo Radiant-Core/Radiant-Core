@@ -138,7 +138,7 @@
 .form-group label { font-size: 0.75rem; color: var(--text2); }
 
 .error-text { color: var(--red); font-size: 0.85rem; margin-top: 0.5rem; }
-.success-text { color: var(--green); font-size: 0.85rem; margin-top: 0.5rem; }
+.success-text { color: var(--accent2); font-size: 0.85rem; margin-top: 0.5rem; }
 
 /* Wallet page tab bar */
 .wallet-tabs {

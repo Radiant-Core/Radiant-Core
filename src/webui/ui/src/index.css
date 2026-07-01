@@ -52,4 +52,4 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85em; }
+code { font-family: 'Roboto Mono', 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.85em; }

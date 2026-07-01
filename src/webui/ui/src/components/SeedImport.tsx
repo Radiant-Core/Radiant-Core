@@ -68,6 +68,10 @@ export default function SeedImport({ walletName, onImported }: Props) {
   const [msg, setMsg]                 = useState('')
   const [importing, setImporting]     = useState(false)
   const [mnemonicFocused, setMnemonicFocused] = useState(false)
+  const [rescanModal, setRescanModal]  = useState(false)
+  const [importedCount, setImportedCount] = useState(0)
+  const [rescanning, setRescanning]    = useState(false)
+  const [rescanMsg, setRescanMsg]      = useState('')
 
   const reset = () => {
     setOpen(false); setMnemonic(''); setPassphrase('')
@@ -121,29 +125,94 @@ export default function SeedImport({ walletName, onImported }: Props) {
         return
       }
     }
-    setMsg(`Imported ${n} key${n !== 1 ? 's' : ''}. Run rescanblockchain to update balances.`)
     setImporting(false)
     setMnemonic('')
     setPassphrase('')
     setDerived([])
+    setImportedCount(n)
+    setRescanModal(true)
     onImported()
   }
 
+  const handleRescan = async () => {
+    setRescanning(true)
+    setRescanMsg('')
+    try {
+      const res = await api.rpc('rescanblockchain', [])
+      if (res.error) throw new Error(
+        typeof res.error === 'object' && res.error !== null
+          ? String((res.error as Record<string, unknown>).message ?? res.error)
+          : String(res.error)
+      )
+      const r = res.result as { start_height?: number; stop_height?: number } | null
+      setRescanMsg(`Rescan complete — blocks ${r?.start_height ?? 0} to ${r?.stop_height ?? '?'}.`)
+    } catch (e: unknown) {
+      setRescanMsg(`Rescan error: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    setRescanning(false)
+  }
+
+  const rescanOverlay = rescanModal && (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}>
+      <div className="card" style={{ maxWidth: '420px', width: '100%', margin: '1rem' }}>
+        <h2 style={{ marginBottom: '0.5rem' }}>
+          {importedCount} key{importedCount !== 1 ? 's' : ''} imported
+        </h2>
+        <p style={{ color: 'var(--text2)', fontSize: '0.9rem', marginBottom: '1rem' }}>
+          Rescan the blockchain to find existing transactions for these addresses.
+          This may take several minutes depending on chain length.
+        </p>
+
+        {rescanMsg && (
+          <p
+            className={rescanMsg.startsWith('Rescan error') ? 'error-text' : 'success-text'}
+            style={{ marginBottom: '0.75rem' }}
+          >
+            {rescanMsg}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => { setRescanModal(false); setRescanMsg('') }}
+            disabled={rescanning}
+          >
+            {rescanMsg && !rescanMsg.startsWith('Rescan error') ? 'Done' : 'Skip'}
+          </button>
+          {!rescanMsg && (
+            <button className="primary" onClick={handleRescan} disabled={rescanning}>
+              {rescanning ? 'Scanning…' : 'Rescan Blockchain'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
   if (!open) {
     return (
-      <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2>Import from Seed Phrase</h2>
-          <button onClick={() => setOpen(true)} style={{ fontSize: '0.8rem' }}>Open</button>
+      <>
+        {rescanOverlay}
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>Import from Seed Phrase</h2>
+            <button onClick={() => setOpen(true)} style={{ fontSize: '0.8rem' }}>Open</button>
+          </div>
+          <p style={{ color: 'var(--text2)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
+            Derive private keys from a BIP-39 mnemonic and import them into the wallet.
+          </p>
         </div>
-        <p style={{ color: 'var(--text2)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-          Derive private keys from a BIP-39 mnemonic and import them into the wallet.
-        </p>
-      </div>
+      </>
     )
   }
 
   return (
+    <>
+    {rescanOverlay}
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h2>Import from Seed Phrase</h2>
@@ -275,5 +344,6 @@ export default function SeedImport({ walletName, onImported }: Props) {
         </>
       )}
     </div>
+    </>
   )
 }

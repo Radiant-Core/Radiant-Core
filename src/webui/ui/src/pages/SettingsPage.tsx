@@ -115,7 +115,7 @@ export default function SettingsPage() {
             disabled={status === 'saving'}
             style={{
               padding: '0.5rem 1.25rem',
-              background: 'var(--accent)', color: '#fff',
+              background: 'var(--accent)', color: '#000',
               border: 'none', borderRadius: 6,
               fontWeight: 600, fontSize: '0.85rem',
               cursor: status === 'saving' ? 'not-allowed' : 'pointer',
