@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { api, getToken, setToken, setOnUnauthorized } from './lib/api'
 import radiantLogo from './assets/images/radiant-darkmode.png'
 import LoginPage from './pages/LoginPage'
@@ -35,32 +35,86 @@ export default function App() {
   const [masked, setMasked]   = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [navOpen, setNavOpen] = useState(false)
-  const prevBlocksRef = useRef<number | null>(null)
+  const [serverReady, setServerReady] = useState(false)
 
   useEffect(() => {
     setOnUnauthorized(() => setAuthed(false))
-    api.authInfo().then(info => setAuthMode(info.mode)).catch(() => {})
+
+    let cancelled = false
+    let retryId: ReturnType<typeof setTimeout> | null = null
+
+    const probe = async () => {
+      try {
+        const info = await api.authInfo()
+        if (!cancelled) { setAuthMode(info.mode); setServerReady(true) }
+      } catch {
+        if (!cancelled) retryId = setTimeout(probe, 3000)
+      }
+    }
+
+    probe()
+    return () => { cancelled = true; if (retryId) clearTimeout(retryId) }
   }, [])
 
   const fetchNodeInfo = useCallback(() => {
     if (!getToken()) return
     api.nodeStatus()
-      .then(s => {
-        setNodeInfo({ network: s.network, blocks: s.blocks })
-        if (prevBlocksRef.current !== null && s.blocks > prevBlocksRef.current) {
-          setRefreshKey(k => k + 1)
-        }
-        prevBlocksRef.current = s.blocks
-      })
+      .then(s => setNodeInfo({ network: s.network, blocks: s.blocks }))
       .catch(() => {})
   }, [])
 
   useEffect(() => {
     if (!authed) { setNodeInfo(null); return }
     fetchNodeInfo()
-    const id = setInterval(fetchNodeInfo, 10000)
+    const id = setInterval(fetchNodeInfo, 30000)
     return () => clearInterval(id)
   }, [authed, fetchNodeInfo])
+
+  // SSE: instant block notifications via ticket-auth EventSource
+  useEffect(() => {
+    if (!authed) return
+    let es: EventSource | null = null
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const connect = async () => {
+      try {
+        const { ticket } = await api.sseTicket()
+        if (cancelled) return
+        es = new EventSource(`/webui/api/events?ticket=${encodeURIComponent(ticket)}`)
+        es.addEventListener('block', (e: MessageEvent) => {
+          const data = JSON.parse(e.data) as { height: number }
+          setNodeInfo(prev => prev ? { ...prev, blocks: data.height } : prev)
+          setRefreshKey(k => k + 1)
+        })
+        es.onerror = () => {
+          es?.close()
+          es = null
+          if (!cancelled) retryTimeout = setTimeout(connect, 5000)
+        }
+      } catch {
+        if (!cancelled) retryTimeout = setTimeout(connect, 5000)
+      }
+    }
+
+    connect()
+
+    return () => {
+      cancelled = true
+      es?.close()
+      if (retryTimeout) clearTimeout(retryTimeout)
+    }
+  }, [authed])
+
+  if (!serverReady) {
+    return (
+      <div className="connect-splash">
+        <img src={radiantLogo} alt="Radiant" className="connect-logo" />
+        <span className="connect-name">Radiant Core</span>
+        <span className="connect-status">Connecting to node…</span>
+      </div>
+    )
+  }
 
   if (!authed) {
     return (

@@ -60,8 +60,8 @@ export default function NodePage({ refreshKey = 0 }: { refreshKey?: number }) {
     setMempoolLoading(true); setMempoolPage(0)
     try {
       const res = await api.rpc('getrawmempool', [true])
-      const raw = res.result as Record<string, { size: number; fee: number; time: number }> | null
-      setMempool(raw ? Object.entries(raw).map(([txid, d]) => ({ txid, size: d.size, fee: d.fee, time: d.time })) : [])
+      const raw = res.result as Record<string, { size: number; fees: { base: number }; fee?: number; time: number }> | null
+      setMempool(raw ? Object.entries(raw).map(([txid, d]) => ({ txid, size: d.size, fee: d.fees?.base ?? d.fee ?? 0, time: d.time })) : [])
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load mempool')
     }

@@ -99,6 +99,9 @@ export const api = {
   walletPSBTSign: (name: string, psbt: string) =>
     request<unknown>('POST', `/wallet/${encodeURIComponent(name)}/psbt/sign`, { psbt }),
 
+  // SSE
+  sseTicket: () => request<{ ticket: string }>('POST', '/events/ticket', {}),
+
   // Settings
   getSettings:  ()                       => request<WebUISettings>('GET', '/settings'),
   saveSettings: (s: WebUISettings)       => request<WebUISettings>('POST', '/settings', s),

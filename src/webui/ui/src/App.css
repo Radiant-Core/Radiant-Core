@@ -250,6 +250,38 @@
   .brand-name { font-size: 0.9rem; }
 }
 
+.connect-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 0.75rem;
+  background: var(--bg);
+}
+
+.connect-logo {
+  height: 72px;
+  width: auto;
+  animation: connect-pulse 2s ease-in-out infinite;
+}
+
+.connect-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.connect-status {
+  font-size: 0.85rem;
+  color: var(--text2);
+}
+
+@keyframes connect-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
 .lock-banner-select {
   flex-shrink: 0;
   padding: 0.28rem 0.5rem;
