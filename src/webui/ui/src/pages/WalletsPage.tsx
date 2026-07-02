@@ -207,7 +207,7 @@ function socialLink(platform: string, value: string): { icon: JSX.Element; href:
   const v = value.trim()
   const handle = v.startsWith('@') ? v.slice(1) : v
   if (k === 'twitter' || k === 'x') return { icon: <IconTwitterX size={14} />, href: `https://x.com/${handle}` }
-  if (k === 'discord') return { icon: <IconDiscord size={14} />, href: null }
+  if (k === 'discord') return { icon: <IconDiscord size={14} />, href: `https://discord.com/users/${handle}` }
   if (k === 'website' || k === 'url' || k === 'site') return { icon: <IconWebsite size={14} />, href: v.startsWith('http') ? v : `https://${v}` }
   if (k === 'github') return { icon: <IconGitHub size={14} />, href: `https://github.com/${handle}` }
   if (k === 'linkedin') return { icon: <IconLinkedIn size={14} />, href: `https://linkedin.com/in/${handle}` }
