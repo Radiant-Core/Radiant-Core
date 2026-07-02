@@ -104,6 +104,31 @@ txnouttype Solver(const CScript &scriptPubKey,
                   std::vector<std::vector<uint8_t>> &vSolutionsRet) {
     vSolutionsRet.clear();
 
+    // Strip any leading Radiant token reference opcodes
+    // (OP_PUSHINPUTREF family: 1 opcode byte + 36-byte ref payload).
+    // Token scripts typically embed a standard P2PKH/P2SH after the prefix;
+    // stripping it lets us extract the destination address normally.
+    {
+        const CScript *scriptPtr = &scriptPubKey;
+        CScript stripped;
+        while (scriptPtr->size() > 37) {
+            uint8_t first = (*scriptPtr)[0];
+            if (first == OP_PUSHINPUTREF ||
+                first == OP_REQUIREINPUTREF ||
+                first == OP_DISALLOWPUSHINPUTREF ||
+                first == OP_DISALLOWPUSHINPUTREFSIBLING ||
+                first == OP_PUSHINPUTREFSINGLETON) {
+                stripped = CScript(scriptPtr->begin() + 37, scriptPtr->end());
+                scriptPtr = &stripped;
+            } else {
+                break;
+            }
+        }
+        if (scriptPtr != &scriptPubKey) {
+            return Solver(*scriptPtr, vSolutionsRet);
+        }
+    }
+
     // Shortcut for pay-to-script-hash, which are more constrained than the
     // other types:
     // it is always OP_HASH160 20 [20 byte hash] OP_EQUAL
