@@ -31,7 +31,7 @@ function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss:
           pointerEvents: 'all',
         }}>
           <span style={{ color: TOAST_COLORS[t.type], fontSize: '0.85rem', marginTop: '0.1rem', flexShrink: 0 }}>{TOAST_ICONS[t.type]}</span>
-          <span style={{ flex: 1, fontSize: '0.82rem', color: 'var(--text)', lineHeight: 1.5 }}>{t.msg}</span>
+          <span style={{ flex: 1, minWidth: 0, fontSize: '0.82rem', color: 'var(--text)', lineHeight: 1.5, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{t.msg}</span>
           <button onClick={() => onDismiss(t.id)} style={{ background: 'none', border: 'none', color: 'var(--text2)', cursor: 'pointer', fontSize: '1.1rem', lineHeight: 1, padding: '0', flexShrink: 0, marginTop: '-0.05rem' }}>×</button>
         </div>
       ))}
