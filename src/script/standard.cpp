@@ -104,13 +104,15 @@ txnouttype Solver(const CScript &scriptPubKey,
                   std::vector<std::vector<uint8_t>> &vSolutionsRet) {
     vSolutionsRet.clear();
 
-    // Strip any leading Radiant token reference opcodes
-    // (OP_PUSHINPUTREF family: 1 opcode byte + 36-byte ref payload).
-    // Token scripts typically embed a standard P2PKH/P2SH after the prefix;
-    // stripping it lets us extract the destination address normally.
+    // Strip any leading Radiant token reference opcodes.
+    // Each occupies 1 opcode byte + 36 bytes of inline ref data, and is
+    // typically followed by OP_DROP (which pops the ref from the stack before
+    // the embedded standard P2PKH/P2SH runs).  Strip all such prefixes so
+    // ExtractDestination can resolve the underlying address.
     {
         const CScript *scriptPtr = &scriptPubKey;
         CScript stripped;
+        bool changed = false;
         while (scriptPtr->size() > 37) {
             uint8_t first = (*scriptPtr)[0];
             if (first == OP_PUSHINPUTREF ||
@@ -118,13 +120,19 @@ txnouttype Solver(const CScript &scriptPubKey,
                 first == OP_DISALLOWPUSHINPUTREF ||
                 first == OP_DISALLOWPUSHINPUTREFSIBLING ||
                 first == OP_PUSHINPUTREFSINGLETON) {
-                stripped = CScript(scriptPtr->begin() + 37, scriptPtr->end());
+                // Skip opcode (1) + ref payload (36), plus OP_DROP if present
+                size_t skip = 37;
+                if (scriptPtr->size() > 37 && (*scriptPtr)[37] == OP_DROP) {
+                    skip = 38;
+                }
+                stripped = CScript(scriptPtr->begin() + skip, scriptPtr->end());
                 scriptPtr = &stripped;
+                changed = true;
             } else {
                 break;
             }
         }
-        if (scriptPtr != &scriptPubKey) {
+        if (changed) {
             return Solver(*scriptPtr, vSolutionsRet);
         }
     }
