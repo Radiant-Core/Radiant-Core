@@ -53,7 +53,7 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
     if (tab !== 'traffic') return
     const poll = async () => {
       try {
-        const res = await api.rpc('getnetworkinfo', [])
+        const res = await api.rpc('getnettotals', [])
         const info = res.result as { totalbytesrecv: number; totalbytessent: number } | null
         if (!info) return
         setTrafficTotals({ recv: info.totalbytesrecv, sent: info.totalbytessent })
