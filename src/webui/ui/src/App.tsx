@@ -33,6 +33,7 @@ export default function App() {
   const [authMode, setAuthMode] = useState<string>('cookie')
   const [nodeInfo, setNodeInfo] = useState<{ network: string; blocks: number } | null>(null)
   const [masked, setMasked]   = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     setOnUnauthorized(() => setAuthed(false))
@@ -98,6 +99,15 @@ export default function App() {
           </nav>
           <div className="topbar-end">
             <button
+              onClick={() => setRefreshKey(k => k + 1)}
+              title="Refresh current tab"
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--text2)', fontSize: '1.1rem', lineHeight: 1,
+                padding: '0.25rem 0.4rem', borderRadius: 'var(--radius)',
+              }}
+            >↺</button>
+            <button
               onClick={() => setMasked(m => !m)}
               title={masked ? 'Show amounts' : 'Hide amounts'}
               style={{
@@ -124,9 +134,9 @@ export default function App() {
       </header>
 
       <main className="content">
-        {page === 'node'     && <NodePage />}
-        {page === 'wallets'  && <WalletsPage masked={masked} />}
-        {page === 'peers'    && <PeersPage />}
+        {page === 'node'     && <NodePage refreshKey={refreshKey} />}
+        {page === 'wallets'  && <WalletsPage masked={masked} refreshKey={refreshKey} />}
+        {page === 'peers'    && <PeersPage refreshKey={refreshKey} />}
         {page === 'console'  && <ConsolePage />}
         {page === 'settings' && <SettingsPage />}
       </main>

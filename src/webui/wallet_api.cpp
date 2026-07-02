@@ -559,7 +559,9 @@ static bool HandleWalletGlyph(Config &config, HTTPRequest *req,
     if (!CheckWebUIAuth(req)) return false;
 
 #ifdef ENABLE_WALLET
-    UniValue::Array params; // no args — default minconf=1, maxconf=9999999
+    // minconf=0 so unconfirmed change UTXOs are visible immediately after a send.
+    UniValue::Array params;
+    params.push_back(UniValue(static_cast<int64_t>(0)));  // minconf
     return WalletRPCReply(config, req, wallet_name, "listglyph",
                           UniValue(std::move(params)), *cors);
 #else

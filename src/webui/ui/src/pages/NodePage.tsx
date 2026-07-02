@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api, NodeStatus, MiningInfo, explorerBlockUrl } from '../lib/api'
 
-export default function NodePage() {
+export default function NodePage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [status, setStatus] = useState<NodeStatus | null>(null)
   const [mining, setMining] = useState<MiningInfo | null>(null)
   const [error, setError]   = useState('')
@@ -22,6 +22,9 @@ export default function NodePage() {
     const id = setInterval(load, 10000)
     return () => clearInterval(id)
   }, [load])
+
+  // Trigger a manual refresh from parent
+  useEffect(() => { if (refreshKey > 0) load() }, [refreshKey]) // eslint-disable-line
 
   const fmt = (n: number) => n.toLocaleString()
   const pct = (p: number) => `${(p * 100).toFixed(2)}%`

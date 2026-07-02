@@ -233,7 +233,7 @@ function thumbnailPlaceholder(meta: GlyphMeta | undefined, loading: boolean): st
   return '?'
 }
 
-export default function WalletsPage({ masked = false }: { masked?: boolean }) {
+export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked?: boolean; refreshKey?: number }) {
   const [walletName, setWalletName] = useState<string | null>(null)
   const [tab, setTab]               = useState<WalletTab>('overview')
   const [summary, setSummary]       = useState<WalletSummary | null>(null)
@@ -323,10 +323,11 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
   const [tokenSendRef, setTokenSendRef]         = useState<GlyphToken | null>(null)
   const [tokenSendAmt, setTokenSendAmt]         = useState('')
   const [tokenSendAddr, setTokenSendAddr]       = useState('')
+  const [tokenSendPassphrase, setTokenSendPassphrase] = useState('')
   const [pendingTokenTx, setPendingTokenTx]     = useState<{
     signedHex: string
     txid: string
-    vout: Array<{ value: number; n: number; scriptPubKey: { hex: string; type?: string; addresses?: string[]; address?: string } }>
+    recipient: string
     fee: number
     ticker: string
     decimals: number
@@ -1021,6 +1022,20 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
       try { recipientPKH = addressToPKH(tokenSendAddr) }
       catch { toast('Invalid recipient address', 'error'); return }
 
+      // Unlock the wallet if a passphrase was supplied in the dialog.
+      let didUnlock = false
+      if (tokenSendPassphrase && walletName !== null) {
+        await api.walletUnlock(walletName, tokenSendPassphrase, 60)
+        didUnlock = true
+      }
+
+      // Query the node for the effective min relay fee rate (same as estimateMintFee).
+      const mpInfo = await api.rpc('getmempoolinfo', [])
+      if (mpInfo.error) throw new Error('Could not fetch fee rate from node')
+      const mp = mpInfo.result as Record<string, unknown>
+      const rawRate = mp.effective_minrelaytxfee ?? mp.minrelaytxfee
+      const feeRatePerKb = typeof rawRate === 'number' ? Math.round(rawRate * 1e8) : 10_000_000
+
       // Collect token UTXOs to cover the amount
       const spendable = tokenSendRef.utxos.filter(u => u.spendable)
       const selected: typeof spendable = []
@@ -1032,10 +1047,24 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
       if (collected < amtSats) { toast('Insufficient token balance', 'error'); return }
       const change = collected - amtSats
 
+      // Estimate transaction size to compute the required fee:
+      //   base overhead: 10 bytes (version + locktime + input/output count varints)
+      //   per input: 41 bytes (outpoint + sequence) + 108 bytes scriptSig (P2PKH {sig}{pubkey})
+      //   per token output: 8 (value) + 1 varint + script bytes
+      //   per P2PKH output: 34 bytes
+      const tokenScriptLen = (tokenSendRef.utxos[0]?.scriptPubKey ?? '').length / 2
+      const tokenOutputSize = 8 + (tokenScriptLen > 252 ? 3 : 1) + tokenScriptLen
+      const numTokenOutputs = 1 + (change > 0 ? 1 : 0)
+      const estBytes = 10 + (selected.length + 1) * 149 + numTokenOutputs * tokenOutputSize + 34
+      const FEE_SATS = Math.max(1000, Math.ceil(estBytes * feeRatePerKb / 1000))
+
       // Find a non-glyph RXD UTXO for fees
-      const FEE_SATS = 2000
       const rxdUTXO = utxos?.find(u => u.spendable && !isTokenBearing(u.scriptPubKey ?? '') && Math.round(u.amount * 1e8) >= FEE_SATS)
-      if (!rxdUTXO) { toast('No spendable RXD available for fees (need at least 0.00002 RXD)', 'error'); return }
+      if (!rxdUTXO) {
+        const feeRxd = (FEE_SATS / 1e8).toFixed(8)
+        toast(`No spendable RXD available for fees (need at least ${feeRxd} RXD)`, 'error')
+        return
+      }
 
       const senderPKH = addressToPKH(rxdUTXO.address)
       const rxdSats   = Math.round(rxdUTXO.amount * 1e8)
@@ -1072,9 +1101,14 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
       ]
 
       const signed = await api.rpc('signrawtransactionwithwallet', [rawTx, prevtxs], walletName)
+      if (didUnlock && walletName !== null) { await api.walletLock(walletName).catch(() => {}) }
       if (signed.error) throw new Error(String((signed.error as Record<string,unknown>).message ?? signed.error))
       const signedRes = signed.result as Record<string, unknown>
-      if (!signedRes.complete) throw new Error('Could not fully sign (wallet locked?)')
+      if (!signedRes.complete) {
+        const errs = signedRes.errors as Array<Record<string,unknown>> | undefined
+        const detail = errs?.map(e => `[${e.txid}:${e.vout}] ${e.error}`).join('; ') ?? 'no detail'
+        throw new Error(`Could not fully sign: ${detail}`)
+      }
 
       const decoded = await api.rpc('decoderawtransaction', [signedRes.hex])
       if (decoded.error) throw new Error(String((decoded.error as Record<string,unknown>).message ?? decoded.error))
@@ -1083,11 +1117,12 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
         vout: Array<{ value: number; n: number; scriptPubKey: { hex: string; type?: string; addresses?: string[]; address?: string } }>
       }
 
+      setTokenSendPassphrase('')
       setTokenSendRef(null)
       setPendingTokenTx({
         signedHex: signedRes.hex as string,
         txid: decodedTx.txid,
-        vout: decodedTx.vout,
+        recipient: tokenSendAddr,
         fee: FEE_SATS,
         ticker: meta?.ticker ?? 'tokens',
         decimals,
@@ -1378,6 +1413,15 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
     }
   }, [tab, walletName, rpcGlyphEntries, glyphLoading, loadGlyphTokens])
 
+  // Refresh from the topbar button — reloads data for the current tab.
+  useEffect(() => {
+    if (refreshKey <= 0 || walletName === null) return
+    if (tab === 'overview')          { loadSummary(walletName); loadUTXOs(walletName) }
+    else if (tab === 'transactions') loadTxs(walletName)
+    else if (tab === 'utxos')        loadUTXOs(walletName)
+    else if (tab === 'tokens')       loadGlyphTokens(walletName)
+  }, [refreshKey]) // eslint-disable-line
+
   const filteredAddrs = addresses.filter(a =>
     !addrFilter ||
     a.address.toLowerCase().includes(addrFilter.toLowerCase()) ||
@@ -1546,14 +1590,24 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
               </div>
 
               <p style={{ color: 'var(--text2)', fontSize: '0.75rem', marginBottom: '1.25rem' }}>
-                A small RXD fee (~0.00002 RXD) will be deducted from a non-token UTXO.
+                A small RXD fee will be deducted from a non-token UTXO.
               </p>
 
+              {isLocked && (
+                <div className="form-group" style={{ marginBottom: '1rem' }}>
+                  <label>Wallet passphrase (required to sign)</label>
+                  <input type="password" value={tokenSendPassphrase}
+                    onChange={e => setTokenSendPassphrase(e.target.value)}
+                    placeholder="Enter passphrase…"
+                    onKeyDown={e => { if (e.key === 'Enter' && tokenSendAddr) handleSendToken() }} />
+                </div>
+              )}
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                <button onClick={() => setTokenSendRef(null)}>Cancel</button>
+                <button onClick={() => { setTokenSendRef(null); setTokenSendPassphrase('') }}>Cancel</button>
                 <button className="primary"
                   onClick={handleSendToken}
-                  disabled={!tokenSendAddr || (!tokenSendRef.isSingleton && !tokenSendAmt)}>
+                  disabled={!tokenSendAddr || (!tokenSendRef.isSingleton && !tokenSendAmt) || (!!isLocked && !tokenSendPassphrase)}>
                   Send
                 </button>
               </div>
@@ -1562,82 +1616,66 @@ export default function WalletsPage({ masked = false }: { masked?: boolean }) {
         )
       })()}
 
-      {/* Token send preview / confirm modal */}
+      {/* Token send confirm modal */}
       {pendingTokenTx && (() => {
         const feeRXD = pendingTokenTx.fee / 1e8
+        const tokenDisplay = displayBalance(pendingTokenTx.tokenAmtSats, pendingTokenTx.decimals)
+        const row = (label: string, value: React.ReactNode, mono = false) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.7rem 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ color: 'var(--text2)', fontSize: '0.85rem', flexShrink: 0, marginRight: '1rem' }}>{label}</span>
+            <span style={{ fontFamily: mono ? 'monospace' : undefined, fontSize: '0.85rem', textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
+          </div>
+        )
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 1001,
             background: 'rgba(0,0,0,0.80)', backdropFilter: 'blur(4px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <div className="card" style={{ width: '100%', maxWidth: 560, padding: '2rem', border: '1px solid var(--border)', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}>
-              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1rem' }}>Review Transaction</h2>
-              <p style={{ margin: '0 0 1rem', fontSize: '0.78rem', color: 'var(--text2)' }}>Verify the outputs below, then confirm to broadcast.</p>
+            <div className="card" style={{ width: '100%', maxWidth: 440, padding: '1.75rem', border: '1px solid var(--border)', position: 'relative' }}>
+              <button onClick={() => { setPendingTokenTx(null); setShowRawHex(false) }} style={{
+                position: 'absolute', top: '1rem', right: '1rem',
+                background: 'none', border: 'none', fontSize: '1.2rem',
+                color: 'var(--text2)', cursor: 'pointer', padding: '0 0.25rem',
+              }}>✕</button>
 
-              <table className="table" style={{ marginBottom: '0.75rem' }}>
-                <thead>
-                  <tr>
-                    <th style={{ width: 24 }}>#</th>
-                    <th>Address / Script</th>
-                    <th style={{ textAlign: 'right' }}>Amount</th>
-                    <th>Type</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pendingTokenTx.vout.map(vout => {
-                    const addr = vout.scriptPubKey.address ?? vout.scriptPubKey.addresses?.[0]
-                    const isToken = isTokenBearing(vout.scriptPubKey.hex)
-                    const amtDisplay = isToken
-                      ? `${(vout.value * 1e8 / Math.pow(10, pendingTokenTx.decimals)).toLocaleString()} ${pendingTokenTx.ticker}`
-                      : `${vout.value.toFixed(8)} RXD`
-                    return (
-                      <tr key={vout.n}>
-                        <td style={{ color: 'var(--text2)' }}>{vout.n}</td>
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', wordBreak: 'break-all', maxWidth: 220 }}>
-                          {addr ?? (vout.scriptPubKey.hex.slice(0, 32) + '…')}
-                        </td>
-                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '0.82rem' }}>{amtDisplay}</td>
-                        <td><span className={`badge ${isToken ? 'amber' : 'blue'}`}>{isToken ? 'Token' : 'RXD'}</span></td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+              <h2 style={{ margin: '0 0 1.25rem', fontSize: '1.1rem' }}>Confirm Transaction</h2>
 
-              <div style={{ background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.65rem 0.75rem', marginBottom: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                  <span style={{ color: 'var(--text2)' }}>Network fee</span>
-                  <span style={{ fontFamily: 'monospace' }}>{feeRXD.toFixed(8)} RXD</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
-                  <span style={{ color: 'var(--text2)', flexShrink: 0 }}>TxID</span>
-                  <code style={{ flex: 1, fontSize: '0.72rem', wordBreak: 'break-all', color: 'var(--text)' }}>
-                    {pendingTokenTx.txid.slice(0, 24)}…{pendingTokenTx.txid.slice(-8)}
-                  </code>
-                  <button title="Copy TxID" onClick={() => navigator.clipboard?.writeText(pendingTokenTx.txid)}
-                    style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}>
-                    <CopyIcon size={14} />
+              {row('Recipient', pendingTokenTx.recipient, true)}
+              {row('Token Amount', <strong>{maskAmt(tokenDisplay)} {pendingTokenTx.ticker}</strong>)}
+              {row('Fee', `${feeRXD.toFixed(8)} RXD`, true)}
+              {row('Total Cost', `${feeRXD.toFixed(8)} RXD`, true)}
+              {row('TxID',
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <code style={{ fontSize: '0.72rem' }}>{pendingTokenTx.txid.slice(0, 16)}…{pendingTokenTx.txid.slice(-8)}</code>
+                  <button title="Copy" onClick={() => navigator.clipboard?.writeText(pendingTokenTx.txid)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: 0, lineHeight: 0 }}>
+                    <CopyIcon size={13} />
                   </button>
-                </div>
+                </span>
+              )}
+
+              <div style={{ marginTop: '1.25rem', marginBottom: '1rem', padding: '0.75rem 1rem', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 'var(--radius)', fontSize: '0.82rem', color: '#f59e0b', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                <span>⚠</span>
+                <span>Please verify the recipient address and amount before confirming.</span>
               </div>
 
               <div style={{ marginBottom: '1rem' }}>
                 <button onClick={() => setShowRawHex(v => !v)}
-                  style={{ background: 'none', border: 'none', color: 'var(--text2)', fontSize: '0.78rem', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  <span style={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>{showRawHex ? '▼' : '▶'}</span>
+                  style={{ background: 'none', border: 'none', color: 'var(--text2)', fontSize: '0.75rem', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>{showRawHex ? '▼' : '▶'}</span>
                   Raw hex
                 </button>
                 {showRawHex && (
                   <div style={{ marginTop: '0.4rem', background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.5rem 0.65rem' }}>
-                    <code style={{ fontSize: '0.67rem', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>{pendingTokenTx.signedHex}</code>
+                    <code style={{ fontSize: '0.65rem', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>{pendingTokenTx.signedHex}</code>
                   </div>
                 )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="primary" style={{ flex: 1 }} onClick={confirmBroadcastToken}>Confirm &amp; Send</button>
                 <button onClick={() => { setPendingTokenTx(null); setShowRawHex(false) }}>Cancel</button>
-                <button className="primary" onClick={confirmBroadcastToken}>Confirm &amp; Broadcast</button>
               </div>
             </div>
           </div>

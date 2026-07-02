@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { api, Peer, BanEntry } from '../lib/api'
 import './PeersPage.css'
 
-export default function PeersPage() {
+export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [peers, setPeers]       = useState<Peer[]>([])
   const [banned, setBanned]     = useState<BanEntry[]>([])
   const [tab, setTab]           = useState<'peers' | 'banned'>('peers')
@@ -24,6 +24,7 @@ export default function PeersPage() {
   }, [])
 
   useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id) }, [load])
+  useEffect(() => { if (refreshKey > 0) load() }, [refreshKey]) // eslint-disable-line
 
   const fmtBytes = (b: number) => {
     if (b > 1e9) return `${(b / 1e9).toFixed(1)} GB`

@@ -908,6 +908,23 @@ UniValue::Object SignTransaction(interfaces::Chain &, CMutableTransaction &mtx, 
     const CTransaction txConst(mtx);
     // Assumption: Below code does NOT push_back new inputs to mtx.
     const auto contexts = ScriptExecutionContext::createForAllInputs(mtx, view);
+
+    // Build verification flags matching what the network uses at the current
+    // tip.  STANDARD_SCRIPT_VERIFY_FLAGS omits height-gated flags (e.g.
+    // SCRIPT_ENHANCED_REFERENCES, SCRIPT_PUSH_TX_STATE) that are always
+    // active on mainnet but needed to verify glyph token scripts.
+    uint32_t verifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    {
+        const Consensus::Params &cparams = Params().GetConsensus();
+        const int tipHeight = ::ChainActive().Height();
+        if (tipHeight + 1 >= cparams.ERHeight) {
+            verifyFlags |= SCRIPT_ENHANCED_REFERENCES;
+        }
+        if (tipHeight + 1 >= cparams.PushTXStateHeight) {
+            verifyFlags |= SCRIPT_PUSH_TX_STATE;
+        }
+    }
+
     // Sign what we can:
     for (size_t i = 0; i < mtx.vin.size(); i++) {
         CTxIn &txin = mtx.vin[i];
@@ -933,7 +950,7 @@ UniValue::Object SignTransaction(interfaces::Chain &, CMutableTransaction &mtx, 
         UpdateInput(txin, sigdata);
 
         ScriptError serror = ScriptError::OK;
-        if ( ! VerifyScript(txin.scriptSig, prevPubKey, STANDARD_SCRIPT_VERIFY_FLAGS, TransactionSignatureChecker(&txConst, i, amount), contexts[i], &serror)) {
+        if ( ! VerifyScript(txin.scriptSig, prevPubKey, verifyFlags, TransactionSignatureChecker(&txConst, i, amount), contexts[i], &serror)) {
             if (serror == ScriptError::INVALID_STACK_OPERATION) {
                 // Unable to sign input and verification failed (possible
                 // attempt to partially sign).
