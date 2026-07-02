@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { api, NodeStatus, MiningInfo, explorerBlockUrl } from '../lib/api'
+import { api, NodeStatus, MiningInfo, explorerBlockUrl, explorerTxUrl } from '../lib/api'
 
 type NodeTab = 'overview' | 'blocks' | 'mempool'
 type SortKey = 'size' | 'fee' | 'feerate' | 'age'
@@ -25,8 +25,8 @@ export default function NodePage({ refreshKey = 0 }: { refreshKey?: number }) {
 
   const [mempool, setMempool]               = useState<MempoolEntry[]>([])
   const [mempoolLoading, setMempoolLoading] = useState(false)
-  const [mempoolSort, setMempoolSort]       = useState<SortKey>('feerate')
-  const [mempoolSortDir, setMempoolSortDir] = useState<'asc' | 'desc'>('desc')
+  const [mempoolSort, setMempoolSort]       = useState<SortKey>('age')
+  const [mempoolSortDir, setMempoolSortDir] = useState<'asc' | 'desc'>('asc')
   const [mempoolPage, setMempoolPage]       = useState(0)
   const MEMPOOL_PER_PAGE = 25
 
@@ -252,7 +252,11 @@ export default function NodePage({ refreshKey = 0 }: { refreshKey?: number }) {
                 <tbody>
                   {sortedMempool.slice(mempoolPage * MEMPOOL_PER_PAGE, (mempoolPage + 1) * MEMPOOL_PER_PAGE).map(tx => (
                     <tr key={tx.txid}>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--text2)' }}>{tx.txid.slice(0, 14)}…{tx.txid.slice(-8)}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.72rem' }}>
+                        <a href={explorerTxUrl(tx.txid)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                          {tx.txid.slice(0, 14)}…{tx.txid.slice(-8)}
+                        </a>
+                      </td>
                       <td style={{ fontSize: '0.82rem' }}>{tx.size} B</td>
                       <td style={{ fontSize: '0.82rem', fontFamily: 'monospace' }}>{tx.fee.toFixed(8)}</td>
                       <td style={{ fontSize: '0.82rem' }}>{(tx.fee * 1e8 / tx.size).toFixed(2)}</td>
