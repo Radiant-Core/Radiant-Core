@@ -334,6 +334,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
     tokenAmtSats: number
   } | null>(null)
   const [showRawHex, setShowRawHex]             = useState(false)
+  const [showMintHex, setShowMintHex]           = useState(false)
   const [selectedTokenRef, setSelectedTokenRef] = useState<string | null>(null)
   const glyphLoadingRef                         = useRef(false)
   const rpcGlyphEntriesRef                      = useRef<GlyphRPCEntry[] | null>(null)
@@ -1269,7 +1270,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
             nftRef:       String(r.nft_ref),
           },
         })
-        toast('Transactions signed — review below, then click Broadcast to send.', 'info')
+        toast('Transactions signed — review and confirm to broadcast.', 'info')
         return
       }
 
@@ -1326,7 +1327,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
         revealHex:  String(mintResult.reveal_hex),
         commitTxid: String(mintResult.commit_txid),
       })
-      toast('Transactions signed — review below, then click Broadcast to send.', 'info')
+      toast('Transactions signed — review and confirm to broadcast.', 'info')
     } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Mint failed', 'error') }
     finally { setMintRunning(false) }
   }
@@ -1369,7 +1370,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
 
       const revealTxid = String(revealBroadcast.result)
       setMintSuccess({ revealTxid, commitTxid: mintPreviewTxs.commitTxid, dmint: mintPreviewTxs.dmint })
-      setMintPreviewTxs(null)
+      setMintPreviewTxs(null); setShowMintHex(false)
       setMintName(''); setMintTicker(''); setMintSupply(''); setMintDesc('')
       setMintLicense(''); setMintFileBytes(null); setMintFileMime(''); setMintFileName(''); setMintFilePreview(null)
       setMintContentUrl(''); setMintText(''); setMintAttrs([]); setMintImmutable(true); setMintDataMode('none')
@@ -1453,97 +1454,146 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
 
   return (
     <div>
-      {/* Mint success modal */}
-      {mintSuccess && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 1000,
-          background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <div className="card" style={{
-            width: '100%', maxWidth: 480, padding: '2rem',
-            border: '1px solid var(--border)', position: 'relative',
+      {/* Mint confirm modal */}
+      {mintPreviewTxs && (() => {
+        const typeLabel = mintType === 'ft' && mintDeployMethod === 'dmint' ? 'dMint FT'
+          : mintType === 'ft' ? 'FT' : mintType === 'nft' ? 'NFT'
+          : mintType === 'user' ? 'User' : 'Container'
+        const feeRXD = mintFeeEstimate ? mintFeeEstimate.feeSats / 1e8 : null
+        const row = (label: string, value: React.ReactNode, mono = false) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', padding: '0.7rem 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ color: 'var(--text2)', fontSize: '0.85rem', flexShrink: 0, marginRight: '1rem' }}>{label}</span>
+            <span style={{ fontFamily: mono ? 'monospace' : undefined, fontSize: '0.85rem', textAlign: 'right', wordBreak: 'break-all' }}>{value}</span>
+          </div>
+        )
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1001,
+            background: 'rgba(0,0,0,0.80)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            {/* Close X */}
-            <button onClick={() => setMintSuccess(null)} style={{
-              position: 'absolute', top: '1rem', right: '1rem',
-              background: 'none', border: 'none', fontSize: '1.2rem',
-              color: 'var(--text2)', cursor: 'pointer', padding: '0 0.25rem',
-            }}>✕</button>
+            <div className="card" style={{ width: '100%', maxWidth: 440, padding: '1.75rem', border: '1px solid var(--border)', position: 'relative', maxHeight: '90vh', overflowY: 'auto' }}>
+              <button onClick={() => { setMintPreviewTxs(null); setShowMintHex(false) }} style={{
+                position: 'absolute', top: '1rem', right: '1rem',
+                background: 'none', border: 'none', fontSize: '1.2rem',
+                color: 'var(--text2)', cursor: 'pointer', padding: '0 0.25rem',
+              }}>✕</button>
 
-            {/* Title */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '1.5rem' }}>
-              <span style={{ fontSize: '1.5rem' }}>✓</span>
-              <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700 }}>Transaction successful</h2>
-            </div>
+              <h2 style={{ margin: '0 0 1.25rem', fontSize: '1.1rem' }}>Confirm Mint</h2>
 
-            {/* Reveal txid */}
-            <p style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', color: 'var(--text2)', margin: '0 0 0.4rem' }}>
-              TOKEN TRANSACTION ID:
-            </p>
-            <div style={{
-              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-              background: 'var(--bg3)', borderRadius: 'var(--radius)',
-              padding: '0.75rem', marginBottom: '1rem',
-            }}>
-              <code style={{ flex: 1, wordBreak: 'break-all', fontSize: '0.8rem', lineHeight: 1.5, color: 'var(--text)' }}>
-                {mintSuccess.revealTxid}
-              </code>
-              <button title="Copy" onClick={() => navigator.clipboard?.writeText(mintSuccess.revealTxid)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}><CopyIcon size={15} /></button>
-            </div>
+              {row('Token', <><strong>{mintName}</strong> <span className="badge" style={{ marginLeft: '0.4rem', fontSize: '0.68rem' }}>{typeLabel}</span></>)}
+              {mintTicker && row('Ticker', mintTicker, true)}
+              {mintType === 'ft' && mintDeployMethod === 'direct' && mintSupply && row('Supply', `${mintSupply} ${mintTicker}`)}
+              {feeRXD !== null && row('Est. Fee', `${feeRXD.toFixed(8)} RXD`, true)}
+              {row('Commit TxID',
+                <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <code style={{ fontSize: '0.72rem' }}>{mintPreviewTxs.commitTxid.slice(0, 16)}…{mintPreviewTxs.commitTxid.slice(-8)}</code>
+                  <button title="Copy" onClick={() => navigator.clipboard?.writeText(mintPreviewTxs.commitTxid)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: 0, lineHeight: 0 }}>
+                    <CopyIcon size={13} />
+                  </button>
+                </span>
+              )}
+              {row('Commit Tx', `${(mintPreviewTxs.commitHex.length / 2).toLocaleString()} bytes`, true)}
+              {row('Reveal Tx', `${(mintPreviewTxs.revealHex.length / 2).toLocaleString()} bytes`, true)}
 
-            {/* Commit txid (smaller) */}
-            <p style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', color: 'var(--text2)', margin: '0 0 0.4rem' }}>
-              COMMIT TRANSACTION ID:
-            </p>
-            <div style={{
-              display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
-              background: 'var(--bg3)', borderRadius: 'var(--radius)',
-              padding: '0.75rem', marginBottom: mintSuccess.dmint ? '1rem' : '1.5rem',
-            }}>
-              <code style={{ flex: 1, wordBreak: 'break-all', fontSize: '0.8rem', lineHeight: 1.5, color: 'var(--text)' }}>
-                {mintSuccess.commitTxid}
-              </code>
-              <button title="Copy" onClick={() => navigator.clipboard?.writeText(mintSuccess.commitTxid)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}><CopyIcon size={15} /></button>
-            </div>
-
-            {/* dMint refs */}
-            {mintSuccess.dmint && (
-              <div style={{ marginBottom: '1.5rem' }}>
-                <p style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', color: 'var(--text2)', margin: '0 0 0.4rem' }}>
-                  FT TOKEN REF:
-                </p>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
-                  <code style={{ flex: 1, wordBreak: 'break-all', fontSize: '0.75rem', lineHeight: 1.5, color: 'var(--text)' }}>
-                    {mintSuccess.dmint.ftRef}
-                  </code>
-                  <button title="Copy" onClick={() => navigator.clipboard?.writeText(mintSuccess.dmint!.ftRef)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}><CopyIcon size={15} /></button>
-                </div>
-                {mintSuccess.dmint.contractRefs.map((ref, i) => (
-                  <div key={i}>
-                    <p style={{ fontSize: '0.7rem', fontWeight: 600, letterSpacing: '0.08em', color: 'var(--text2)', margin: '0 0 0.3rem' }}>
-                      CONTRACT REF {mintSuccess.dmint!.contractRefs.length > 1 ? i + 1 : ''}:
-                    </p>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem', marginBottom: '0.4rem' }}>
-                      <code style={{ flex: 1, wordBreak: 'break-all', fontSize: '0.75rem', lineHeight: 1.5, color: 'var(--text)' }}>{ref}</code>
-                      <button title="Copy" onClick={() => navigator.clipboard?.writeText(ref)} style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: '0.1rem', lineHeight: 0 }}><CopyIcon size={15} /></button>
-                    </div>
-                  </div>
-                ))}
+              <div style={{ marginTop: '1.25rem', marginBottom: '1rem', padding: '0.75rem 1rem', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 'var(--radius)', fontSize: '0.82rem', color: '#f59e0b', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                <span>⚠</span>
+                <span>Minting is irreversible. Verify all details before confirming.</span>
               </div>
-            )}
 
-            {/* Explorer link + Close */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <a href={explorerTxUrl(mintSuccess.revealTxid)} target="_blank" rel="noopener noreferrer"
-                style={{ color: 'var(--accent)', fontSize: '0.875rem', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                View on block explorer <span style={{ fontSize: '0.75rem' }}>↗</span>
-              </a>
-              <button className="primary" onClick={() => setMintSuccess(null)}>Close</button>
+              <div style={{ marginBottom: '1rem' }}>
+                <button onClick={() => setShowMintHex(v => !v)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text2)', fontSize: '0.75rem', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.68rem' }}>{showMintHex ? '▼' : '▶'}</span>
+                  Raw hex
+                </button>
+                {showMintHex && (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {[['1 — Commit', mintPreviewTxs.commitHex], ['2 — Reveal', mintPreviewTxs.revealHex]].map(([label, hex]) => (
+                      <div key={label}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text2)', fontWeight: 600 }}>{label}</span>
+                          <button onClick={() => navigator.clipboard?.writeText(hex)} title="Copy hex"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: 0, lineHeight: 0 }}>
+                            <CopyIcon size={13} />
+                          </button>
+                        </div>
+                        <code style={{ display: 'block', background: 'var(--bg3)', borderRadius: 'var(--radius)', padding: '0.5rem 0.65rem', fontSize: '0.65rem', wordBreak: 'break-all', color: 'var(--text2)', lineHeight: 1.5 }}>{hex}</code>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="primary" style={{ flex: 1 }} onClick={handleBroadcastMint} disabled={mintRunning}>
+                  {mintRunning ? 'Working…' : 'Confirm & Mint'}
+                </button>
+                <button onClick={() => { setMintPreviewTxs(null); setShowMintHex(false) }} disabled={mintRunning}>Cancel</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
+
+      {/* Mint success modal */}
+      {mintSuccess && (() => {
+        const txRow = (label: string, txid: string) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.7rem 0', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ color: 'var(--text2)', fontSize: '0.85rem', flexShrink: 0, marginRight: '1rem' }}>{label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <code style={{ fontSize: '0.72rem' }}>{txid.slice(0, 16)}…{txid.slice(-8)}</code>
+              <button title="Copy" onClick={() => navigator.clipboard?.writeText(txid)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text2)', padding: 0, lineHeight: 0 }}>
+                <CopyIcon size={13} />
+              </button>
+            </span>
+          </div>
+        )
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: 'rgba(0,0,0,0.80)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div className="card" style={{ width: '100%', maxWidth: 440, padding: '1.75rem', border: '1px solid var(--border)', position: 'relative' }}>
+              <button onClick={() => setMintSuccess(null)} style={{
+                position: 'absolute', top: '1rem', right: '1rem',
+                background: 'none', border: 'none', fontSize: '1.2rem',
+                color: 'var(--text2)', cursor: 'pointer', padding: '0 0.25rem',
+              }}>✕</button>
+
+              <h2 style={{ margin: '0 0 1.25rem', fontSize: '1.1rem' }}>Token Minted</h2>
+
+              {txRow('Token TxID', mintSuccess.revealTxid)}
+              {txRow('Commit TxID', mintSuccess.commitTxid)}
+
+              {mintSuccess.dmint && (
+                <>
+                  {txRow('FT Token Ref', mintSuccess.dmint.ftRef)}
+                  {mintSuccess.dmint.contractRefs.map((ref, i) =>
+                    txRow(mintSuccess.dmint!.contractRefs.length > 1 ? `Contract Ref ${i + 1}` : 'Contract Ref', ref)
+                  )}
+                </>
+              )}
+
+              <div style={{ marginTop: '1.25rem', marginBottom: '1rem', padding: '0.75rem 1rem', background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.4)', borderRadius: 'var(--radius)', fontSize: '0.82rem', color: '#10b981', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                <span>✓</span>
+                <span>Token successfully minted and broadcast to the network.</span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="primary" style={{ flex: 1 }}
+                  onClick={() => window.open(explorerTxUrl(mintSuccess.revealTxid), '_blank', 'noopener,noreferrer')}>
+                  View on Explorer ↗
+                </button>
+                <button onClick={() => setMintSuccess(null)}>Close</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Send token modal */}
       {tokenSendRef && (() => {
@@ -1554,17 +1604,17 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
         return (
           <div style={{
             position: 'fixed', inset: 0, zIndex: 1000,
-            background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+            background: 'rgba(0,0,0,0.80)', backdropFilter: 'blur(4px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <div className="card" style={{ width: '100%', maxWidth: 480, padding: '2rem', border: '1px solid var(--border)', position: 'relative' }}>
-              <button onClick={() => setTokenSendRef(null)} style={{
+            <div className="card" style={{ width: '100%', maxWidth: 440, padding: '1.75rem', border: '1px solid var(--border)', position: 'relative' }}>
+              <button onClick={() => { setTokenSendRef(null); setTokenSendPassphrase('') }} style={{
                 position: 'absolute', top: '1rem', right: '1rem',
                 background: 'none', border: 'none', fontSize: '1.2rem',
                 color: 'var(--text2)', cursor: 'pointer', padding: '0 0.25rem',
               }}>✕</button>
 
-              <h2 style={{ margin: '0 0 0.25rem' }}>
+              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.1rem' }}>
                 Send {meta?.name ?? tokenSendRef.ref.slice(0, 12) + '…'}
               </h2>
               <p style={{ margin: '0 0 1.25rem', fontSize: '0.78rem', color: 'var(--text2)' }}>
@@ -1603,13 +1653,13 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                 </div>
               )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                <button onClick={() => { setTokenSendRef(null); setTokenSendPassphrase('') }}>Cancel</button>
-                <button className="primary"
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="primary" style={{ flex: 1 }}
                   onClick={handleSendToken}
                   disabled={!tokenSendAddr || (!tokenSendRef.isSingleton && !tokenSendAmt) || (!!isLocked && !tokenSendPassphrase)}>
                   Send
                 </button>
+                <button onClick={() => { setTokenSendRef(null); setTokenSendPassphrase('') }}>Cancel</button>
               </div>
             </div>
           </div>
@@ -3193,48 +3243,6 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                 : 'Mint Container'}
             </button>
 
-            {mintPreviewTxs && (
-              <div style={{ marginTop: '1.25rem', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: '0.5rem', padding: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Signed transactions — review before broadcasting</span>
-                  <button onClick={() => setMintPreviewTxs(null)} style={{ fontSize: '0.8rem' }}>Discard</button>
-                </div>
-
-                {/* Commit tx */}
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>1 — Commit</span>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text2)', fontFamily: 'monospace' }}>{mintPreviewTxs.commitTxid.slice(0, 24)}…</span>
-                    <button onClick={() => navigator.clipboard.writeText(mintPreviewTxs.commitHex)} style={{ marginLeft: 'auto', padding: '0.1rem 0.4rem', lineHeight: 0 }} title="Copy hex"><CopyIcon size={13} /></button>
-                  </div>
-                  <textarea readOnly value={mintPreviewTxs.commitHex}
-                    style={{ width: '100%', height: '5rem', fontFamily: 'monospace', fontSize: '0.68rem',
-                      background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '0.25rem',
-                      padding: '0.4rem', resize: 'vertical', wordBreak: 'break-all', boxSizing: 'border-box' }} />
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text2)' }}>{(mintPreviewTxs.commitHex.length / 2).toLocaleString()} bytes</span>
-                </div>
-
-                {/* Reveal tx */}
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
-                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>2 — Reveal (token)</span>
-                    <button onClick={() => navigator.clipboard.writeText(mintPreviewTxs.revealHex)} style={{ marginLeft: 'auto', padding: '0.1rem 0.4rem', lineHeight: 0 }} title="Copy hex"><CopyIcon size={13} /></button>
-                  </div>
-                  <textarea readOnly value={mintPreviewTxs.revealHex}
-                    style={{ width: '100%', height: '5rem', fontFamily: 'monospace', fontSize: '0.68rem',
-                      background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: '0.25rem',
-                      padding: '0.4rem', resize: 'vertical', wordBreak: 'break-all', boxSizing: 'border-box' }} />
-                  <span style={{ fontSize: '0.72rem', color: 'var(--text2)' }}>{(mintPreviewTxs.revealHex.length / 2).toLocaleString()} bytes</span>
-                </div>
-
-                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-                  <button className="primary" onClick={handleBroadcastMint} disabled={mintRunning}>
-                    {mintRunning ? 'Working…' : 'Validate & Broadcast'}
-                  </button>
-                  <span style={{ fontSize: '0.78rem', color: 'var(--text2)' }}>Validates each tx before sending. Commit broadcasts first, then reveal.</span>
-                </div>
-              </div>
-            )}
           </div>
           )}
         </>
