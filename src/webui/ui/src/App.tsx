@@ -34,6 +34,7 @@ export default function App() {
   const [nodeInfo, setNodeInfo] = useState<{ network: string; blocks: number } | null>(null)
   const [masked, setMasked]   = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [navOpen, setNavOpen] = useState(false)
 
   useEffect(() => {
     setOnUnauthorized(() => setAuthed(false))
@@ -129,8 +130,32 @@ export default function App() {
             >
               Logout
             </button>
+            <button
+              className="hamburger"
+              onClick={() => setNavOpen(o => !o)}
+              aria-label="Menu"
+            >
+              {navOpen ? '✕' : '☰'}
+            </button>
           </div>
         </div>
+        {navOpen && (
+          <nav className="mobile-nav">
+            {nav.map(n => (
+              <button
+                key={n.id}
+                className={page === n.id ? 'active' : ''}
+                onClick={() => { setPage(n.id); setNavOpen(false) }}
+              >
+                {n.label}
+              </button>
+            ))}
+            <div className="mobile-nav-actions">
+              <button onClick={() => { setRefreshKey(k => k + 1); setNavOpen(false) }}>↺ Refresh</button>
+              <button onClick={() => setMasked(m => !m)}>{masked ? 'Show amounts' : 'Hide amounts'}</button>
+            </div>
+          </nav>
+        )}
       </header>
 
       <main className="content">

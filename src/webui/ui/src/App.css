@@ -184,6 +184,72 @@
   padding: 0.3rem 0.6rem;
   font-size: 0.82rem;
 }
+/* Hamburger — hidden on desktop */
+.hamburger {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 1.3rem;
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+
+/* Mobile nav dropdown */
+.mobile-nav {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  padding: 0.5rem 0;
+}
+.mobile-nav button {
+  border: none;
+  background: none;
+  border-radius: 0;
+  padding: 0.7rem 1.25rem;
+  text-align: left;
+  color: var(--text2);
+  font-size: 0.95rem;
+}
+.mobile-nav button:hover { background: var(--bg3); color: var(--text); }
+.mobile-nav button.active { color: var(--accent); background: rgba(0,242,242,0.06); }
+.mobile-nav-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1.25rem 0.25rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.25rem;
+}
+.mobile-nav-actions button {
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--text2);
+}
+
+@media (max-width: 640px) {
+  .topbar { padding: 0 0.75rem; }
+
+  .topbar-inner {
+    grid-template-columns: 1fr auto;
+  }
+
+  .topnav { display: none; }
+
+  .hamburger { display: flex; align-items: center; }
+
+  /* Hide ↺ and eye on mobile — they're in the mobile nav instead */
+  .topbar-end > button:not(.logout-btn):not(.hamburger) { display: none; }
+
+  .content { padding: 1rem 0.75rem; }
+
+  .brand-name { font-size: 0.9rem; }
+}
+
 .lock-banner-select {
   flex-shrink: 0;
   padding: 0.28rem 0.5rem;

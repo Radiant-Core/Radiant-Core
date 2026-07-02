@@ -1,16 +1,38 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, Peer, BanEntry } from '../lib/api'
 import './PeersPage.css'
+
+type TrafficPoint = { recv: number; sent: number }
+const WINDOWS = { '5m': 300, '15m': 900, '30m': 1800 } as const
+type WindowKey = keyof typeof WINDOWS
+
+function fmtBytes(b: number) {
+  if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`
+  if (b >= 1e6) return `${(b / 1e6).toFixed(2)} MB`
+  if (b >= 1e3) return `${(b / 1e3).toFixed(1)} KB`
+  return `${b} B`
+}
+function fmtRate(bps: number) {
+  if (bps >= 1024 * 1024) return `${(bps / 1024 / 1024).toFixed(2)} MB/s`
+  return `${(bps / 1024).toFixed(1)} kB/s`
+}
 
 export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [peers, setPeers]       = useState<Peer[]>([])
   const [banned, setBanned]     = useState<BanEntry[]>([])
-  const [tab, setTab]           = useState<'peers' | 'banned'>('peers')
+  const [tab, setTab]           = useState<'peers' | 'banned' | 'traffic'>('peers')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [addNode, setAddNode]   = useState('')
   const [banAddr, setBanAddr]   = useState('')
   const [error, setError]       = useState('')
   const [msg, setMsg]           = useState('')
+
+  // Traffic tab state
+  const [trafficPoints, setTrafficPoints] = useState<TrafficPoint[]>([])
+  const [trafficTotals, setTrafficTotals] = useState<{ recv: number; sent: number } | null>(null)
+  const [trafficWindow, setTrafficWindow] = useState<WindowKey>('5m')
+  const prevTrafficRef = useRef<{ recv: number; sent: number; time: number } | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const load = useCallback(async () => {
     try {
@@ -26,12 +48,86 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
   useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id) }, [load])
   useEffect(() => { if (refreshKey > 0) load() }, [refreshKey]) // eslint-disable-line
 
-  const fmtBytes = (b: number) => {
-    if (b > 1e9) return `${(b / 1e9).toFixed(1)} GB`
-    if (b > 1e6) return `${(b / 1e6).toFixed(1)} MB`
-    if (b > 1e3) return `${(b / 1e3).toFixed(1)} KB`
-    return `${b} B`
-  }
+  // Traffic polling — only runs when Traffic tab is active
+  useEffect(() => {
+    if (tab !== 'traffic') return
+    const poll = async () => {
+      try {
+        const res = await api.rpc('getnetworkinfo', [])
+        const info = res.result as { totalbytesrecv: number; totalbytessent: number } | null
+        if (!info) return
+        setTrafficTotals({ recv: info.totalbytesrecv, sent: info.totalbytessent })
+        const now = Date.now()
+        if (prevTrafficRef.current) {
+          const dt = (now - prevTrafficRef.current.time) / 1000
+          if (dt > 0) {
+            const recv = Math.max(0, (info.totalbytesrecv - prevTrafficRef.current.recv) / dt)
+            const sent = Math.max(0, (info.totalbytessent - prevTrafficRef.current.sent) / dt)
+            setTrafficPoints(pts => [...pts, { recv, sent }].slice(-1800))
+          }
+        }
+        prevTrafficRef.current = { recv: info.totalbytesrecv, sent: info.totalbytessent, time: now }
+      } catch { /* ignore */ }
+    }
+    poll()
+    const id = setInterval(poll, 1000)
+    return () => clearInterval(id)
+  }, [tab]) // eslint-disable-line
+
+  // Canvas redraw
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas || tab !== 'traffic') return
+    const W = canvas.offsetWidth || 600
+    const H = canvas.offsetHeight || 200
+    const dpr = window.devicePixelRatio || 1
+    canvas.width = W * dpr
+    canvas.height = H * dpr
+    const ctx = canvas.getContext('2d')!
+    ctx.scale(dpr, dpr)
+
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, W, H)
+
+    const windowSecs = WINDOWS[trafficWindow]
+    const visible = trafficPoints.slice(-windowSecs)
+    if (visible.length < 2) {
+      ctx.fillStyle = 'rgba(255,255,255,0.2)'
+      ctx.font = '12px monospace'
+      ctx.fillText('Collecting data…', W / 2 - 60, H / 2)
+      return
+    }
+
+    const maxRate = Math.max(...visible.map(p => Math.max(p.recv, p.sent)), 512)
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.lineWidth = 1
+    for (let i = 1; i < 8; i++) {
+      const y = Math.round(H * i / 8) + 0.5
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
+    }
+
+    // Bars — green recv, red sent, overlapping from baseline
+    const N = visible.length
+    visible.forEach((pt, i) => {
+      const x = (i / N) * W
+      const w = Math.max(1, W / N + 0.5)
+
+      const rH = (pt.recv / maxRate) * H
+      ctx.fillStyle = '#22c55e'
+      ctx.fillRect(x, H - rH, w, rH)
+
+      const sH = (pt.sent / maxRate) * H
+      ctx.fillStyle = '#ef4444'
+      ctx.fillRect(x, H - sH, w, sH)
+    })
+
+    // Scale label top-left
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'
+    ctx.font = '11px monospace'
+    ctx.fillText(fmtRate(maxRate), 6, 15)
+  }, [trafficPoints, trafficWindow, tab])
 
   const fmtPing = (ms: number) => {
     if (ms < 0) return 'N/A'
@@ -76,9 +172,10 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
     <div>
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
         <h1 style={{ fontSize: '1.1rem', fontWeight: 700, flex: 1 }}>Network</h1>
-        <button className={tab === 'peers'  ? 'primary' : ''} onClick={() => setTab('peers')}>Peers ({peers.length})</button>
-        <button className={tab === 'banned' ? 'primary' : ''} onClick={() => setTab('banned')}>Banned ({banned.length})</button>
-        <button onClick={load}>Refresh</button>
+        <button className={tab === 'peers'   ? 'primary' : ''} onClick={() => setTab('peers')}>Peers ({peers.length})</button>
+        <button className={tab === 'banned'  ? 'primary' : ''} onClick={() => setTab('banned')}>Banned ({banned.length})</button>
+        <button className={tab === 'traffic' ? 'primary' : ''} onClick={() => setTab('traffic')}>Traffic</button>
+        {tab !== 'traffic' && <button onClick={load}>Refresh</button>}
       </div>
 
       {error && <p className="error-text"   style={{ marginBottom: '0.75rem' }}>{error}</p>}
@@ -212,6 +309,53 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
             </table>
           </div>
         </>
+      )}
+
+      {tab === 'traffic' && (
+        <div>
+          {/* Chart card */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <canvas
+              ref={canvasRef}
+              style={{ display: 'block', width: '100%', height: '220px', background: '#000' }}
+            />
+          </div>
+
+          {/* Controls + totals */}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', gap: '0.25rem' }}>
+              {(Object.keys(WINDOWS) as WindowKey[]).map(w => (
+                <button key={w} className={trafficWindow === w ? 'primary' : ''} style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem' }}
+                  onClick={() => setTrafficWindow(w)}>{w}</button>
+              ))}
+            </div>
+            <button style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem' }}
+              onClick={() => { setTrafficPoints([]); prevTrafficRef.current = null }}>Reset</button>
+          </div>
+
+          {/* Totals card */}
+          {trafficTotals && (
+            <div className="card">
+              <h2>Totals</h2>
+              <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))' }}>
+                <div className="stat">
+                  <span className="stat-label" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#22c55e' }} />
+                    Received
+                  </span>
+                  <span className="stat-value" style={{ fontSize: '0.95rem' }}>{fmtBytes(trafficTotals.recv)}</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label" style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#ef4444' }} />
+                    Sent
+                  </span>
+                  <span className="stat-value" style={{ fontSize: '0.95rem' }}>{fmtBytes(trafficTotals.sent)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
