@@ -2020,9 +2020,20 @@ void CWalletTx::GetAmounts(std::list<COutputEntry> &listReceived,
 
         if (!ExtractDestination(txout.scriptPubKey, address) &&
             !txout.scriptPubKey.IsUnspendable()) {
-            pwallet->WalletLogPrintf("CWalletTx::GetAmounts: Unknown "
-                                     "transaction type found, txid %s\n",
-                                     this->GetId().ToString());
+            // Radiant token scripts (OP_PUSHINPUTREF family) are valid on-chain
+            // but non-standard; don't log them as unknown.
+            const CScript &s = txout.scriptPubKey;
+            const bool isTokenScript = !s.empty() && (
+                s[0] == OP_PUSHINPUTREF ||
+                s[0] == OP_REQUIREINPUTREF ||
+                s[0] == OP_DISALLOWPUSHINPUTREF ||
+                s[0] == OP_DISALLOWPUSHINPUTREFSIBLING ||
+                s[0] == OP_PUSHINPUTREFSINGLETON);
+            if (!isTokenScript) {
+                pwallet->WalletLogPrintf("CWalletTx::GetAmounts: Unknown "
+                                         "transaction type found, txid %s\n",
+                                         this->GetId().ToString());
+            }
             address = CNoDestination();
         }
 
