@@ -1126,7 +1126,7 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate, const QStri
 void BitcoinGUI::message(const QString &title, const QString &message,
                          unsigned int style, bool *ret) {
     // default title
-    QString strTitle = tr("Bitcoin");
+    QString strTitle = tr("Radiant");
     // Default to information icon
     int nMBoxIcon = QMessageBox::Information;
     int nNotifyIcon = Notificator::Information;
@@ -1151,7 +1151,7 @@ void BitcoinGUI::message(const QString &title, const QString &message,
                 break;
         }
     }
-    // Append title to "Bitcoin - "
+    // Append title to "Radiant - "
     if (!msgType.isEmpty()) {
         strTitle += " - " + msgType;
     }
