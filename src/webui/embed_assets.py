@@ -19,6 +19,7 @@ MIME_TYPES = {
     ".js": "application/javascript",
     ".mjs": "application/javascript",
     ".json": "application/json",
+    ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
     ".ico": "image/x-icon",
