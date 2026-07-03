@@ -3,7 +3,7 @@ import { api, Peer, BanEntry } from '../lib/api'
 import './PeersPage.css'
 
 type TrafficPoint = { recv: number; sent: number }
-const WINDOWS = { '5m': 300, '15m': 900, '30m': 1800 } as const
+const WINDOWS = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800 } as const
 type WindowKey = keyof typeof WINDOWS
 
 function fmtBytes(b: number) {
@@ -17,7 +17,14 @@ function fmtRate(bps: number) {
   return `${(bps / 1024).toFixed(1)} kB/s`
 }
 
-export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
+interface Props {
+  refreshKey?: number
+  trafficPoints: TrafficPoint[]
+  trafficTotals: { recv: number; sent: number } | null
+  onResetTraffic: () => void
+}
+
+export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals, onResetTraffic }: Props) {
   const [peers, setPeers]       = useState<Peer[]>([])
   const [banned, setBanned]     = useState<BanEntry[]>([])
   const [tab, setTab]           = useState<'peers' | 'banned' | 'traffic'>('peers')
@@ -27,11 +34,7 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [error, setError]       = useState('')
   const [msg, setMsg]           = useState('')
 
-  // Traffic tab state
-  const [trafficPoints, setTrafficPoints] = useState<TrafficPoint[]>([])
-  const [trafficTotals, setTrafficTotals] = useState<{ recv: number; sent: number } | null>(null)
   const [trafficWindow, setTrafficWindow] = useState<WindowKey>('5m')
-  const prevTrafficRef = useRef<{ recv: number; sent: number; time: number } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const load = useCallback(async () => {
@@ -48,36 +51,10 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
   useEffect(() => { load(); const id = setInterval(load, 15000); return () => clearInterval(id) }, [load])
   useEffect(() => { if (refreshKey > 0) load() }, [refreshKey]) // eslint-disable-line
 
-  // Traffic polling — only runs when Traffic tab is active
-  useEffect(() => {
-    if (tab !== 'traffic') return
-    const poll = async () => {
-      try {
-        const res = await api.rpc('getnettotals', [])
-        const info = res.result as { totalbytesrecv: number; totalbytessent: number } | null
-        if (!info) return
-        setTrafficTotals({ recv: info.totalbytesrecv, sent: info.totalbytessent })
-        const now = Date.now()
-        if (prevTrafficRef.current) {
-          const dt = (now - prevTrafficRef.current.time) / 1000
-          if (dt > 0) {
-            const recv = Math.max(0, (info.totalbytesrecv - prevTrafficRef.current.recv) / dt)
-            const sent = Math.max(0, (info.totalbytessent - prevTrafficRef.current.sent) / dt)
-            setTrafficPoints(pts => [...pts, { recv, sent }].slice(-1800))
-          }
-        }
-        prevTrafficRef.current = { recv: info.totalbytesrecv, sent: info.totalbytessent, time: now }
-      } catch { /* ignore */ }
-    }
-    poll()
-    const id = setInterval(poll, 1000)
-    return () => clearInterval(id)
-  }, [tab]) // eslint-disable-line
-
   // Canvas redraw — filled area chart (Activity Monitor style)
   useEffect(() => {
     const canvas = canvasRef.current
-    if (!canvas || tab !== 'traffic') return
+    if (!canvas) return
     const W = canvas.offsetWidth || 600
     const H = canvas.offsetHeight || 240
     const dpr = window.devicePixelRatio || 1
@@ -152,7 +129,7 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
       ctx.textAlign = i === 0 ? 'left' : i === 5 ? 'right' : 'center'
       ctx.fillText(fmtAgo(Math.round(N * (1 - frac))), x, H - 4)
     }
-  }, [trafficPoints, trafficWindow, tab])
+  }, [trafficPoints, trafficWindow])
 
   const fmtPing = (ms: number) => {
     if (ms < 0) return 'N/A'
@@ -355,7 +332,7 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
               ))}
             </div>
             <button style={{ padding: '0.25rem 0.6rem', fontSize: '0.78rem' }}
-              onClick={() => { setTrafficPoints([]); prevTrafficRef.current = null }}>Reset</button>
+              onClick={onResetTraffic}>Reset</button>
           </div>
 
           {/* Totals card */}

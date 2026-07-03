@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { api, getToken, setToken, setOnUnauthorized } from './lib/api'
 import radiantLogo from './assets/images/radiant-darkmode.png'
 import LoginPage from './pages/LoginPage'
@@ -37,6 +37,19 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false)
   const [serverReady, setServerReady] = useState(false)
   const [probeKey, setProbeKey] = useState(0)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Traffic — lifted here so history survives tab switches
+  const [trafficPoints, setTrafficPoints] = useState<{ recv: number; sent: number }[]>([])
+  const [trafficTotals, setTrafficTotals] = useState<{ recv: number; sent: number } | null>(null)
+  const prevTrafficRef = useRef<{ recv: number; sent: number; time: number } | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 2000)
+  }, [])
 
   // Wire up the unauthorized handler once; re-probe when the node restarts.
   useEffect(() => {
@@ -118,6 +131,38 @@ export default function App() {
     }
   }, [authed])
 
+  // Traffic polling — always runs while authenticated so history survives tab switches
+  useEffect(() => {
+    if (!authed) return
+    const poll = async () => {
+      try {
+        const res = await api.rpc('getnettotals', [])
+        const info = res.result as { totalbytesrecv: number; totalbytessent: number } | null
+        if (!info) return
+        setTrafficTotals({ recv: info.totalbytesrecv, sent: info.totalbytessent })
+        const now = Date.now()
+        if (prevTrafficRef.current) {
+          const dt = (now - prevTrafficRef.current.time) / 1000
+          if (dt > 0) {
+            const recv = Math.max(0, (info.totalbytesrecv - prevTrafficRef.current.recv) / dt)
+            const sent = Math.max(0, (info.totalbytessent - prevTrafficRef.current.sent) / dt)
+            setTrafficPoints(pts => [...pts, { recv, sent }].slice(-1800))
+          }
+        }
+        prevTrafficRef.current = { recv: info.totalbytesrecv, sent: info.totalbytessent, time: now }
+      } catch { /* ignore */ }
+    }
+    poll()
+    const id = setInterval(poll, 1000)
+    return () => clearInterval(id)
+  }, [authed])
+
+  const resetTraffic = useCallback(() => {
+    setTrafficPoints([])
+    setTrafficTotals(null)
+    prevTrafficRef.current = null
+  }, [])
+
   if (!serverReady) {
     return (
       <div className="connect-splash">
@@ -180,7 +225,7 @@ export default function App() {
           </nav>
           <div className="topbar-end">
             <button
-              onClick={() => setRefreshKey(k => k + 1)}
+              onClick={() => { setRefreshKey(k => k + 1); showToast('Refreshed') }}
               title="Refresh current tab"
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
@@ -231,17 +276,19 @@ export default function App() {
               </button>
             ))}
             <div className="mobile-nav-actions">
-              <button onClick={() => { setRefreshKey(k => k + 1); setNavOpen(false) }}>↺ Refresh</button>
+              <button onClick={() => { setRefreshKey(k => k + 1); showToast('Refreshed'); setNavOpen(false) }}>↺ Refresh</button>
               <button onClick={() => setMasked(m => !m)}>{masked ? 'Show amounts' : 'Hide amounts'}</button>
             </div>
           </nav>
         )}
       </header>
 
+      {toast && <div className="toast">{toast}</div>}
+
       <main className="content">
         {page === 'node'     && <NodePage refreshKey={refreshKey} />}
         {page === 'wallets'  && <WalletsPage masked={masked} refreshKey={refreshKey} />}
-        {page === 'peers'    && <PeersPage refreshKey={refreshKey} />}
+        {page === 'peers'    && <PeersPage refreshKey={refreshKey} trafficPoints={trafficPoints} trafficTotals={trafficTotals} onResetTraffic={resetTraffic} />}
         {page === 'console'  && <ConsolePage />}
         {page === 'settings' && <SettingsPage />}
       </main>
