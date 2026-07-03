@@ -62,12 +62,14 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 2000)
   }, [])
 
-  // Wire up the unauthorized handler once; re-probe when the node restarts.
+  // Wire up the unauthorized handler once.
+  // A 401 means the node is UP but the session expired — go straight to the
+  // login page (keep serverReady=true).  Don't show the connecting splash;
+  // that is only for when the node itself is unreachable.
   useEffect(() => {
     setOnUnauthorized(() => {
       setAuthed(false)
-      setServerReady(false)         // show connecting splash while node is restarting
-      setProbeKey(k => k + 1)       // restart the probe
+      setProbeKey(k => k + 1)
     })
   }, [])
 
@@ -167,6 +169,9 @@ export default function App() {
       } catch {
         failures += 1
         if (failures >= 5) {
+          // Clear the stale token now so any in-flight requests that return 401
+          // see hadToken=false and don't re-fire _onUnauthorized mid-reconnect.
+          setToken(null)
           setAuthed(false)
           setServerReady(false)
           setProbeKey(k => k + 1)

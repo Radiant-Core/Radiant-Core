@@ -1782,6 +1782,13 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
         {TABS.map(t => (
           <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => switchTab(t.id)}>
             {t.label}
+            {t.id === 'security' && summary && !summary.encrypted && (
+              <span title="Wallet is not encrypted" style={{
+                display: 'inline-block', marginLeft: '0.35rem',
+                width: '7px', height: '7px', borderRadius: '50%',
+                background: '#f59e0b', verticalAlign: 'middle', flexShrink: 0,
+              }} />
+            )}
           </button>
         ))}
       </div>
@@ -3325,6 +3332,23 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
       {/* ── SECURITY ── */}
       {tab === 'security' && (
         <>
+          {summary && !summary.encrypted && (
+            <div className="card" style={{
+              borderColor: 'rgba(245,158,11,0.5)',
+              borderLeftWidth: '3px',
+              display: 'flex', gap: '0.85rem', alignItems: 'flex-start',
+            }}>
+              <span style={{ fontSize: '1.3rem', lineHeight: 1, paddingTop: '0.05rem', flexShrink: 0 }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 600, color: '#f59e0b', marginBottom: '0.3rem' }}>Wallet is not encrypted</div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text2)', lineHeight: 1.55 }}>
+                  Anyone with access to the wallet file can spend your funds without needing a password.
+                  Encrypt your wallet with a passphrase to protect against unauthorised access.
+                </div>
+              </div>
+            </div>
+          )}
+
           {summary && summary.encrypted && (
             <div className="card">
               <h2>Lock / Unlock</h2>
