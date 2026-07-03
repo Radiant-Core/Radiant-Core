@@ -377,6 +377,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [unlockPw, setUnlockPw]     = useState('')
   const [encryptPw, setEncryptPw]   = useState('')
   const [encryptPw2, setEncryptPw2] = useState('')
+  const [backupPath, setBackupPath] = useState('')
   const [oldPw, setOldPw]           = useState('')
   const [newPw, setNewPw]           = useState('')
   const [newPw2, setNewPw2]         = useState('')
@@ -901,6 +902,17 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
       toast('Wallet encrypted. radiantd will restart — please log in again.', 'warning')
       setEncryptPw(''); setEncryptPw2('')
     } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Encrypt failed', 'error') }
+  }
+
+  const handleBackup = async () => {
+    if (walletName === null || !backupPath.trim()) return
+    clearMsg()
+    try {
+      const res = await api.rpc('backupwallet', [backupPath.trim()], walletName)
+      if (res.error) throw new Error(String((res.error as Record<string,unknown>).message ?? res.error))
+      toast(`Wallet backed up to ${backupPath.trim()}`, 'success')
+      setBackupPath('')
+    } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Backup failed', 'error') }
   }
 
   const handleChangePassphrase = async () => {
@@ -3354,6 +3366,28 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
           )}
 
           <SeedImport walletName={walletName} onImported={() => walletName !== null && loadAddresses(walletName)} />
+
+          <div className="card">
+            <h2>Backup Wallet</h2>
+            <p style={{ color: 'var(--text2)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+              Saves a copy of the wallet file to a path on the node's filesystem.
+              Use an absolute path (e.g. <code style={{ fontFamily: 'monospace' }}>/home/user/wallet-backup.dat</code> or <code style={{ fontFamily: 'monospace' }}>C:\Backups\wallet.dat</code>).
+            </p>
+            <div className="form-row">
+              <div className="form-group" style={{ flex: 1 }}>
+                <label>Destination path</label>
+                <input
+                  value={backupPath}
+                  onChange={e => setBackupPath(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleBackup()}
+                  placeholder="/path/to/wallet-backup.dat"
+                />
+              </div>
+              <button className="primary" onClick={handleBackup} disabled={!backupPath.trim()} style={{ alignSelf: 'flex-end' }}>
+                Backup
+              </button>
+            </div>
+          </div>
         </>
       )}
 
