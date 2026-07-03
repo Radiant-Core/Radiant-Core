@@ -251,6 +251,38 @@
   .brand-name { font-size: 0.9rem; }
 }
 
+.update-banner {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--bg2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.9rem;
+  font-size: 0.82rem;
+  color: var(--text);
+  z-index: 998;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.update-banner button {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius);
+  padding: 0.25rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.update-banner button:hover {
+  opacity: 0.85;
+}
+
 .toast {
   position: fixed;
   bottom: 1.5rem;

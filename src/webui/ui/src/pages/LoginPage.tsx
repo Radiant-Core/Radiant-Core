@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { api, setToken } from '../lib/api'
 import radiantLogo from '../assets/images/radiant-darkmode.png'
 import './LoginPage.css'
@@ -6,23 +6,16 @@ import './LoginPage.css'
 interface Props {
   authMode: string
   onLogin: (token?: string) => void
+  onNodeDown: () => void
 }
 
 const TRANSIENT_PHRASES = ['initializing', 'No response', 'Malformed response']
 
-export default function LoginPage({ authMode, onLogin }: Props) {
+export default function LoginPage({ authMode, onLogin, onNodeDown }: Props) {
   const [cookieToken, setCookieToken] = useState('')
   const [password, setPassword]       = useState('')
-  const [error, setError]             = useState('')
-  const [loading, setLoading]         = useState(false)
-  const [retryIn, setRetryIn]         = useState<number | null>(null)
-  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const countRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  useEffect(() => () => {
-    if (retryRef.current) clearTimeout(retryRef.current)
-    if (countRef.current) clearInterval(countRef.current)
-  }, [])
+  const [error, setError]   = useState('')
+  const [loading, setLoading] = useState(false)
 
   const doLogin = async (pw: string, token: string) => {
     setError('')
@@ -41,24 +34,11 @@ export default function LoginPage({ authMode, onLogin }: Props) {
       setToken(null)
       const isTransient = TRANSIENT_PHRASES.some(p => msg.includes(p))
       if (isTransient) {
-        setError(msg)
-        let secs = 5
-        setRetryIn(secs)
-        countRef.current = setInterval(() => {
-          secs -= 1
-          setRetryIn(secs)
-          if (secs <= 0) {
-            clearInterval(countRef.current!)
-            countRef.current = null
-          }
-        }, 1000)
-        retryRef.current = setTimeout(() => {
-          setRetryIn(null)
-          doLogin(pw, token)
-        }, 5000)
+        // Node went away — return to connecting splash where the probe handles recovery
+        onNodeDown()
+        return
       } else {
         setError(msg)
-        setRetryIn(null)
       }
     } finally {
       setLoading(false)
@@ -67,9 +47,6 @@ export default function LoginPage({ authMode, onLogin }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (retryRef.current) { clearTimeout(retryRef.current); retryRef.current = null }
-    if (countRef.current) { clearInterval(countRef.current); countRef.current = null }
-    setRetryIn(null)
     doLogin(password, cookieToken)
   }
 
@@ -107,15 +84,10 @@ export default function LoginPage({ authMode, onLogin }: Props) {
           </div>
         )}
 
-        {error && (
-          <p className="error-text">
-            {error}
-            {retryIn !== null && <span className="retry-countdown"> Retrying in {retryIn}s…</span>}
-          </p>
-        )}
+        {error && <p className="error-text">{error}</p>}
 
         <button type="submit" className="primary" disabled={loading} style={{ width: '100%', marginTop: '0.5rem' }}>
-          {loading ? 'Authenticating…' : retryIn !== null ? 'Retry now' : 'Sign in'}
+          {loading ? 'Authenticating…' : 'Sign in'}
         </button>
       </form>
     </div>

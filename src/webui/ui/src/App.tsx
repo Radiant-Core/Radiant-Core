@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import { api, getToken, setToken, setOnUnauthorized } from './lib/api'
 import radiantLogo from './assets/images/radiant-darkmode.png'
 import LoginPage from './pages/LoginPage'
@@ -28,6 +29,16 @@ function IconEye() {
 }
 
 export default function App() {
+  const {
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegistered(r) {
+      // Check for SW updates every 60 s so rebuilding the binary is noticed quickly
+      r && setInterval(() => r.update(), 60_000)
+    },
+  })
+
   const [authed, setAuthed]   = useState(!!getToken())
   const [page, setPage]       = useState<Page>('node')
   const [authMode, setAuthMode] = useState<string>('cookie')
@@ -131,14 +142,17 @@ export default function App() {
     }
   }, [authed])
 
-  // Traffic polling — always runs while authenticated so history survives tab switches
+  // Traffic polling — always runs while authenticated so history survives tab switches.
+  // Also acts as a health check: 5 consecutive failures → back to connecting splash.
   useEffect(() => {
     if (!authed) return
+    let failures = 0
     const poll = async () => {
       try {
         const res = await api.rpc('getnettotals', [])
         const info = res.result as { totalbytesrecv: number; totalbytessent: number } | null
         if (!info) return
+        failures = 0
         setTrafficTotals({ recv: info.totalbytesrecv, sent: info.totalbytessent })
         const now = Date.now()
         if (prevTrafficRef.current) {
@@ -150,7 +164,14 @@ export default function App() {
           }
         }
         prevTrafficRef.current = { recv: info.totalbytesrecv, sent: info.totalbytessent, time: now }
-      } catch { /* ignore */ }
+      } catch {
+        failures += 1
+        if (failures >= 5) {
+          setAuthed(false)
+          setServerReady(false)
+          setProbeKey(k => k + 1)
+        }
+      }
     }
     poll()
     const id = setInterval(poll, 1000)
@@ -180,11 +201,17 @@ export default function App() {
     )
   }
 
+  const handleNodeDown = () => {
+    setServerReady(false)
+    setProbeKey(k => k + 1)
+  }
+
   if (!authed) {
     return (
       <LoginPage
         authMode={authMode}
         onLogin={token => { setToken(token ?? getToken()!); setAuthed(true) }}
+        onNodeDown={handleNodeDown}
       />
     )
   }
@@ -282,6 +309,13 @@ export default function App() {
           </nav>
         )}
       </header>
+
+      {needRefresh && (
+        <div className="update-banner">
+          <span>Update available</span>
+          <button onClick={() => updateServiceWorker(true)}>Reload</button>
+        </div>
+      )}
 
       {toast && <div className="toast">{toast}</div>}
 

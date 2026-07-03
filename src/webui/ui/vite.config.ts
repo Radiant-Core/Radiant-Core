@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'autoUpdate',
+      registerType: 'prompt',
       workbox: {
         // Precache all static assets so the app shell loads from cache when
         // the node is offline. The React app handles the "connecting" splash
@@ -50,7 +50,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/webui/api': {
-        target: process.env.RADIANT_NODE_URL || 'http://127.0.0.1:7898',
+        target: process.env.RADIANT_NODE_URL || 'http://127.0.0.1:7332',
         changeOrigin: true,
       }
     }
