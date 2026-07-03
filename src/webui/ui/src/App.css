@@ -138,6 +138,7 @@
 .form-group label { font-size: 0.75rem; color: var(--text2); }
 
 .error-text { color: var(--red); font-size: 0.85rem; margin-top: 0.5rem; }
+.retry-countdown { color: var(--text2); font-size: 0.8rem; margin-left: 0.4rem; }
 .success-text { color: var(--accent2); font-size: 0.85rem; margin-top: 0.5rem; }
 
 /* Wallet page tab bar */
@@ -275,6 +276,38 @@
 .connect-status {
   font-size: 0.85rem;
   color: var(--text2);
+}
+
+.connect-refresh-btn {
+  margin-top: 0.5rem;
+  padding: 0.4rem 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  color: var(--text2);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.connect-refresh-btn:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+.connect-hint {
+  margin-top: 1.5rem;
+  font-size: 0.78rem;
+  color: var(--text2);
+  opacity: 0.6;
+  text-align: center;
+  max-width: 28rem;
+  line-height: 1.6;
+}
+
+.connect-hint code {
+  font-family: monospace;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 @keyframes connect-pulse {

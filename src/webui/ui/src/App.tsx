@@ -122,6 +122,13 @@ export default function App() {
         <img src={radiantLogo} alt="Radiant" className="connect-logo" />
         <span className="connect-name">Radiant Core</span>
         <span className="connect-status">Connecting to node…</span>
+        <button className="connect-refresh-btn" onClick={() => window.location.reload()}>
+          Refresh
+        </button>
+        <span className="connect-hint">
+          If the node is not running, start <code>radiant-qt</code> or <code>radiantd</code> with{' '}
+          <code>-webui=1</code>, or add <code>webui=1</code> to <code>radiant.conf</code>.
+        </span>
       </div>
     )
   }

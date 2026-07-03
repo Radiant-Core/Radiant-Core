@@ -26,7 +26,7 @@ export default function NodePage({ refreshKey = 0 }: { refreshKey?: number }) {
   const [mempool, setMempool]               = useState<MempoolEntry[]>([])
   const [mempoolLoading, setMempoolLoading] = useState(false)
   const [mempoolSort, setMempoolSort]       = useState<SortKey>('age')
-  const [mempoolSortDir, setMempoolSortDir] = useState<'asc' | 'desc'>('asc')
+  const [mempoolSortDir, setMempoolSortDir] = useState<'asc' | 'desc'>('desc')
   const [mempoolPage, setMempoolPage]       = useState(0)
   const MEMPOOL_PER_PAGE = 25
 

@@ -29,8 +29,15 @@ async function request<T>(method: string, path: string, body?: unknown, isLogin 
     _onUnauthorized?.()
     throw new Error('Session expired')
   }
-  const json = await res.json()
-  if (!res.ok) throw new Error(json.error || res.statusText)
+  const text = await res.text()
+  if (!text.trim()) throw new Error('No response from node — it may still be initializing, please try again')
+  let json: unknown
+  try {
+    json = JSON.parse(text)
+  } catch {
+    throw new Error('Malformed response from node — it may still be initializing, please try again')
+  }
+  if (!res.ok) throw new Error((json as Record<string, string>).error || res.statusText)
   return json as T
 }
 
