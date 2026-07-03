@@ -72,6 +72,7 @@ export default function SeedImport({ walletName, onImported }: Props) {
   const [importedCount, setImportedCount] = useState(0)
   const [rescanning, setRescanning]    = useState(false)
   const [rescanMsg, setRescanMsg]      = useState('')
+  const [scanProgress, setScanProgress] = useState<number | null>(null)
 
   const reset = () => {
     setOpen(false); setMnemonic(''); setPassphrase('')
@@ -137,8 +138,22 @@ export default function SeedImport({ walletName, onImported }: Props) {
   const handleRescan = async () => {
     setRescanning(true)
     setRescanMsg('')
+    setScanProgress(null)
+
+    // Poll getwalletinfo every second for scanning progress while rescanblockchain blocks.
+    const pollId = setInterval(async () => {
+      try {
+        const info = await api.rpc('getwalletinfo', [], walletName ?? undefined)
+        const scanning = (info.result as Record<string, unknown> | null)?.scanning
+        if (scanning && typeof scanning === 'object') {
+          const p = (scanning as Record<string, unknown>).progress
+          if (typeof p === 'number') setScanProgress(p)
+        }
+      } catch { /* ignore poll errors */ }
+    }, 1000)
+
     try {
-      const res = await api.rpc('rescanblockchain', [])
+      const res = await api.rpc('rescanblockchain', [], walletName ?? undefined)
       if (res.error) throw new Error(
         typeof res.error === 'object' && res.error !== null
           ? String((res.error as Record<string, unknown>).message ?? res.error)
@@ -148,8 +163,11 @@ export default function SeedImport({ walletName, onImported }: Props) {
       setRescanMsg(`Rescan complete — blocks ${r?.start_height ?? 0} to ${r?.stop_height ?? '?'}.`)
     } catch (e: unknown) {
       setRescanMsg(`Rescan error: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      clearInterval(pollId)
+      setScanProgress(null)
+      setRescanning(false)
     }
-    setRescanning(false)
   }
 
   const rescanOverlay = rescanModal && (
@@ -166,6 +184,30 @@ export default function SeedImport({ walletName, onImported }: Props) {
           Rescan the blockchain to find existing transactions for these addresses.
           This may take several minutes depending on chain length.
         </p>
+
+        {rescanning && (
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{
+              height: '6px', background: 'var(--bg3)', borderRadius: '3px',
+              overflow: 'hidden', marginBottom: '0.35rem',
+            }}>
+              <div style={{
+                height: '100%',
+                background: 'var(--accent)',
+                borderRadius: '3px',
+                transition: 'width 0.6s ease',
+                width: scanProgress !== null ? `${(scanProgress * 100).toFixed(1)}%` : '100%',
+                opacity: scanProgress !== null ? 1 : 0.4,
+                animation: scanProgress === null ? 'rescan-pulse 1.4s ease-in-out infinite' : 'none',
+              }} />
+            </div>
+            <span style={{ fontSize: '0.78rem', color: 'var(--text2)' }}>
+              {scanProgress !== null
+                ? `Scanning… ${(scanProgress * 100).toFixed(1)}%`
+                : 'Starting scan…'}
+            </span>
+          </div>
+        )}
 
         {rescanMsg && (
           <p

@@ -368,6 +368,11 @@
   50%       { opacity: 0.4; }
 }
 
+@keyframes rescan-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.9; }
+}
+
 .lock-banner-select {
   flex-shrink: 0;
   padding: 0.28rem 0.5rem;
