@@ -36,10 +36,20 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [navOpen, setNavOpen] = useState(false)
   const [serverReady, setServerReady] = useState(false)
+  const [probeKey, setProbeKey] = useState(0)
 
+  // Wire up the unauthorized handler once; re-probe when the node restarts.
   useEffect(() => {
-    setOnUnauthorized(() => setAuthed(false))
+    setOnUnauthorized(() => {
+      setAuthed(false)
+      setServerReady(false)         // show connecting splash while node is restarting
+      setProbeKey(k => k + 1)       // restart the probe
+    })
+  }, [])
 
+  // Probe runs on first mount and again whenever probeKey increments
+  // (i.e. after an automatic session expiry).
+  useEffect(() => {
     let cancelled = false
     let retryId: ReturnType<typeof setTimeout> | null = null
 
@@ -54,7 +64,7 @@ export default function App() {
 
     probe()
     return () => { cancelled = true; if (retryId) clearTimeout(retryId) }
-  }, [])
+  }, [probeKey])
 
   const fetchNodeInfo = useCallback(() => {
     if (!getToken()) return
