@@ -47,19 +47,17 @@ export default function App() {
     })
   }, [])
 
-  // Probe runs on first mount and again whenever probeKey increments
-  // (i.e. after an automatic session expiry).
-  // Use a raw fetch with no auth token so a stale localStorage token can't
-  // trigger _onUnauthorized and create an infinite probe loop.
+  // Probe runs on first mount and again whenever probeKey increments.
+  // A stale token in localStorage won't cause an infinite 401 loop because
+  // api.ts only fires _onUnauthorized when there was a token to expire;
+  // after setToken(null) clears it the next probe sends no header and gets 200.
   useEffect(() => {
     let cancelled = false
     let retryId: ReturnType<typeof setTimeout> | null = null
 
     const probe = async () => {
       try {
-        const res = await fetch('/webui/api/auth/info')
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const info = await res.json() as { mode: string }
+        const info = await api.authInfo()
         if (!cancelled) { setAuthMode(info.mode); setServerReady(true) }
       } catch {
         if (!cancelled) retryId = setTimeout(probe, 3000)

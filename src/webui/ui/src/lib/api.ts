@@ -25,8 +25,12 @@ async function request<T>(method: string, path: string, body?: unknown, isLogin 
   })
   if (res.status === 401) {
     if (isLogin) throw new Error('Invalid password')
+    const hadToken = !!_token   // capture before clearing
     setToken(null)
-    _onUnauthorized?.()
+    // Only fire the callback when a real session expired; if there was no
+    // token the probe was already running unauthenticated — firing here would
+    // re-increment probeKey and create an infinite probe loop.
+    if (hadToken) _onUnauthorized?.()
     throw new Error('Session expired')
   }
   const text = await res.text()

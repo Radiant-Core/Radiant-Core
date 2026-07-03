@@ -15,6 +15,9 @@ export default defineConfig({
         // "Connecting to node…" screen appears even when the node is offline.
         navigateFallback: '/webui/index.html',
         navigateFallbackAllowlist: [/^\/webui(?:\/|$)/],
+        // API paths must never receive the navigation fallback — the backend
+        // must answer them directly with JSON.
+        navigateFallbackDenylist: [/^\/webui\/api\//],
         runtimeCaching: [
           {
             // API calls must always hit the network — never serve from cache.

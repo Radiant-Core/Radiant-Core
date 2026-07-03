@@ -74,59 +74,84 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
     return () => clearInterval(id)
   }, [tab]) // eslint-disable-line
 
-  // Canvas redraw
+  // Canvas redraw — filled area chart (Activity Monitor style)
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas || tab !== 'traffic') return
     const W = canvas.offsetWidth || 600
-    const H = canvas.offsetHeight || 200
+    const H = canvas.offsetHeight || 240
     const dpr = window.devicePixelRatio || 1
     canvas.width = W * dpr
     canvas.height = H * dpr
     const ctx = canvas.getContext('2d')!
     ctx.scale(dpr, dpr)
 
-    ctx.fillStyle = '#000'
+    ctx.fillStyle = '#0d1117'
     ctx.fillRect(0, 0, W, H)
+
+    const PAD_L = 54, PAD_R = 8, PAD_T = 10, PAD_B = 20
+    const cW = W - PAD_L - PAD_R
+    const cH = H - PAD_T - PAD_B
 
     const windowSecs = WINDOWS[trafficWindow]
     const visible = trafficPoints.slice(-windowSecs)
     if (visible.length < 2) {
-      ctx.fillStyle = 'rgba(255,255,255,0.2)'
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'
       ctx.font = '12px monospace'
-      ctx.fillText('Collecting data…', W / 2 - 60, H / 2)
+      ctx.textAlign = 'center'
+      ctx.fillText('Collecting data…', PAD_L + cW / 2, PAD_T + cH / 2)
       return
     }
 
     const maxRate = Math.max(...visible.map(p => Math.max(p.recv, p.sent)), 512)
+    const N = visible.length
+    const xOf = (i: number) => PAD_L + (i / (N - 1)) * cW
+    const yOf = (v: number) => PAD_T + (1 - v / maxRate) * cH
+    const bottom = PAD_T + cH
 
-    // Grid lines
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
-    ctx.lineWidth = 1
-    for (let i = 1; i < 8; i++) {
-      const y = Math.round(H * i / 8) + 0.5
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke()
+    // Horizontal grid + Y-axis rate labels
+    ctx.font = '10px monospace'
+    ctx.textAlign = 'right'
+    for (let i = 0; i <= 4; i++) {
+      const y = Math.round(PAD_T + (i / 4) * cH) + 0.5
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)'
+      ctx.lineWidth = 1
+      ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(W - PAD_R, y); ctx.stroke()
+      ctx.fillStyle = 'rgba(255,255,255,0.38)'
+      ctx.fillText(fmtRate(maxRate * (1 - i / 4)), PAD_L - 5, y + 3)
     }
 
-    // Bars — green recv, red sent, overlapping from baseline
-    const N = visible.length
-    visible.forEach((pt, i) => {
-      const x = (i / N) * W
-      const w = Math.max(1, W / N + 0.5)
+    // Filled area + line for one series
+    const drawSeries = (values: number[], fill: string, stroke: string) => {
+      ctx.beginPath()
+      ctx.moveTo(xOf(0), bottom)
+      values.forEach((v, i) => ctx.lineTo(xOf(i), yOf(v)))
+      ctx.lineTo(xOf(N - 1), bottom)
+      ctx.closePath()
+      ctx.fillStyle = fill
+      ctx.fill()
 
-      const rH = (pt.recv / maxRate) * H
-      ctx.fillStyle = '#22c55e'
-      ctx.fillRect(x, H - rH, w, rH)
+      ctx.beginPath()
+      values.forEach((v, i) => i === 0 ? ctx.moveTo(xOf(0), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)))
+      ctx.strokeStyle = stroke
+      ctx.lineWidth = 1.5
+      ctx.lineJoin = 'round'
+      ctx.stroke()
+    }
 
-      const sH = (pt.sent / maxRate) * H
-      ctx.fillStyle = '#ef4444'
-      ctx.fillRect(x, H - sH, w, sH)
-    })
+    drawSeries(visible.map(p => p.recv), 'rgba(34,197,94,0.22)', '#22c55e')
+    drawSeries(visible.map(p => p.sent), 'rgba(239,68,68,0.22)', '#ef4444')
 
-    // Scale label top-left
-    ctx.fillStyle = 'rgba(255,255,255,0.55)'
-    ctx.font = '11px monospace'
-    ctx.fillText(fmtRate(maxRate), 6, 15)
+    // X-axis time labels
+    const fmtAgo = (s: number) => s === 0 ? 'now' : s < 60 ? `-${s}s` : `-${Math.floor(s / 60)}m`
+    ctx.fillStyle = 'rgba(255,255,255,0.35)'
+    ctx.font = '10px monospace'
+    for (let i = 0; i <= 5; i++) {
+      const frac = i / 5
+      const x = PAD_L + frac * cW
+      ctx.textAlign = i === 0 ? 'left' : i === 5 ? 'right' : 'center'
+      ctx.fillText(fmtAgo(Math.round(N * (1 - frac))), x, H - 4)
+    }
   }, [trafficPoints, trafficWindow, tab])
 
   const fmtPing = (ms: number) => {
@@ -317,7 +342,7 @@ export default function PeersPage({ refreshKey = 0 }: { refreshKey?: number }) {
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <canvas
               ref={canvasRef}
-              style={{ display: 'block', width: '100%', height: '220px', background: '#000' }}
+              style={{ display: 'block', width: '100%', height: '240px' }}
             />
           </div>
 
