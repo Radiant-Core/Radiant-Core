@@ -22,6 +22,10 @@
 #include <wallet/rpcwallet.h>
 #endif
 
+#include <fs.h>
+#include <util/time.h>
+
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -1019,6 +1023,73 @@ static bool HandleWalletPSBTSign(Config &config, HTTPRequest *req,
 #endif
 }
 
+// POST /webui/api/wallet/<name>/backup-export
+// Calls backupwallet to a temp file, reads it, returns the bytes as
+// application/octet-stream so the browser can Save-As wherever it likes.
+static bool HandleWalletBackupExport(Config &config, HTTPRequest *req,
+                                     const std::string &wallet_name)
+{
+    if (req->GetRequestMethod() != HTTPRequest::POST) { req->WriteReply(HTTP_BAD_METHOD, ""); return false; }
+    if (!CheckWebUIHost(req)) return false;
+    auto cors = CheckWebUICORS(req);
+    if (!cors) return false;
+    if (!CheckWebUIAuth(req)) return false;
+
+#ifdef ENABLE_WALLET
+    // Build a unique temp path that won't collide with concurrent requests.
+    const std::string tmpName = strprintf("radiant-webui-backup-%d.dat",
+                                          static_cast<int64_t>(GetTimeMicros()));
+    const fs::path tmpPath = fs::temp_directory_path() / tmpName;
+    const std::string tmpStr = tmpPath.string();
+
+    // Ask Core to write the wallet backup to the temp file.
+    try {
+        UniValue::Array params;
+        params.push_back(UniValue(tmpStr));
+        WalletRPC(config, wallet_name, "backupwallet", UniValue(std::move(params)));
+    } catch (const JSONRPCError &e) {
+        req->WriteReply(HTTP_BAD_REQUEST, JsonError(e.message));
+        return false;
+    } catch (const UniValue &e) {
+        const std::string msg = e["message"].isStr() ? e["message"].get_str() : "backup error";
+        req->WriteReply(HTTP_BAD_REQUEST, JsonError(msg));
+        return false;
+    } catch (const std::exception &e) {
+        req->WriteReply(HTTP_INTERNAL_SERVER_ERROR, JsonError(e.what()));
+        return false;
+    }
+
+    // Read the temp file into memory, then delete it.
+    std::string bytes;
+    {
+        std::ifstream f(tmpPath, std::ios::binary);
+        if (!f) {
+            fs::remove(tmpPath);
+            req->WriteReply(HTTP_INTERNAL_SERVER_ERROR,
+                            JsonError("backup succeeded but temp file could not be read"));
+            return false;
+        }
+        bytes.assign(std::istreambuf_iterator<char>(f),
+                     std::istreambuf_iterator<char>());
+    }
+    fs::remove(tmpPath);
+
+    // Suggest a dated filename for the Save-As dialog.
+    const std::string safeWallet = wallet_name.empty() ? "wallet" : wallet_name;
+    const std::string disposition = "attachment; filename=\"" + safeWallet + "-backup.dat\"";
+
+    req->WriteHeader("Content-Type",        "application/octet-stream");
+    req->WriteHeader("Content-Disposition", disposition);
+    req->WriteHeader("Access-Control-Allow-Origin", *cors);
+    req->WriteHeader("Cache-Control",       "no-store");
+    req->WriteReply(HTTP_OK, bytes);
+    return true;
+#else
+    req->WriteReply(HTTP_SERVICE_UNAVAILABLE, R"({"error":"Wallet support not compiled in"})");
+    return false;
+#endif
+}
+
 // ---- Router --------------------------------------------------------------
 
 // Parses "/webui/api/wallets/<action>" → action
@@ -1076,6 +1147,7 @@ bool WebUIWalletRoute(Config &config, HTTPRequest *req, const std::string &path)
     if (action == "change-passphrase") return HandleWalletChangePassphrase(config, req, wallet_name);
     if (action == "psbt/create")       return HandleWalletPSBTCreate(config, req, wallet_name);
     if (action == "psbt/sign")         return HandleWalletPSBTSign(config, req, wallet_name);
+    if (action == "backup-export")     return HandleWalletBackupExport(config, req, wallet_name);
 
     req->WriteReply(HTTP_NOT_FOUND, JsonError("unknown wallet action: " + action));
     return false;

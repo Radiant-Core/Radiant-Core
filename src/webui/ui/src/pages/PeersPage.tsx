@@ -82,7 +82,9 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
 
     const maxRate = Math.max(...visible.map(p => Math.max(p.recv, p.sent)), 512)
     const N = visible.length
-    const xOf = (i: number) => PAD_L + (i / (N - 1)) * cW
+    // Pin "now" to the right edge; each point is 1 second wide in window space.
+    // When N < windowSecs, data is anchored right and leaves blank space on the left.
+    const xOf = (i: number) => PAD_L + ((windowSecs - (N - 1 - i)) / windowSecs) * cW
     const yOf = (v: number) => PAD_T + (1 - v / maxRate) * cH
     const bottom = PAD_T + cH
 
@@ -119,7 +121,7 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
     drawSeries(visible.map(p => p.recv), 'rgba(34,197,94,0.22)', '#22c55e')
     drawSeries(visible.map(p => p.sent), 'rgba(239,68,68,0.22)', '#ef4444')
 
-    // X-axis time labels
+    // X-axis time labels — always based on the selected window, not data count
     const fmtAgo = (s: number) => s === 0 ? 'now' : s < 60 ? `-${s}s` : `-${Math.floor(s / 60)}m`
     ctx.fillStyle = 'rgba(255,255,255,0.35)'
     ctx.font = '10px monospace'
@@ -127,7 +129,7 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
       const frac = i / 5
       const x = PAD_L + frac * cW
       ctx.textAlign = i === 0 ? 'left' : i === 5 ? 'right' : 'center'
-      ctx.fillText(fmtAgo(Math.round(N * (1 - frac))), x, H - 4)
+      ctx.fillText(fmtAgo(Math.round(windowSecs * (1 - frac))), x, H - 4)
     }
   }, [trafficPoints, trafficWindow])
 

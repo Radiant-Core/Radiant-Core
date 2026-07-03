@@ -15,6 +15,19 @@ export function getToken() { return _token }
 
 export function setOnUnauthorized(cb: () => void) { _onUnauthorized = cb }
 
+async function requestBlob(method: string, path: string): Promise<Blob> {
+  const headers: Record<string, string> = {}
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}${path}`, { method, headers })
+  if (!res.ok) {
+    const text = await res.text()
+    let msg = res.statusText
+    try { msg = (JSON.parse(text) as { error: string }).error || msg } catch {}
+    throw new Error(msg)
+  }
+  return res.blob()
+}
+
 async function request<T>(method: string, path: string, body?: unknown, isLogin = false): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (_token) headers['Authorization'] = `Bearer ${_token}`
@@ -109,6 +122,8 @@ export const api = {
     request<unknown>('POST', `/wallet/${encodeURIComponent(name)}/psbt/create`, { inputs, outputs, changeAddress }),
   walletPSBTSign: (name: string, psbt: string) =>
     request<unknown>('POST', `/wallet/${encodeURIComponent(name)}/psbt/sign`, { psbt }),
+  walletBackupExport: (name: string) =>
+    requestBlob('POST', `/wallet/${encodeURIComponent(name)}/backup-export`),
 
   // SSE
   sseTicket: () => request<{ ticket: string }>('POST', '/events/ticket', {}),

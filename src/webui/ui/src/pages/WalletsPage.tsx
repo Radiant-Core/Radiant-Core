@@ -377,7 +377,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [unlockPw, setUnlockPw]     = useState('')
   const [encryptPw, setEncryptPw]   = useState('')
   const [encryptPw2, setEncryptPw2] = useState('')
-  const [backupPath, setBackupPath] = useState('')
+  const [backupBusy, setBackupBusy] = useState(false)
   const [oldPw, setOldPw]           = useState('')
   const [newPw, setNewPw]           = useState('')
   const [newPw2, setNewPw2]         = useState('')
@@ -905,14 +905,47 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   }
 
   const handleBackup = async () => {
-    if (walletName === null || !backupPath.trim()) return
-    clearMsg()
+    if (walletName === null || backupBusy) return
+    setBackupBusy(true)
     try {
-      const res = await api.rpc('backupwallet', [backupPath.trim()], walletName)
-      if (res.error) throw new Error(String((res.error as Record<string,unknown>).message ?? res.error))
-      toast(`Wallet backed up to ${backupPath.trim()}`, 'success')
-      setBackupPath('')
-    } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Backup failed', 'error') }
+      const blob = await api.walletBackupExport(walletName)
+      const date = new Date().toISOString().slice(0, 10)
+      const safeName = (walletName || 'wallet').replace(/[^a-zA-Z0-9_-]/g, '_')
+      const filename = `${safeName}-backup-${date}.dat`
+
+      if ('showSaveFilePicker' in window) {
+        try {
+          const handle = await (window as unknown as {
+            showSaveFilePicker(opts: unknown): Promise<{ createWritable(): Promise<{ write(b: Blob): Promise<void>; close(): Promise<void> }> }>
+          }).showSaveFilePicker({
+            suggestedName: filename,
+            types: [{ description: 'Wallet backup', accept: { 'application/octet-stream': ['.dat'] } }],
+          })
+          const writable = await handle.createWritable()
+          await writable.write(blob)
+          await writable.close()
+          toast('Wallet backup saved', 'success')
+          return
+        } catch (e) {
+          // User cancelled the picker — don't treat as error
+          if (e instanceof Error && e.name === 'AbortError') return
+          // Fall through to anchor fallback
+        }
+      }
+
+      // Fallback: anchor download (no Save-As picker)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      document.body.appendChild(a); a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 10000)
+      toast('Wallet backup downloaded', 'success')
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Backup failed', 'error')
+    } finally {
+      setBackupBusy(false)
+    }
   }
 
   const handleChangePassphrase = async () => {
@@ -3370,23 +3403,12 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
           <div className="card">
             <h2>Backup Wallet</h2>
             <p style={{ color: 'var(--text2)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Saves a copy of the wallet file to a path on the node's filesystem.
-              Use an absolute path (e.g. <code style={{ fontFamily: 'monospace' }}>/home/user/wallet-backup.dat</code> or <code style={{ fontFamily: 'monospace' }}>C:\Backups\wallet.dat</code>).
+              Downloads a copy of the wallet file to your device. The node creates
+              a safe backup first — no private keys are ever sent in plaintext.
             </p>
-            <div className="form-row">
-              <div className="form-group" style={{ flex: 1 }}>
-                <label>Destination path</label>
-                <input
-                  value={backupPath}
-                  onChange={e => setBackupPath(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleBackup()}
-                  placeholder="/path/to/wallet-backup.dat"
-                />
-              </div>
-              <button className="primary" onClick={handleBackup} disabled={!backupPath.trim()} style={{ alignSelf: 'flex-end' }}>
-                Backup
-              </button>
-            </div>
+            <button className="primary" onClick={handleBackup} disabled={backupBusy}>
+              {backupBusy ? 'Preparing backup…' : 'Download backup'}
+            </button>
           </div>
         </>
       )}
