@@ -373,6 +373,23 @@
   50%       { opacity: 0.9; }
 }
 
+/* Network indicator — stripe + badge */
+.topbar[data-net="test"]    { border-top: 3px solid #f59e0b; }
+.topbar[data-net="regtest"] { border-top: 3px solid #a855f7; }
+
+.net-badge {
+  display: inline-block;
+  padding: 0.05rem 0.38rem;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+  margin-right: 0.3rem;
+}
+.net-test    { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.net-regtest { background: rgba(168,85,247,0.15); color: #a855f7; }
+
 .lock-banner-select {
   flex-shrink: 0;
   padding: 0.28rem 0.5rem;

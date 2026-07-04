@@ -231,7 +231,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="topbar" data-net={nodeInfo?.network ?? 'main'}>
         <div className="topbar-inner">
           <div className="brand">
             <img src={radiantLogo} alt="Radiant" className="brand-logo" />
@@ -239,7 +239,12 @@ export default function App() {
               <span className="brand-name">Radiant Core</span>
               {nodeInfo && (
                 <span className="brand-sub">
-                  {nodeInfo.network} · block {nodeInfo.blocks.toLocaleString()}
+                  {nodeInfo.network !== 'main' && (
+                    <span className={`net-badge net-${nodeInfo.network}`}>
+                      {nodeInfo.network.toUpperCase()}
+                    </span>
+                  )}
+                  {nodeInfo.network === 'main' ? 'mainnet' : ''} · block {nodeInfo.blocks.toLocaleString()}
                 </span>
               )}
             </div>
