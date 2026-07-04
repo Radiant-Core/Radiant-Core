@@ -34,8 +34,35 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
   const [error, setError]       = useState('')
   const [msg, setMsg]           = useState('')
 
-  const [trafficWindow, setTrafficWindow] = useState<WindowKey>('5m')
+  const [trafficWindow, setTrafficWindow] = useState<WindowKey>('30m')
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  type SortCol = 'addr' | 'subver' | 'inbound' | 'ping' | 'synced_blocks' | 'conntime'
+  const [sortCol, setSortCol] = useState<SortCol>('synced_blocks')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('desc') }
+  }
+
+  const sortArrow = (col: SortCol) =>
+    sortCol === col ? <span style={{ marginLeft: '0.25rem', opacity: 0.55 }}>{sortDir === 'asc' ? '▲' : '▼'}</span> : null
+
+  const sortedPeers = [...peers].sort((a, b) => {
+    let av: number | string, bv: number | string
+    switch (sortCol) {
+      case 'addr':         av = a.addr;               bv = b.addr;               break
+      case 'subver':       av = a.subver ?? '';        bv = b.subver ?? '';       break
+      case 'inbound':      av = a.inbound ? 1 : 0;    bv = b.inbound ? 1 : 0;   break
+      case 'ping':         av = a.ping ?? Infinity;    bv = b.ping ?? Infinity;   break
+      case 'synced_blocks':av = a.synced_blocks ?? -1; bv = b.synced_blocks ?? -1; break
+      case 'conntime':     av = a.conntime;            bv = b.conntime;           break
+    }
+    if (av < bv) return sortDir === 'asc' ? -1 : 1
+    if (av > bv) return sortDir === 'asc' ? 1 : -1
+    return 0
+  })
 
   const load = useCallback(async () => {
     try {
@@ -138,6 +165,12 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
     if (ms >= 1000) return `${(ms / 1000).toFixed(1)} s`
     return `${Math.round(ms)} ms`
   }
+  const pingClass = (ms: number) => {
+    if (ms < 0)   return 'amber'   // N/A
+    if (ms < 100) return 'green'
+    if (ms < 300) return 'amber'
+    return 'red'
+  }
 
   const fmtDuration = (since: number) => {
     const sec = Math.floor(Date.now() / 1000) - since
@@ -205,17 +238,17 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
               <thead>
                 <tr className="peers-head">
                   <th style={{ width: '1.5rem' }}></th>
-                  <th>Address</th>
-                  <th>Version</th>
-                  <th>Direction</th>
-                  <th>Ping</th>
-                  <th>Height</th>
-                  <th>Connected</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('addr')}>Address{sortArrow('addr')}</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('subver')}>Version{sortArrow('subver')}</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('inbound')}>Direction{sortArrow('inbound')}</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('ping')}>Ping{sortArrow('ping')}</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('synced_blocks')}>Synced{sortArrow('synced_blocks')}</th>
+                  <th style={{ cursor: 'pointer', userSelect: 'none' }} onClick={() => handleSort('conntime')}>Connected{sortArrow('conntime')}</th>
                   <th style={{ width: '120px' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {peers.map(p => {
+                {sortedPeers.map(p => {
                   const expanded = expandedId === p.id
                   return (
                     <>
@@ -226,8 +259,17 @@ export default function PeersPage({ refreshKey = 0, trafficPoints, trafficTotals
                         <td style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{p.addr}</td>
                         <td className="peers-version">{p.subver || '—'}</td>
                         <td><span className={`badge ${p.inbound ? 'amber' : 'blue'}`}>{p.inbound ? 'Inbound' : 'Outbound'}</span></td>
-                        <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>{fmtPing(p.ping ?? -1)}</td>
-                        <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>{p.startingheight != null ? p.startingheight.toLocaleString() : '—'}</td>
+                        <td><span className={`badge ${pingClass(p.ping ?? -1)}`}>{fmtPing(p.ping ?? -1)}</span></td>
+                        <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>
+                          {p.synced_blocks != null ? (
+                            <>
+                              <div>{p.synced_blocks.toLocaleString()}</div>
+                              {p.synced_headers != null && p.synced_headers !== p.synced_blocks && (
+                                <div style={{ fontSize: '0.7rem', opacity: 0.55 }}>hdrs: {p.synced_headers.toLocaleString()}</div>
+                              )}
+                            </>
+                          ) : p.startingheight != null ? p.startingheight.toLocaleString() : '—'}
+                        </td>
                         <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>{fmtDuration(p.conntime)}</td>
                         <td onClick={e => e.stopPropagation()}>
                           <div style={{ display: 'flex', gap: '0.3rem' }}>

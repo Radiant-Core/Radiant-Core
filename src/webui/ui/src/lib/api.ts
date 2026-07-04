@@ -170,6 +170,8 @@ export interface Peer {
   lastrecv: number
   ping: number
   startingheight: number
+  synced_headers?: number
+  synced_blocks?: number
   version: number
   addrlocal: string
 }
