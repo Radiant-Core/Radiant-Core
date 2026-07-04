@@ -13,26 +13,15 @@ export default defineConfig({
         // the node is offline. The React app handles the "connecting" splash
         // via the serverReady state — no navigation fallback needed.
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,ttf}'],
-        // Exclude API paths from navigation fallback so the SW never serves
-        // index.html in place of a real API response (e.g. /webui/api with no
-        // trailing slash, or any future path variant).
-        navigateFallbackDenylist: [/^\/webui\/api/],
-        runtimeCaching: [
-          {
-            // API calls must always hit the actual network.  fetchOptions with
-            // cache:'no-store' forces the SW's internal fetch() to bypass the
-            // browser HTTP cache — otherwise a stale cached 404 (e.g. from an
-            // earlier run where the handler wasn't registered) keeps being
-            // returned even after the node restarts successfully.
-            urlPattern: ({ url }: { url: URL }) => url.pathname.startsWith('/webui/api'),
-            handler: 'NetworkOnly',
-            options: {
-              fetchOptions: {
-                cache: 'no-store',
-              },
-            },
-          },
-        ],
+        // No runtimeCaching rule for /webui/api — Workbox must NOT intercept
+        // API fetch calls at all.  Without a matching route the SW won't call
+        // event.respondWith() for them and the browser fetches directly from
+        // the network with no caching layer in the way.
+        //
+        // navigateFallbackDenylist guards the one remaining edge case: a
+        // navigation request (URL typed directly in the address bar) to an API
+        // path, which would otherwise be caught by the SPA app-shell fallback.
+        navigateFallbackDenylist: [/^\/webui\/api(?:\/|$)/],
       },
       manifest: {
         name: 'Radiant Core',
