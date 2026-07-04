@@ -28,13 +28,14 @@ async function requestBlob(method: string, path: string): Promise<Blob> {
   return res.blob()
 }
 
-async function request<T>(method: string, path: string, body?: unknown, isLogin = false): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, isLogin = false, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (_token) headers['Authorization'] = `Bearer ${_token}`
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal,
   })
   if (res.status === 401) {
     if (isLogin) throw new Error('Invalid password')
@@ -60,7 +61,7 @@ async function request<T>(method: string, path: string, body?: unknown, isLogin 
 
 export const api = {
   // Auth
-  authInfo: ()                        => request<{ mode: string }>('GET', '/auth/info'),
+  authInfo: (signal?: AbortSignal)    => request<{ mode: string }>('GET', '/auth/info', undefined, false, signal),
   login:    (password: string)        => request<{ token: string }>('POST', '/auth/login', { password }, true),
   logout:   ()                        => request<void>('POST', '/auth/logout'),
 

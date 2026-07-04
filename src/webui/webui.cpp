@@ -233,8 +233,12 @@ void StartWebUI()
 
     RegisterHTTPHandler("/webui/", false, WebUIDispatch);
 
-    LogPrintf("WebUI endpoint started at /webui/ (token in %s)\n",
-              (GetDataDir(true) / fs::path(WEBUI_COOKIE_FILE)).string());
+    if (g_webui_use_password) {
+        LogPrintf("WebUI endpoint started at /webui/ (password authentication)\n");
+    } else {
+        LogPrintf("WebUI endpoint started at /webui/ (cookie: %s)\n",
+                  (GetDataDir(true) / fs::path(WEBUI_COOKIE_FILE)).string());
+    }
 }
 
 void InterruptWebUI()

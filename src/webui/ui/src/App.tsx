@@ -77,21 +77,37 @@ export default function App() {
   // A stale token in localStorage won't cause an infinite 401 loop because
   // api.ts only fires _onUnauthorized when there was a token to expire;
   // after setToken(null) clears it the next probe sends no header and gets 200.
+  //
+  // The node's HTTP socket is bound early in startup but the libevent event
+  // loop only starts after chain loading — potentially 30-60 s later.  Without
+  // a timeout, fetch() connects to the socket and hangs silently until the
+  // event loop wakes it.  AbortController gives each attempt 5 s to respond;
+  // if it times out the probe retries in 3 s, producing visible DevTools
+  // entries and predictable 8-second retry rhythm instead of a mystery hang.
   useEffect(() => {
     let cancelled = false
-    let retryId: ReturnType<typeof setTimeout> | null = null
+    let retryId:   ReturnType<typeof setTimeout> | null = null
+    let abortCtrl: AbortController | null = null
 
     const probe = async () => {
+      abortCtrl = new AbortController()
+      const timeoutId = setTimeout(() => abortCtrl!.abort(), 5000)
       try {
-        const info = await api.authInfo()
+        const info = await api.authInfo(abortCtrl.signal)
+        clearTimeout(timeoutId)
         if (!cancelled) { setAuthMode(info.mode); setServerReady(true) }
       } catch {
+        clearTimeout(timeoutId)
         if (!cancelled) retryId = setTimeout(probe, 3000)
       }
     }
 
     probe()
-    return () => { cancelled = true; if (retryId) clearTimeout(retryId) }
+    return () => {
+      cancelled = true
+      abortCtrl?.abort()
+      if (retryId) clearTimeout(retryId)
+    }
   }, [probeKey])
 
   const fetchNodeInfo = useCallback(() => {
