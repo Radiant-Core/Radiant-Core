@@ -72,7 +72,7 @@ export default function SeedImport({ walletName, onImported }: Props) {
   const [importedCount, setImportedCount] = useState(0)
   const [rescanning, setRescanning]    = useState(false)
   const [rescanMsg, setRescanMsg]      = useState('')
-  const [scanProgress, setScanProgress] = useState<number | null>(null)
+  const [elapsed, setElapsed]          = useState(0)
 
   const reset = () => {
     setOpen(false); setMnemonic(''); setPassphrase('')
@@ -138,19 +138,11 @@ export default function SeedImport({ walletName, onImported }: Props) {
   const handleRescan = async () => {
     setRescanning(true)
     setRescanMsg('')
-    setScanProgress(null)
+    setElapsed(0)
 
-    // Poll getwalletinfo every second for scanning progress while rescanblockchain blocks.
-    const pollId = setInterval(async () => {
-      try {
-        const info = await api.rpc('getwalletinfo', [], walletName ?? undefined)
-        const scanning = (info.result as Record<string, unknown> | null)?.scanning
-        if (scanning && typeof scanning === 'object') {
-          const p = (scanning as Record<string, unknown>).progress
-          if (typeof p === 'number') setScanProgress(p)
-        }
-      } catch { /* ignore poll errors */ }
-    }, 1000)
+    // RPC calls block on the wallet CS during rescanblockchain, so we can't
+    // poll getwalletinfo for progress. Count elapsed seconds instead.
+    const timerId = setInterval(() => setElapsed(e => e + 1), 1000)
 
     try {
       const res = await api.rpc('rescanblockchain', [], walletName ?? undefined)
@@ -164,8 +156,7 @@ export default function SeedImport({ walletName, onImported }: Props) {
     } catch (e: unknown) {
       setRescanMsg(`Rescan error: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
-      clearInterval(pollId)
-      setScanProgress(null)
+      clearInterval(timerId)
       setRescanning(false)
     }
   }
@@ -195,16 +186,13 @@ export default function SeedImport({ walletName, onImported }: Props) {
                 height: '100%',
                 background: 'var(--accent)',
                 borderRadius: '3px',
-                transition: 'width 0.6s ease',
-                width: scanProgress !== null ? `${(scanProgress * 100).toFixed(1)}%` : '100%',
-                opacity: scanProgress !== null ? 1 : 0.4,
-                animation: scanProgress === null ? 'rescan-pulse 1.4s ease-in-out infinite' : 'none',
+                width: '100%',
+                opacity: 0.4,
+                animation: 'rescan-pulse 1.4s ease-in-out infinite',
               }} />
             </div>
             <span style={{ fontSize: '0.78rem', color: 'var(--text2)' }}>
-              {scanProgress !== null
-                ? `Scanning… ${(scanProgress * 100).toFixed(1)}%`
-                : 'Starting scan…'}
+              Scanning… {elapsed}s elapsed
             </span>
           </div>
         )}
