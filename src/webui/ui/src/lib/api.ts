@@ -18,7 +18,7 @@ export function setOnUnauthorized(cb: () => void) { _onUnauthorized = cb }
 async function requestBlob(method: string, path: string): Promise<Blob> {
   const headers: Record<string, string> = {}
   if (_token) headers['Authorization'] = `Bearer ${_token}`
-  const res = await fetch(`${BASE}${path}`, { method, headers })
+  const res = await fetch(`${BASE}${path}`, { method, headers, cache: 'no-store' })
   if (!res.ok) {
     const text = await res.text()
     let msg = res.statusText
@@ -36,6 +36,7 @@ async function request<T>(method: string, path: string, body?: unknown, isLogin 
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
+    cache: 'no-store',
   })
   if (res.status === 401) {
     if (isLogin) throw new Error('Invalid password')
