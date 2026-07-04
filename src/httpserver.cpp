@@ -513,6 +513,10 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
             item->req->WriteReply(HTTP_INTERNAL, "Work queue depth exceeded");
         }
     } else {
+        // Prevent browsers and intermediate caches from storing this 404.
+        // Without this header a heuristic-cached 404 can be replayed by a
+        // stale service worker even after the matching handler is registered.
+        hreq->WriteHeader("Cache-Control", "no-store, no-cache, must-revalidate");
         hreq->WriteReply(HTTP_NOTFOUND);
     }
 }

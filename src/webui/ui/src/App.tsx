@@ -231,6 +231,24 @@ export default function App() {
             with <code>webui=1</code> (or <code>webuipassword=…</code>) in <code>radiant.conf</code>.
           </span>
         )}
+        {probeAttempts >= 3 && (
+          <button
+            className="connect-refresh-btn"
+            style={{ marginTop: '0.5rem' }}
+            onClick={async () => {
+              // Unregister all service workers so a stale SW cannot replay a
+              // cached 404 from an earlier run. The page reload installs a
+              // fresh SW (with no cached responses) and re-runs the probe.
+              if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations()
+                await Promise.all(regs.map(r => r.unregister()))
+              }
+              window.location.reload()
+            }}
+          >
+            Clear cache &amp; retry
+          </button>
+        )}
       </div>
     )
   }
