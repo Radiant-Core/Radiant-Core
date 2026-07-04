@@ -152,14 +152,24 @@ static bool HandleSSEEvents(Config &, HTTPRequest *req, const std::string &)
 
 // ---- Main dispatcher ----------------------------------------------------
 
+static void WriteNoStoreHeaders(HTTPRequest *req)
+{
+    req->WriteHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    req->WriteHeader("Pragma",        "no-cache");
+    req->WriteHeader("Expires",       "0");
+}
+
 static bool WebUIDispatch(Config &config, HTTPRequest *req, const std::string &)
 {
     std::string uri = req->GetURI();
     const size_t qmark = uri.find('?');
     const std::string path = (qmark != std::string::npos) ? uri.substr(0, qmark) : uri;
 
-    // CORS preflight — OPTIONS to any /webui/api/ path.
-    if (req->GetRequestMethod() == HTTPRequest::OPTIONS && path.substr(0, 11) == "/webui/api/") {
+    // True for /webui/api and every path beginning with /webui/api/
+    const bool is_api = (path.rfind("/webui/api", 0) == 0);
+
+    // CORS preflight — OPTIONS to any /webui/api path.
+    if (req->GetRequestMethod() == HTTPRequest::OPTIONS && is_api) {
         if (!CheckWebUIHost(req)) return false;
         auto cors = CheckWebUICORS(req);
         if (!cors) return false;
@@ -173,20 +183,22 @@ static bool WebUIDispatch(Config &config, HTTPRequest *req, const std::string &)
         return true;
     }
 
-    // API routes.
-    if (path.substr(0, 11) == "/webui/api/") {
-        if (path == "/webui/api/auth/info")       return HandleAuthInfo(req);
-        if (path == "/webui/api/auth/login")      return HandleAuthLogin(req);
-        if (path == "/webui/api/auth/logout")     return HandleAuthLogout(req);
-        if (path == "/webui/api/events/ticket")   return HandleSSETicket(req);
-        if (path == "/webui/api/events")          return HandleSSEEvents(config, req, path);
-        if (path == "/webui/api/rpc")             return WebUINodeAPIRoute(config, req, path);
-        if (path.substr(0, 16) == "/webui/api/node/") return WebUINodeAPIRoute(config, req, path);
-        if (path == "/webui/api/verifymessage")   return WebUINodeAPIRoute(config, req, path);
-        if (path.substr(0, 16) == "/webui/api/psbt/") return WebUINodeAPIRoute(config, req, path);
-        if (path.substr(0, 19) == "/webui/api/wallets/") return WebUIWalletsRoute(config, req, path);
-        if (path.substr(0, 18) == "/webui/api/wallet/") return WebUIWalletRoute(config, req, path);
-        if (path == "/webui/api/settings")              return HandleWebUISettings(req);
+    // API routes — set no-store on every response so neither the browser cache
+    // nor any intermediate layer retains API data across node restarts.
+    if (is_api) {
+        WriteNoStoreHeaders(req);
+        if (path == "/webui/api/auth/info")              return HandleAuthInfo(req);
+        if (path == "/webui/api/auth/login")             return HandleAuthLogin(req);
+        if (path == "/webui/api/auth/logout")            return HandleAuthLogout(req);
+        if (path == "/webui/api/events/ticket")          return HandleSSETicket(req);
+        if (path == "/webui/api/events")                 return HandleSSEEvents(config, req, path);
+        if (path == "/webui/api/rpc")                    return WebUINodeAPIRoute(config, req, path);
+        if (path.rfind("/webui/api/node/",    0) == 0)  return WebUINodeAPIRoute(config, req, path);
+        if (path == "/webui/api/verifymessage")          return WebUINodeAPIRoute(config, req, path);
+        if (path.rfind("/webui/api/psbt/",    0) == 0)  return WebUINodeAPIRoute(config, req, path);
+        if (path.rfind("/webui/api/wallets/", 0) == 0)  return WebUIWalletsRoute(config, req, path);
+        if (path.rfind("/webui/api/wallet/",  0) == 0)  return WebUIWalletRoute(config, req, path);
+        if (path == "/webui/api/settings")               return HandleWebUISettings(req);
         req->WriteReply(HTTP_NOT_FOUND, R"({"error":"not found"})");
         return false;
     }

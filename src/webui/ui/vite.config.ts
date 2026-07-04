@@ -13,10 +13,16 @@ export default defineConfig({
         // the node is offline. The React app handles the "connecting" splash
         // via the serverReady state — no navigation fallback needed.
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2,ttf}'],
+        // Exclude API paths from navigation fallback so the SW never serves
+        // index.html in place of a real API response (e.g. /webui/api with no
+        // trailing slash, or any future path variant).
+        navigateFallbackDenylist: [/^\/webui\/api/],
         runtimeCaching: [
           {
             // API calls must always hit the network — never serve from cache.
-            urlPattern: /\/webui\/api\//,
+            // Function form catches /webui/api and /webui/api/* (no trailing-
+            // slash edge case with a bare regex).
+            urlPattern: ({ url }: { url: URL }) => url.pathname.startsWith('/webui/api'),
             handler: 'NetworkOnly',
           },
         ],
