@@ -1477,7 +1477,9 @@ static bool AppInitServers(Config &config,
 
     StartPrometheusMetrics(config);
 #ifdef ENABLE_WEBUI
-    if (gArgs.GetBoolArg("-webui", DEFAULT_WEBUI_ENABLE)) {
+    // -webuipassword implies -webui=1: no reason to configure auth without enabling the UI.
+    if (gArgs.GetBoolArg("-webui", DEFAULT_WEBUI_ENABLE) ||
+        !gArgs.GetArg("-webuipassword", "").empty()) {
         StartWebUI();
     }
 #endif

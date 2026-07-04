@@ -48,6 +48,7 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false)
   const [serverReady, setServerReady] = useState(false)
   const [probeKey, setProbeKey] = useState(0)
+  const [probeAttempts, setProbeAttempts] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -88,6 +89,7 @@ export default function App() {
     let cancelled = false
     let retryId:   ReturnType<typeof setTimeout> | null = null
     let abortCtrl: AbortController | null = null
+    let attempts  = 0
 
     const probe = async () => {
       abortCtrl = new AbortController()
@@ -98,10 +100,15 @@ export default function App() {
         if (!cancelled) { setAuthMode(info.mode); setServerReady(true) }
       } catch {
         clearTimeout(timeoutId)
-        if (!cancelled) retryId = setTimeout(probe, 3000)
+        if (!cancelled) {
+          attempts += 1
+          setProbeAttempts(attempts)
+          retryId = setTimeout(probe, 3000)
+        }
       }
     }
 
+    setProbeAttempts(0)
     probe()
     return () => {
       cancelled = true
@@ -218,6 +225,12 @@ export default function App() {
           If the node is not running, start <code>radiant-qt</code> or <code>radiantd</code> with{' '}
           <code>-webui=1</code>, or add <code>webui=1</code> to <code>radiant.conf</code>.
         </span>
+        {probeAttempts >= 10 && (
+          <span className="connect-hint" style={{ marginTop: '0.5rem', color: 'var(--warn, #f59e0b)' }}>
+            Still connecting after {Math.round(probeAttempts * 8 / 60)} min — verify the node is running
+            with <code>webui=1</code> (or <code>webuipassword=…</code>) in <code>radiant.conf</code>.
+          </span>
+        )}
       </div>
     )
   }

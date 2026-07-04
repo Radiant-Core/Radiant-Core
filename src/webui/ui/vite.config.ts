@@ -22,6 +22,12 @@ export default defineConfig({
         // navigation request (URL typed directly in the address bar) to an API
         // path, which would otherwise be caught by the SPA app-shell fallback.
         navigateFallbackDenylist: [/^\/webui\/api(?:\/|$)/],
+        // Take over immediately when a new SW installs so the old SW (which
+        // had a NetworkOnly route that intercepted API calls) stops handling
+        // fetches as fast as possible.  clientsClaim ensures the new SW
+        // controls the current page without waiting for a navigation.
+        skipWaiting: true,
+        clientsClaim: true,
       },
       manifest: {
         name: 'Radiant Core',

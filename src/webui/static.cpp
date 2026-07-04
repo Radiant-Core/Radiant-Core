@@ -77,6 +77,13 @@ bool HandleStaticFile(HTTPRequest *req, const std::string &path)
 
     const std::string mime{GetMimeType(file_path)};
 
+    // The SW spec requires sw.js to never be stale-cached; the browser must
+    // always re-validate it to detect updates.  A cached 404 for sw.js blocks
+    // all subsequent update checks and keeps the old SW alive indefinitely.
+    if (file_path == "sw.js" || file_path == "manifest.webmanifest") {
+        req->WriteHeader("Cache-Control", "no-cache");
+    }
+
     // 1. Disk override — serve live files for development.
     const std::string assets_dir = gArgs.GetArg("-webuiassets", "");
     if (!assets_dir.empty()) {
