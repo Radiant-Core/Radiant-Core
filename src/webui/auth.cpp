@@ -103,7 +103,8 @@ bool InitWebUIAuth()
         }
         if (!renamed) {
             LogPrintf("WebUI: Unable to rename cookie file to %s\n", filepath.string());
-            fs::remove(filepath_tmp, std::error_code{});
+            std::error_code cleanup_ec;
+            fs::remove(filepath_tmp, cleanup_ec);
             return false;
         }
     }
