@@ -207,6 +207,16 @@ static bool WebUIDispatch(Config &config, HTTPRequest *req, const std::string &)
     return HandleStaticFile(req, path);
 }
 
+// ---- /webui → /webui/ redirect -----------------------------------------
+
+static bool WebUIRedirect(Config &, HTTPRequest *req, const std::string &)
+{
+    req->WriteHeader("Location", "/webui/");
+    req->WriteHeader("Cache-Control", "no-store");
+    req->WriteReply(HTTP_MOVEPERM, "");
+    return true;
+}
+
 // ---- Lifecycle ----------------------------------------------------------
 
 void StartWebUI()
@@ -232,12 +242,14 @@ void StartWebUI()
     RegisterValidationInterface(g_webui_notifier.get());
 
     RegisterHTTPHandler("/webui/", false, WebUIDispatch);
+    RegisterHTTPHandler("/webui",  true,  WebUIRedirect);
 
+    const int rpc_port = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
     if (g_webui_use_password) {
-        LogPrintf("WebUI endpoint started at /webui/ (password authentication)\n");
+        LogPrintf("WebUI endpoint started — open http://127.0.0.1:%d/webui/ (password authentication)\n", rpc_port);
     } else {
-        LogPrintf("WebUI endpoint started at /webui/ (cookie: %s)\n",
-                  (GetDataDir(true) / fs::path(WEBUI_COOKIE_FILE)).string());
+        LogPrintf("WebUI endpoint started — open http://127.0.0.1:%d/webui/ (cookie: %s)\n",
+                  rpc_port, (GetDataDir(true) / fs::path(WEBUI_COOKIE_FILE)).string());
     }
 }
 
@@ -277,6 +289,7 @@ void StopWebUI()
     }
     g_webui_notifier.reset();
     UnregisterHTTPHandler("/webui/", false);
+    UnregisterHTTPHandler("/webui",  true);
     if (g_webui_cookie_generated) {
         try {
             fs::remove(GetDataDir(true) / fs::path(WEBUI_COOKIE_FILE));
