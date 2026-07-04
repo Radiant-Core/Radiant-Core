@@ -88,15 +88,22 @@ bool InitWebUIAuth()
     file << g_webui_token;
     file.close();
 
-    if (!RenameOver(filepath_tmp, filepath)) {
-        // On Windows, MoveFileExA(MOVEFILE_REPLACE_EXISTING) can fail when the
-        // destination is briefly locked by security software after an unclean
-        // shutdown.  Remove the stale file and retry once — the cookie is
-        // regenerated on every startup anyway.
-        std::error_code remove_ec;
-        fs::remove(filepath, remove_ec);
-        if (!RenameOver(filepath_tmp, filepath)) {
+    // On Windows, MoveFileExA(MOVEFILE_REPLACE_EXISTING) can fail when the
+    // destination is briefly locked by AV/security software immediately after
+    // a previous run wrote it.  Retry up to 5 times with a short sleep so the
+    // scanner has time to release the handle; the cookie is regenerated on every
+    // startup so the content of any stale file does not matter.
+    {
+        bool renamed = RenameOver(filepath_tmp, filepath);
+        for (int attempt = 1; !renamed && attempt <= 5; ++attempt) {
+            std::error_code remove_ec;
+            fs::remove(filepath, remove_ec);
+            MilliSleep(100 * attempt);   // 100 ms, 200 ms, 300 ms …
+            renamed = RenameOver(filepath_tmp, filepath);
+        }
+        if (!renamed) {
             LogPrintf("WebUI: Unable to rename cookie file to %s\n", filepath.string());
+            fs::remove(filepath_tmp, std::error_code{});
             return false;
         }
     }

@@ -77,10 +77,18 @@ bool HandleStaticFile(HTTPRequest *req, const std::string &path)
 
     const std::string mime{GetMimeType(file_path)};
 
-    // The SW spec requires sw.js to never be stale-cached; the browser must
-    // always re-validate it to detect updates.  A cached 404 for sw.js blocks
-    // all subsequent update checks and keeps the old SW alive indefinitely.
-    if (file_path == "sw.js" || file_path == "manifest.webmanifest") {
+    // Prevent disk-caching of the app shell and SW-related files.
+    //
+    // index.html: the SPA entry point must never be heuristically cached as a
+    // 404.  A stale-cached navigation 404 breaks the PWA completely — the app
+    // shell never loads, so there is no React code to recover from it.
+    //
+    // sw.js / manifest.webmanifest: the SW spec requires sw.js to be
+    // revalidated on every update check so new service workers are detected
+    // quickly.  A cached 404 for sw.js keeps the old SW alive indefinitely.
+    if (file_path == "index.html") {
+        req->WriteHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+    } else if (file_path == "sw.js" || file_path == "manifest.webmanifest") {
         req->WriteHeader("Cache-Control", "no-cache");
     }
 

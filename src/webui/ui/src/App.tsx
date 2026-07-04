@@ -236,14 +236,18 @@ export default function App() {
             className="connect-refresh-btn"
             style={{ marginTop: '0.5rem' }}
             onClick={async () => {
-              // Unregister all service workers so a stale SW cannot replay a
-              // cached 404 from an earlier run. The page reload installs a
-              // fresh SW (with no cached responses) and re-runs the probe.
+              // Unregister all service workers so a stale SW can no longer
+              // intercept API fetches and replay a cached 404.
               if ('serviceWorker' in navigator) {
                 const regs = await navigator.serviceWorker.getRegistrations()
                 await Promise.all(regs.map(r => r.unregister()))
               }
-              window.location.reload()
+              // Navigate to a cache-busting URL rather than reload().
+              // reload() re-uses the browser's HTTP cache entry for /webui/
+              // which may itself be a stale 404.  A unique query-string forces
+              // a new cache entry; the server ignores the param and serves
+              // index.html normally.
+              window.location.replace('/webui/?_sw_cleared=' + Date.now())
             }}
           >
             Clear cache &amp; retry
