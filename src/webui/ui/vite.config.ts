@@ -19,11 +19,18 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/webui\/api/],
         runtimeCaching: [
           {
-            // API calls must always hit the network — never serve from cache.
-            // Function form catches /webui/api and /webui/api/* (no trailing-
-            // slash edge case with a bare regex).
+            // API calls must always hit the actual network.  fetchOptions with
+            // cache:'no-store' forces the SW's internal fetch() to bypass the
+            // browser HTTP cache — otherwise a stale cached 404 (e.g. from an
+            // earlier run where the handler wasn't registered) keeps being
+            // returned even after the node restarts successfully.
             urlPattern: ({ url }: { url: URL }) => url.pathname.startsWith('/webui/api'),
             handler: 'NetworkOnly',
+            options: {
+              fetchOptions: {
+                cache: 'no-store',
+              },
+            },
           },
         ],
       },
