@@ -48,6 +48,16 @@ async function request<T>(method: string, path: string, body?: unknown, isLogin 
     if (hadToken) _onUnauthorized?.()
     throw new Error('Session expired')
   }
+  // An HTML content-type from a /webui/api endpoint means the request was not
+  // handled by our WebUI handler — most likely a stale SW serving a cached
+  // native 404. If there was a valid session, clear it and return to login so
+  // the user can reconnect cleanly rather than staying in a broken dashboard.
+  const ct = res.headers.get('content-type') ?? ''
+  if (ct.includes('text/html')) {
+    if (_token) { setToken(null); _onUnauthorized?.() }
+    throw new Error('Unexpected response from node — please sign in again')
+  }
+
   const text = await res.text()
   if (!text.trim()) throw new Error('No response from node — it may still be initializing, please try again')
   let json: unknown

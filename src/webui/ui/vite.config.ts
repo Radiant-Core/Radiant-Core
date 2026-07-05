@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
       workbox: {
         // Precache all static assets so the app shell loads from cache when
         // the node is offline. The React app handles the "connecting" splash
