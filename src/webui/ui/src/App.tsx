@@ -23,8 +23,9 @@ function parseLaunchIntent(): LaunchIntent | null {
   const params = new URLSearchParams(window.location.search)
   const uri = params.get('uri')
   if (uri) {
-    // BIP-21 style: radiant:ADDRESS?amount=X&label=Y
-    const m = uri.match(/^radiant:(?:\/\/)?([^?#\s]+)(?:\?(.*))?$/i)
+    // BIP-21 style: web+radiant:ADDRESS?amount=X&label=Y
+    // Also accept bare radiant: for direct-URL testing convenience.
+    const m = uri.match(/^(?:web\+)?radiant:(?:\/\/)?([^?#\s]+)(?:\?(.*))?$/i)
     if (m) {
       const uriParams = new URLSearchParams(m[2] ?? '')
       return {

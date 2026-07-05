@@ -76,8 +76,10 @@ export default defineConfig({
             icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }],
           },
         ],
+        // 'radiant' is not a safelisted scheme; the spec requires the 'web+' prefix
+        // for custom protocols. Links must use web+radiant:ADDRESS?amount=X.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        protocol_handlers: [{ protocol: 'radiant', url: '/webui/?uri=%s' }] as any,
+        protocol_handlers: [{ protocol: 'web+radiant', url: '/webui/?uri=%s' }] as any,
       },
     }),
   ],
