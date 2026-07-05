@@ -2812,6 +2812,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                 const imgUrl = meta ? metaToDataUrl(meta) : null
                 const decimals = meta?.decimals ?? 0
                 const attrs = meta?.attrs as Record<string, unknown> | undefined
+                const u8ToHex = (u8: Uint8Array) => Array.from(u8).map(b => b.toString(16).padStart(2, '0')).join('')
                 return (
                   <div style={{ width: 300, flexShrink: 0, position: 'sticky', top: '1rem', background: 'var(--bg3)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', overflow: 'hidden' }}>
                     {/* Image */}
@@ -2858,6 +2859,31 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                             {copied === `${token.refTxid}:${token.refVout}` ? <CopiedIcon size={13} /> : <CopyIcon size={13} />}
                           </button>
                         </div>
+                        {/* "by" user token link */}
+                        {!!(meta?.by && Array.isArray(meta.by) && (meta.by as Uint8Array[]).length > 0) && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.15rem' }}>
+                            <span>By:</span>
+                            {(meta.by as Uint8Array[]).map((byRef, bi) => {
+                              const byHex = u8ToHex(byRef)
+                              const byToken = glyphTokens.find(t => t.ref === byHex)
+                              const byMeta  = byToken ? glyphMeta.get(byToken.ref) : null
+                              const byImg   = byMeta  ? metaToDataUrl(byMeta) : null
+                              return byToken ? (
+                                <button key={bi}
+                                  onClick={() => setSelectedTokenRef(byToken.ref)}
+                                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 20, padding: '2px 8px 2px 4px', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--accent)' }}>
+                                  {byImg
+                                    ? <img src={byImg} alt="" style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+                                    : <span style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--bg3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.62rem', flexShrink: 0 }}>👤</span>
+                                  }
+                                  {byMeta?.name ?? byHex.slice(0, 8) + '…'}
+                                </button>
+                              ) : (
+                                <code key={bi} style={{ fontSize: '0.72rem', color: 'var(--text2)' }} title={byHex}>{byHex.slice(0, 12)}…</code>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                       <button className="primary" style={{ width: '100%', marginTop: '0.75rem', marginBottom: '0.25rem' }}
                         onClick={() => { setTokenSendRef(token); setTokenSendAmt(''); setTokenSendAddr('') }}>
@@ -3071,6 +3097,45 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                           )
                         })()}
                       </div>
+                      {/* Container contents — tokens whose meta.in points at this container */}
+                      {tokenTypeInfo(token.isSingleton, meta).label === 'Container' && (() => {
+                        const children = glyphTokens.filter(t => {
+                          if (t.ref === token.ref) return false
+                          const cm = glyphMeta.get(t.ref)
+                          if (!cm?.in || !Array.isArray(cm.in)) return false
+                          return (cm.in as Uint8Array[]).some(r => u8ToHex(r) === token.ref)
+                        })
+                        if (children.length === 0) return null
+                        return (
+                          <div style={{ marginTop: '0.75rem' }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text2)', marginBottom: '0.4rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                              Contents ({children.length})
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem' }}>
+                              {children.map(child => {
+                                const cm   = glyphMeta.get(child.ref)
+                                const cImg = cm ? metaToDataUrl(cm) : null
+                                const tt   = tokenTypeInfo(child.isSingleton, cm)
+                                return (
+                                  <button key={child.ref}
+                                    onClick={() => setSelectedTokenRef(child.ref)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, padding: '0.3rem 0.4rem', cursor: 'pointer', textAlign: 'left', minWidth: 0 }}>
+                                    <div style={{ width: 28, height: 28, borderRadius: 4, background: 'var(--bg)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', color: 'var(--text2)' }}>
+                                      {cImg ? <img src={cImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : (tt.icon ?? '?')}
+                                    </div>
+                                    <div style={{ minWidth: 0, flex: 1 }}>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {cm?.name ?? child.ref.slice(0, 8) + '…'}
+                                      </div>
+                                      <span className={`badge ${tt.cls}`} style={{ fontSize: '0.6rem', padding: '0 4px' }}>{tt.label}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })()}
                       {meta && (
                         <details style={{ marginTop: '0.75rem' }}>
                           <summary style={{ fontSize: '0.75rem', color: 'var(--text2)', cursor: 'pointer', userSelect: 'none' }}>Token Data (CBOR)</summary>
