@@ -259,6 +259,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [copied, setCopied]         = useState<string | null>(null)
   const [qrAddr, setQrAddr]         = useState<string | null>(null)
   const [qrDataUrl, setQrDataUrl]   = useState<string | null>(null)
+  const [txModal, setTxModal]       = useState<import('../lib/api').AddressEntry | null>(null)
 
   // Lock / unlock banner
   const [bannerPw, setBannerPw]           = useState('')
@@ -1889,7 +1890,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                   <th>Address</th>
                   <th>Label <span style={{ color: 'var(--text2)', fontWeight: 400, fontSize: '0.72rem' }}>(click to edit)</span></th>
                   <th style={{ textAlign: 'right' }}>Balance</th>
-                  <th style={{ textAlign: 'right' }}>Conf.</th>
+                  <th style={{ textAlign: 'right' }}>Txns</th>
                   <th></th>
                 </tr>
               </thead>
@@ -1923,7 +1924,19 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                     <td style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: '0.82rem' }}>
                       {(() => { const b = addrBalance.get(a.address); return b ? maskAmt(b.toFixed(8)) : '—' })()}
                     </td>
-                    <td style={{ textAlign: 'right', color: 'var(--text2)', fontSize: '0.82rem' }}>{a.confirmations}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {(a.txids?.length ?? 0) > 0 ? (
+                        <button
+                          onClick={() => setTxModal(a)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontFamily: 'monospace', fontSize: '0.82rem', padding: '2px 4px' }}
+                          title="Show transactions"
+                        >
+                          {a.txids!.length}
+                        </button>
+                      ) : (
+                        <span style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>—</span>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button onClick={() => setQrAddr(a.address)} style={{ padding: '2px 6px', marginRight: '0.35rem', lineHeight: 0 }} title="Show QR code">
                         <svg width="14" height="14" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -3435,6 +3448,49 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
             </button>
           </div>
         </>
+      )}
+
+      {txModal && (
+        <div
+          onClick={() => setTxModal(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1.5rem', maxWidth: '560px', width: '92vw', maxHeight: '75vh', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+          >
+            <p style={{ fontSize: '0.75rem', color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
+              Transactions · {txModal.label || <code style={{ textTransform: 'none' }}>{txModal.address.slice(0, 12)}…</code>}
+            </p>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {(txModal.txids ?? []).length === 0 ? (
+                <p style={{ color: 'var(--text2)', fontSize: '0.85rem', textAlign: 'center', padding: '1rem 0' }}>No transactions</p>
+              ) : (txModal.txids ?? []).map(txid => (
+                <div key={txid} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                  <a
+                    href={explorerTxUrl(txid)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--accent)', flex: 1 }}
+                    title={txid}
+                  >
+                    {txid.slice(0, 12)}…{txid.slice(-12)}
+                  </a>
+                  <button
+                    onClick={() => handleCopy(txid)}
+                    style={{ padding: '2px 6px', lineHeight: 0, color: copied === txid ? '#22c55e' : undefined, flexShrink: 0 }}
+                    title={copied === txid ? 'Copied!' : 'Copy txid'}
+                  >
+                    {copied === txid ? <CopiedIcon size={13} /> : <CopyIcon size={13} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setTxModal(null)} style={{ fontSize: '0.8rem', padding: '0.3rem 0.9rem' }}>Close</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {qrAddr && (
