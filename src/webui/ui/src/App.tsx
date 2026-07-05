@@ -95,6 +95,14 @@ export default function App() {
     setOnUnauthorized(() => setAuthed(false))
   }, [])
 
+  // If a launch intent arrived (protocol handler or shortcut) and the session is
+  // already active, navigate straight to Wallets. The login handler covers the
+  // unauthenticated case.
+  useEffect(() => {
+    if (launchIntent && authed) setPage('wallets')
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // intentionally mount-only
+
   const fetchNodeInfo = useCallback(() => {
     if (!getToken()) return
     api.nodeStatus()
