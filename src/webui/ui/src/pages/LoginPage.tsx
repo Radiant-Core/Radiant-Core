@@ -1,53 +1,64 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api, setToken } from '../lib/api'
 import radiantLogo from '../assets/images/radiant-darkmode.png'
 import './LoginPage.css'
 
 interface Props {
-  authMode: string
   onLogin: (token?: string) => void
-  onNodeDown: () => void
 }
 
-const TRANSIENT_PHRASES = ['initializing', 'No response', 'Malformed response']
-
-export default function LoginPage({ authMode, onLogin, onNodeDown }: Props) {
+export default function LoginPage({ onLogin }: Props) {
+  const [authMode, setAuthMode]   = useState<'password' | 'cookie'>('password')
   const [cookieToken, setCookieToken] = useState('')
-  const [password, setPassword]       = useState('')
-  const [error, setError]   = useState('')
-  const [loading, setLoading] = useState(false)
+  const [password, setPassword]   = useState('')
+  const [error, setError]         = useState('')
+  const [loading, setLoading]     = useState(false)
 
-  const doLogin = async (pw: string, token: string) => {
+  // Detect auth mode once on mount. Silent — the form stays usable even if
+  // the node is not up yet; the user will see an error on submit instead.
+  useEffect(() => {
+    let cancelled = false
+    api.authInfo()
+      .then(info => { if (!cancelled) setAuthMode(info.mode as 'password' | 'cookie') })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     setError('')
     setLoading(true)
     try {
       if (authMode === 'password') {
-        const res = await api.login(pw)
+        const res = await api.login(password)
         setToken(res.token)
         onLogin(res.token)
       } else {
-        setToken(token.trim())
-        onLogin(token.trim())
+        setToken(cookieToken.trim())
+        onLogin(cookieToken.trim())
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed'
       setToken(null)
-      const isTransient = TRANSIENT_PHRASES.some(p => msg.includes(p))
-      if (isTransient) {
-        // Node went away — return to connecting splash where the probe handles recovery
-        onNodeDown()
-        return
+      // Connection errors — node not up or still initializing
+      if (
+        msg.includes('No response') ||
+        msg.includes('Malformed response') ||
+        msg.includes('initializing') ||
+        msg.includes('fetch') ||
+        msg.toLowerCase().includes('network')
+      ) {
+        setError('Cannot connect to node — is it running with webui=1?')
+        // Re-probe auth mode so the form switches correctly once node comes up
+        api.authInfo()
+          .then(info => setAuthMode(info.mode as 'password' | 'cookie'))
+          .catch(() => {})
       } else {
         setError(msg)
       }
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    doLogin(password, cookieToken)
   }
 
   return (

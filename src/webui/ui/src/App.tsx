@@ -29,33 +29,21 @@ function IconEye() {
 }
 
 export default function App() {
-  // Holds the ServiceWorkerRegistration so the probe failure handler can call
-  // registration.update() without waiting for the 60-second interval.
-  const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null)
-
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW({
     onRegistered(r) {
-      if (r) {
-        swRegistrationRef.current = r
-        // Check for SW updates every 60 s so rebuilding the binary is noticed quickly
-        setInterval(() => r.update(), 60_000)
-      }
+      r && setInterval(() => r.update(), 60_000)
     },
   })
 
   const [authed, setAuthed]   = useState(!!getToken())
   const [page, setPage]       = useState<Page>('node')
-  const [authMode, setAuthMode] = useState<string>('cookie')
   const [nodeInfo, setNodeInfo] = useState<{ network: string; blocks: number } | null>(null)
   const [masked, setMasked]   = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [navOpen, setNavOpen] = useState(false)
-  const [serverReady, setServerReady] = useState(false)
-  const [probeKey, setProbeKey] = useState(0)
-  const [probeAttempts, setProbeAttempts] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -70,78 +58,10 @@ export default function App() {
     toastTimer.current = setTimeout(() => setToast(null), 2000)
   }, [])
 
-  // Wire up the unauthorized handler once.
-  // A 401 means the node is UP but the session expired — go straight to the
-  // login page (keep serverReady=true).  Don't show the connecting splash;
-  // that is only for when the node itself is unreachable.
+  // A 401 means the session expired — return to login.
   useEffect(() => {
-    setOnUnauthorized(() => {
-      setAuthed(false)
-      setProbeKey(k => k + 1)
-    })
+    setOnUnauthorized(() => setAuthed(false))
   }, [])
-
-  // When the SW controller changes (new SW took over via skipWaiting), restart
-  // the probe.  The new SW has no NetworkOnly route for /webui/api, so the
-  // next probe reaches the server directly instead of reading a stale cached 404.
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    const onControllerChange = () => setProbeKey(k => k + 1)
-    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
-    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange)
-  }, [])
-
-  // On the first probe failure, immediately force a SW update check.
-  // If a newer SW is available (one without the stale NetworkOnly route that
-  // strips cache: 'no-store' from API fetches), it installs, skipWaiting
-  // activates it, controllerchange fires above, and the probe retries cleanly.
-  // This collapses the worst-case recovery time from 60 s to ~1 s.
-  useEffect(() => {
-    if (probeAttempts === 1) swRegistrationRef.current?.update().catch(() => {})
-  }, [probeAttempts])
-
-  // Probe runs on first mount and again whenever probeKey increments.
-  // A stale token in localStorage won't cause an infinite 401 loop because
-  // api.ts only fires _onUnauthorized when there was a token to expire;
-  // after setToken(null) clears it the next probe sends no header and gets 200.
-  //
-  // The node's HTTP socket is bound early in startup but the libevent event
-  // loop only starts after chain loading — potentially 30-60 s later.  Without
-  // a timeout, fetch() connects to the socket and hangs silently until the
-  // event loop wakes it.  AbortController gives each attempt 5 s to respond;
-  // if it times out the probe retries in 3 s, producing visible DevTools
-  // entries and predictable 8-second retry rhythm instead of a mystery hang.
-  useEffect(() => {
-    let cancelled = false
-    let retryId:   ReturnType<typeof setTimeout> | null = null
-    let abortCtrl: AbortController | null = null
-    let attempts  = 0
-
-    const probe = async () => {
-      abortCtrl = new AbortController()
-      const timeoutId = setTimeout(() => abortCtrl!.abort(), 5000)
-      try {
-        const info = await api.authInfo(abortCtrl.signal)
-        clearTimeout(timeoutId)
-        if (!cancelled) { setAuthMode(info.mode); setServerReady(true) }
-      } catch {
-        clearTimeout(timeoutId)
-        if (!cancelled) {
-          attempts += 1
-          setProbeAttempts(attempts)
-          retryId = setTimeout(probe, 3000)
-        }
-      }
-    }
-
-    setProbeAttempts(0)
-    probe()
-    return () => {
-      cancelled = true
-      abortCtrl?.abort()
-      if (retryId) clearTimeout(retryId)
-    }
-  }, [probeKey])
 
   const fetchNodeInfo = useCallback(() => {
     if (!getToken()) return
@@ -218,12 +138,8 @@ export default function App() {
       } catch {
         failures += 1
         if (failures >= 5) {
-          // Clear the stale token now so any in-flight requests that return 401
-          // see hadToken=false and don't re-fire _onUnauthorized mid-reconnect.
           setToken(null)
           setAuthed(false)
-          setServerReady(false)
-          setProbeKey(k => k + 1)
         }
       }
     }
@@ -238,62 +154,10 @@ export default function App() {
     prevTrafficRef.current = null
   }, [])
 
-  if (!serverReady) {
-    return (
-      <div className="connect-splash">
-        <img src={radiantLogo} alt="Radiant" className="connect-logo" />
-        <span className="connect-name">Radiant Core</span>
-        <span className="connect-status">Connecting to node…</span>
-        <button className="connect-refresh-btn" onClick={() => window.location.reload()}>
-          Refresh
-        </button>
-        <span className="connect-hint">
-          If the node is not running, start <code>radiant-qt</code> or <code>radiantd</code> with{' '}
-          <code>-webui=1</code>, or add <code>webui=1</code> to <code>radiant.conf</code>.
-        </span>
-        {probeAttempts >= 10 && (
-          <span className="connect-hint" style={{ marginTop: '0.5rem', color: 'var(--warn, #f59e0b)' }}>
-            Still connecting after {Math.round(probeAttempts * 8 / 60)} min — verify the node is running
-            with <code>webui=1</code> (or <code>webuipassword=…</code>) in <code>radiant.conf</code>.
-          </span>
-        )}
-        {probeAttempts >= 3 && (
-          <button
-            className="connect-refresh-btn"
-            style={{ marginTop: '0.5rem' }}
-            onClick={async () => {
-              // Unregister all service workers so a stale SW can no longer
-              // intercept API fetches and replay a cached 404.
-              if ('serviceWorker' in navigator) {
-                const regs = await navigator.serviceWorker.getRegistrations()
-                await Promise.all(regs.map(r => r.unregister()))
-              }
-              // Navigate to a cache-busting URL rather than reload().
-              // reload() re-uses the browser's HTTP cache entry for /webui/
-              // which may itself be a stale 404.  A unique query-string forces
-              // a new cache entry; the server ignores the param and serves
-              // index.html normally.
-              window.location.replace('/webui/?_sw_cleared=' + Date.now())
-            }}
-          >
-            Clear cache &amp; retry
-          </button>
-        )}
-      </div>
-    )
-  }
-
-  const handleNodeDown = () => {
-    setServerReady(false)
-    setProbeKey(k => k + 1)
-  }
-
   if (!authed) {
     return (
       <LoginPage
-        authMode={authMode}
         onLogin={token => { setToken(token ?? getToken()!); setAuthed(true) }}
-        onNodeDown={handleNodeDown}
       />
     )
   }
