@@ -233,7 +233,9 @@ function thumbnailPlaceholder(meta: GlyphMeta | undefined, loading: boolean): st
   return '?'
 }
 
-export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked?: boolean; refreshKey?: number }) {
+import type { LaunchIntent } from '../App'
+
+export default function WalletsPage({ masked = false, refreshKey = 0, launchIntent = null }: { masked?: boolean; refreshKey?: number; launchIntent?: LaunchIntent | null }) {
   const [walletName, setWalletName] = useState<string | null>(null)
   const [tab, setTab]               = useState<WalletTab>('overview')
   const [summary, setSummary]       = useState<WalletSummary | null>(null)
@@ -339,6 +341,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [showRawHex, setShowRawHex]             = useState(false)
   const [showMintHex, setShowMintHex]           = useState(false)
   const [selectedTokenRef, setSelectedTokenRef] = useState<string | null>(null)
+  const intentConsumedRef                       = useRef(false)
   const glyphLoadingRef                         = useRef(false)
   const rpcGlyphEntriesRef                      = useRef<GlyphRPCEntry[] | null>(null)
   const [mintType, setMintType]                 = useState<'ft' | 'nft' | 'user' | 'container'>('nft')
@@ -721,6 +724,16 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
         loadAddresses(name)
         loadTxs(name)
         loadUTXOs(name)
+        if (launchIntent && !intentConsumedRef.current) {
+          intentConsumedRef.current = true
+          if (launchIntent.action === 'send') {
+            setTab('send')
+            if (launchIntent.address) setSendAddr(launchIntent.address)
+            if (launchIntent.amount)  setSendAmt(launchIntent.amount)
+          } else if (launchIntent.action === 'receive') {
+            setTab('overview')
+          }
+        }
       })
       .catch(e => toast(e instanceof Error ? e.message : 'Failed', 'error'))
   }, [loadSummary, loadAddresses, loadTxs, loadUTXOs])

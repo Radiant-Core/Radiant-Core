@@ -30,6 +30,7 @@ export default defineConfig({
         clientsClaim: true,
       },
       manifest: {
+        id: '/webui/',
         name: 'Radiant Core',
         short_name: 'Radiant',
         description: 'Radiant Core node wallet interface',
@@ -38,19 +39,45 @@ export default defineConfig({
         display: 'standalone',
         scope: '/webui/',
         start_url: '/webui/',
+        categories: ['finance', 'utilities'],
         icons: [
           {
             src: 'icon-192.png',
             sizes: '192x192',
             type: 'image/png',
+            purpose: 'any',
           },
           {
             src: 'icon-512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable',
+            purpose: 'any',
+          },
+          {
+            src: 'icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
+        shortcuts: [
+          {
+            name: 'Send RXD',
+            short_name: 'Send',
+            description: 'Open the Send tab',
+            url: '/webui/?action=send',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+          {
+            name: 'Receive RXD',
+            short_name: 'Receive',
+            description: 'Show receiving addresses',
+            url: '/webui/?action=receive',
+            icons: [{ src: 'icon-192.png', sizes: '192x192', type: 'image/png' }],
+          },
+        ],
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        protocol_handlers: [{ protocol: 'radiant', url: '/webui/?uri=%s' }] as any,
       },
     }),
   ],

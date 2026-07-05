@@ -12,6 +12,35 @@ import './App.css'
 
 type Page = 'node' | 'wallets' | 'peers' | 'console' | 'settings'
 
+export interface LaunchIntent {
+  action: 'send' | 'receive'
+  address?: string
+  amount?: string
+  label?: string
+}
+
+function parseLaunchIntent(): LaunchIntent | null {
+  const params = new URLSearchParams(window.location.search)
+  const uri = params.get('uri')
+  if (uri) {
+    // BIP-21 style: radiant:ADDRESS?amount=X&label=Y
+    const m = uri.match(/^radiant:(?:\/\/)?([^?#\s]+)(?:\?(.*))?$/i)
+    if (m) {
+      const uriParams = new URLSearchParams(m[2] ?? '')
+      return {
+        action: 'send',
+        address: m[1].trim(),
+        amount:  uriParams.get('amount') ?? undefined,
+        label:   uriParams.get('label')  ?? undefined,
+      }
+    }
+  }
+  const action = params.get('action')
+  if (action === 'send')    return { action: 'send' }
+  if (action === 'receive') return { action: 'receive' }
+  return null
+}
+
 function IconEyeOff() {
   return (
     <svg stroke="currentColor" fill="currentColor" strokeWidth="0" viewBox="0 0 24 24" aria-hidden="true" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
@@ -40,6 +69,8 @@ export default function App() {
 
   const [authed, setAuthed]   = useState(!!getToken())
   const [page, setPage]       = useState<Page>('node')
+  // Parsed once from URL query string; survives login and is consumed by WalletsPage.
+  const [launchIntent]        = useState<LaunchIntent | null>(parseLaunchIntent)
   const [nodeInfo, setNodeInfo] = useState<{ network: string; blocks: number } | null>(null)
   const [masked, setMasked]   = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -157,7 +188,12 @@ export default function App() {
   if (!authed) {
     return (
       <LoginPage
-        onLogin={token => { setToken(token ?? getToken()!); setAuthed(true) }}
+        onLogin={token => {
+          setToken(token ?? getToken()!)
+          setAuthed(true)
+          // If a payment URI or shortcut brought the user here, go straight to Wallets after login.
+          if (launchIntent) setPage('wallets')
+        }}
       />
     )
   }
@@ -272,7 +308,7 @@ export default function App() {
 
       <main className="content">
         {page === 'node'     && <NodePage refreshKey={refreshKey} />}
-        {page === 'wallets'  && <WalletsPage masked={masked} refreshKey={refreshKey} />}
+        {page === 'wallets'  && <WalletsPage masked={masked} refreshKey={refreshKey} launchIntent={launchIntent} />}
         {page === 'peers'    && <PeersPage refreshKey={refreshKey} trafficPoints={trafficPoints} trafficTotals={trafficTotals} onResetTraffic={resetTraffic} />}
         {page === 'console'  && <ConsolePage />}
         {page === 'settings' && <SettingsPage />}
