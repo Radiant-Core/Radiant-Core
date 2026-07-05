@@ -243,7 +243,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [txPage, setTxPage]         = useState(0)
   const [txHideDust, setTxHideDust] = useState(true)
   const [txSearch, setTxSearch]     = useState('')
-  const [txExpanded, setTxExpanded] = useState<string | null>(null)
+  const [txExpanded, setTxExpanded] = useState<number | null>(null)
   const [utxos, setUtxos]           = useState<UTXOEntry[] | null>(null)
   const [showSpent, setShowSpent]   = useState(false)
   const [coins, setCoins]           = useState<CoinEntry[] | null>(null)
@@ -2042,8 +2042,9 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                   </thead>
                   <tbody>
                     {pageTxs.flatMap((tx, i) => {
+                      const rowIdx   = pageStart + i
+                      const isOpen   = txExpanded === rowIdx
                       const txid     = String(tx.txid)
-                      const isOpen   = txExpanded === txid
                       const category = String(tx.category)
                       const amount   = Number(tx.amount)
                       const ts       = Number(tx.blocktime ?? tx.time ?? 0)
@@ -2053,8 +2054,8 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
 
                       const rows = [
                         <tr
-                          key={`r${pageStart + i}`}
-                          onClick={() => setTxExpanded(isOpen ? null : txid)}
+                          key={`r${rowIdx}`}
+                          onClick={() => setTxExpanded(isOpen ? null : rowIdx)}
                           style={{ cursor: 'pointer', background: isOpen ? 'color-mix(in srgb, var(--accent) 6%, var(--bg2))' : undefined }}
                         >
                           <td><span className={`badge ${category === 'send' ? 'red' : 'green'}`}>{category}</span></td>
@@ -2080,15 +2081,15 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
 
                       if (isOpen) {
                         rows.push(
-                          <tr key={`d${pageStart + i}`}>
+                          <tr key={`d${rowIdx}`}>
                             <td colSpan={6} style={{ padding: '0.75rem 1rem 0.9rem', background: 'color-mix(in srgb, var(--accent) 5%, var(--bg))', borderBottom: '2px solid var(--border)' }}>
                               <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.35rem 1.25rem', fontSize: '0.82rem', alignItems: 'start' }}>
 
                                 <span style={{ color: 'var(--text2)', paddingTop: '0.15rem' }}>TXID</span>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
                                   <code style={{ fontFamily: 'monospace', fontSize: '0.73rem', wordBreak: 'break-all', flex: 1 }}>{txid}</code>
-                                  <button onClick={e => { e.stopPropagation(); handleCopy(txid) }} style={{ padding: '2px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
-                                    {copied === txid ? 'Copied!' : 'Copy'}
+                                  <button onClick={e => { e.stopPropagation(); handleCopy(txid) }} style={{ padding: '2px 6px', lineHeight: 0, color: copied === txid ? '#22c55e' : undefined, flexShrink: 0 }} title={copied === txid ? 'Copied!' : 'Copy txid'}>
+                                    {copied === txid ? <CopiedIcon size={13} /> : <CopyIcon size={13} />}
                                   </button>
                                   <a href={explorerTxUrl(txid)} target="_blank" rel="noopener noreferrer"
                                     onClick={e => e.stopPropagation()}
@@ -2099,11 +2100,16 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
 
                                 {address && (<>
                                   <span style={{ color: 'var(--text2)', paddingTop: '0.15rem' }}>Address</span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                     <code style={{ fontFamily: 'monospace', fontSize: '0.73rem', wordBreak: 'break-all', flex: 1 }}>{address}</code>
-                                    <button onClick={e => { e.stopPropagation(); handleCopy(address) }} style={{ padding: '2px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
-                                      {copied === address ? 'Copied!' : 'Copy'}
+                                    <button onClick={e => { e.stopPropagation(); handleCopy(address) }} style={{ padding: '2px 6px', lineHeight: 0, color: copied === address ? '#22c55e' : undefined, flexShrink: 0 }} title={copied === address ? 'Copied!' : 'Copy address'}>
+                                      {copied === address ? <CopiedIcon size={13} /> : <CopyIcon size={13} />}
                                     </button>
+                                    <a href={explorerAddressUrl(address)} target="_blank" rel="noopener noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                      style={{ fontSize: '0.75rem', color: 'var(--accent)', textDecoration: 'none', border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '1px 7px', flexShrink: 0 }}>
+                                      Explorer ↗
+                                    </a>
                                   </div>
                                 </>)}
 
@@ -2144,11 +2150,11 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                     <span style={{ color: 'var(--text2)', marginRight: '0.25rem' }}>
                       {pageStart + 1}–{Math.min(pageStart + TX_PER_PAGE, filteredTxs.length)} of {filteredTxs.length}
                     </span>
-                    <button onClick={() => setTxPage(0)}              disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>«</button>
-                    <button onClick={() => setTxPage(p => p - 1)}     disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>‹</button>
+                    <button onClick={() => { setTxPage(0); setTxExpanded(null) }}              disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>«</button>
+                    <button onClick={() => { setTxPage(p => p - 1); setTxExpanded(null) }}     disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>‹</button>
                     <span style={{ color: 'var(--text2)' }}>Page {page + 1} / {totalPages}</span>
-                    <button onClick={() => setTxPage(p => p + 1)}     disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>›</button>
-                    <button onClick={() => setTxPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>»</button>
+                    <button onClick={() => { setTxPage(p => p + 1); setTxExpanded(null) }}     disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>›</button>
+                    <button onClick={() => { setTxPage(totalPages - 1); setTxExpanded(null) }} disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>»</button>
                   </div>
                 )}
               </>
