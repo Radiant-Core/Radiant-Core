@@ -242,6 +242,8 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
   const [txs, setTxs]               = useState<Record<string, unknown>[]>([])
   const [txPage, setTxPage]         = useState(0)
   const [txHideDust, setTxHideDust] = useState(true)
+  const [txSearch, setTxSearch]     = useState('')
+  const [txExpanded, setTxExpanded] = useState<string | null>(null)
   const [utxos, setUtxos]           = useState<UTXOEntry[] | null>(null)
   const [showSpent, setShowSpent]   = useState(false)
   const [coins, setCoins]           = useState<CoinEntry[] | null>(null)
@@ -749,7 +751,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
       .then(setQrDataUrl).catch(() => {})
   }, [qrAddr])
 
-  useEffect(() => { setTxPage(0) }, [txs])
+  useEffect(() => { setTxPage(0); setTxExpanded(null) }, [txs])
 
   // Auto-populate consScanned whenever utxos or filter inputs change so the
   // Consolidate button is enabled as soon as UTXOs are loaded.
@@ -1973,10 +1975,18 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
       {/* ── TRANSACTIONS ── */}
       {tab === 'transactions' && (() => {
         const DUST_THRESHOLD = 0.001
-        const filteredTxs = txHideDust
+        const nodustTxs = txHideDust
           ? txs.filter(tx => Math.abs(Number(tx.amount)) >= DUST_THRESHOLD)
           : txs
-        const dustCount = txs.length - filteredTxs.length
+        const dustCount = txs.length - nodustTxs.length
+        const searchLower = txSearch.trim().toLowerCase()
+        const filteredTxs = searchLower
+          ? nodustTxs.filter(tx =>
+              String(tx.txid).toLowerCase().includes(searchLower) ||
+              String(tx.address ?? '').toLowerCase().includes(searchLower) ||
+              String(tx.label ?? tx.account ?? '').toLowerCase().includes(searchLower)
+            )
+          : nodustTxs
         const TX_PER_PAGE = 25
         const totalPages = Math.max(1, Math.ceil(filteredTxs.length / TX_PER_PAGE))
         const page = Math.min(txPage, totalPages - 1)
@@ -1985,7 +1995,9 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
         return (
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-              <h2 style={{ margin: 0 }}>Transactions ({filteredTxs.length}{dustCount > 0 && txHideDust ? ` of ${txs.length}` : ''})</h2>
+              <h2 style={{ margin: 0 }}>
+                Transactions ({filteredTxs.length}{dustCount > 0 && txHideDust ? ` of ${txs.length}` : ''})
+              </h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexShrink: 0 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', cursor: 'pointer', userSelect: 'none', color: 'var(--text2)', whiteSpace: 'nowrap' }}>
                   <input type="checkbox" checked={txHideDust}
@@ -1995,31 +2007,136 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                 <button onClick={() => walletName !== null && loadTxs(walletName)} style={{ fontSize: '0.8rem' }}>↺ Refresh</button>
               </div>
             </div>
-            {filteredTxs.length === 0 && txs.length === 0 && <p style={{ color: 'var(--text2)' }}>No transactions</p>}
-            {filteredTxs.length === 0 && txs.length > 0 && <p style={{ color: 'var(--text2)' }}>All {txs.length} transactions are below the dust threshold ({"<"} {DUST_THRESHOLD} RXD).</p>}
+
+            {/* Search / address filter */}
+            <input
+              type="text"
+              placeholder="Search TXID or address…"
+              value={txSearch}
+              onChange={e => { setTxSearch(e.target.value); setTxPage(0); setTxExpanded(null) }}
+              style={{ width: '100%', marginBottom: '0.75rem', boxSizing: 'border-box' }}
+            />
+
+            {filteredTxs.length === 0 && txs.length === 0 && (
+              <p style={{ color: 'var(--text2)' }}>No transactions</p>
+            )}
+            {filteredTxs.length === 0 && txs.length > 0 && !searchLower && (
+              <p style={{ color: 'var(--text2)' }}>All {txs.length} transactions are below the dust threshold ({'<'} {DUST_THRESHOLD} RXD).</p>
+            )}
+            {filteredTxs.length === 0 && searchLower && (
+              <p style={{ color: 'var(--text2)' }}>No transactions match "{txSearch}".</p>
+            )}
+
             {filteredTxs.length > 0 && (
               <>
                 <table className="table">
-                  <thead><tr><th>Type</th><th>Amount</th><th>Label</th><th>Conf.</th><th>Time</th><th>txid</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Time</th>
+                      <th style={{ textAlign: 'right' }}>Amount (RXD)</th>
+                      <th style={{ textAlign: 'right' }}>Conf</th>
+                      <th>TXID</th>
+                      <th style={{ width: '1.5rem' }}></th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {pageTxs.map((tx, i) => (
-                      <tr key={pageStart + i}>
-                        <td><span className={`badge ${String(tx.category) === 'send' ? 'red' : 'green'}`}>{String(tx.category)}</span></td>
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.82rem' }}>{maskAmt(Number(tx.amount).toFixed(8))}</td>
-                        <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>{String(tx.label ?? tx.account ?? '')}</td>
-                        <td style={{ color: 'var(--text2)', fontSize: '0.82rem' }}>{String(tx.confirmations)}</td>
-                        <td style={{ color: 'var(--text2)', fontSize: '0.8rem' }}>
-                          {(() => { const ts = Number(tx.blocktime ?? tx.time ?? 0); return ts ? new Date(ts * 1000).toLocaleString() : '—' })()}
-                        </td>
-                        <td>
-                          <a href={explorerTxUrl(String(tx.txid))} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
-                            <code style={{ fontSize: '0.75rem', color: 'var(--accent)' }} title={String(tx.txid)}>
-                              {String(tx.txid).slice(0, 16)}…
+                    {pageTxs.flatMap((tx, i) => {
+                      const txid     = String(tx.txid)
+                      const isOpen   = txExpanded === txid
+                      const category = String(tx.category)
+                      const amount   = Number(tx.amount)
+                      const ts       = Number(tx.blocktime ?? tx.time ?? 0)
+                      const address  = String(tx.address ?? '')
+                      const label    = String(tx.label ?? tx.account ?? '')
+                      const fee      = tx.fee !== undefined ? Number(tx.fee) : null
+
+                      const rows = [
+                        <tr
+                          key={`r${pageStart + i}`}
+                          onClick={() => setTxExpanded(isOpen ? null : txid)}
+                          style={{ cursor: 'pointer', background: isOpen ? 'color-mix(in srgb, var(--accent) 6%, var(--bg2))' : undefined }}
+                        >
+                          <td><span className={`badge ${category === 'send' ? 'red' : 'green'}`}>{category}</span></td>
+                          <td style={{ color: 'var(--text2)', fontSize: '0.8rem' }}>
+                            {ts ? new Date(ts * 1000).toLocaleString() : '—'}
+                          </td>
+                          <td style={{ fontFamily: 'monospace', fontSize: '0.82rem', textAlign: 'right' }}>
+                            {maskAmt(amount.toFixed(8))}
+                          </td>
+                          <td style={{ color: 'var(--text2)', fontSize: '0.82rem', textAlign: 'right' }}>
+                            {String(tx.confirmations)}
+                          </td>
+                          <td>
+                            <code style={{ fontSize: '0.75rem', color: 'var(--accent)' }} title={txid}>
+                              {txid.slice(0, 16)}…
                             </code>
-                          </a>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td style={{ textAlign: 'center', color: 'var(--text2)', fontSize: '0.7rem', userSelect: 'none' }}>
+                            {isOpen ? '▲' : '▼'}
+                          </td>
+                        </tr>
+                      ]
+
+                      if (isOpen) {
+                        rows.push(
+                          <tr key={`d${pageStart + i}`}>
+                            <td colSpan={6} style={{ padding: '0.75rem 1rem 0.9rem', background: 'color-mix(in srgb, var(--accent) 5%, var(--bg))', borderBottom: '2px solid var(--border)' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '0.35rem 1.25rem', fontSize: '0.82rem', alignItems: 'start' }}>
+
+                                <span style={{ color: 'var(--text2)', paddingTop: '0.15rem' }}>TXID</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                  <code style={{ fontFamily: 'monospace', fontSize: '0.73rem', wordBreak: 'break-all', flex: 1 }}>{txid}</code>
+                                  <button onClick={e => { e.stopPropagation(); handleCopy(txid) }} style={{ padding: '2px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
+                                    {copied === txid ? 'Copied!' : 'Copy'}
+                                  </button>
+                                  <a href={explorerTxUrl(txid)} target="_blank" rel="noopener noreferrer"
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ fontSize: '0.75rem', color: 'var(--accent)', textDecoration: 'none', border: '1px solid var(--accent)', borderRadius: 'var(--radius)', padding: '1px 7px', flexShrink: 0 }}>
+                                    Explorer ↗
+                                  </a>
+                                </div>
+
+                                {address && (<>
+                                  <span style={{ color: 'var(--text2)', paddingTop: '0.15rem' }}>Address</span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <code style={{ fontFamily: 'monospace', fontSize: '0.73rem', wordBreak: 'break-all', flex: 1 }}>{address}</code>
+                                    <button onClick={e => { e.stopPropagation(); handleCopy(address) }} style={{ padding: '2px 8px', fontSize: '0.75rem', flexShrink: 0 }}>
+                                      {copied === address ? 'Copied!' : 'Copy'}
+                                    </button>
+                                  </div>
+                                </>)}
+
+                                {label && (<>
+                                  <span style={{ color: 'var(--text2)' }}>Label</span>
+                                  <span>{label}</span>
+                                </>)}
+
+                                <span style={{ color: 'var(--text2)' }}>Amount</span>
+                                <span style={{ fontFamily: 'monospace' }}>{amount.toFixed(8)} RXD</span>
+
+                                {fee !== null && (<>
+                                  <span style={{ color: 'var(--text2)' }}>Fee</span>
+                                  <span style={{ fontFamily: 'monospace', color: '#ef4444' }}>{fee.toFixed(8)} RXD</span>
+                                </>)}
+
+                                <span style={{ color: 'var(--text2)' }}>Confirmations</span>
+                                <span>{String(tx.confirmations)}</span>
+
+                                {!!tx.blockhash && (<>
+                                  <span style={{ color: 'var(--text2)' }}>Block</span>
+                                  <code style={{ fontFamily: 'monospace', fontSize: '0.73rem' }} title={String(tx.blockhash)}>
+                                    {String(tx.blockhash).slice(0, 24)}…
+                                  </code>
+                                </>)}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      }
+
+                      return rows
+                    })}
                   </tbody>
                 </table>
                 {totalPages > 1 && (
@@ -2027,10 +2144,10 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
                     <span style={{ color: 'var(--text2)', marginRight: '0.25rem' }}>
                       {pageStart + 1}–{Math.min(pageStart + TX_PER_PAGE, filteredTxs.length)} of {filteredTxs.length}
                     </span>
-                    <button onClick={() => setTxPage(0)}           disabled={page === 0}              style={{ padding: '0.2rem 0.5rem' }}>«</button>
-                    <button onClick={() => setTxPage(p => p - 1)}  disabled={page === 0}              style={{ padding: '0.2rem 0.5rem' }}>‹</button>
+                    <button onClick={() => setTxPage(0)}              disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>«</button>
+                    <button onClick={() => setTxPage(p => p - 1)}     disabled={page === 0}             style={{ padding: '0.2rem 0.5rem' }}>‹</button>
                     <span style={{ color: 'var(--text2)' }}>Page {page + 1} / {totalPages}</span>
-                    <button onClick={() => setTxPage(p => p + 1)}  disabled={page >= totalPages - 1}  style={{ padding: '0.2rem 0.5rem' }}>›</button>
+                    <button onClick={() => setTxPage(p => p + 1)}     disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>›</button>
                     <button onClick={() => setTxPage(totalPages - 1)} disabled={page >= totalPages - 1} style={{ padding: '0.2rem 0.5rem' }}>»</button>
                   </div>
                 )}
