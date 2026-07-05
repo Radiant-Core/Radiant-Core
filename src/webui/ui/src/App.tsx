@@ -29,13 +29,20 @@ function IconEye() {
 }
 
 export default function App() {
+  // Holds the ServiceWorkerRegistration so the probe failure handler can call
+  // registration.update() without waiting for the 60-second interval.
+  const swRegistrationRef = useRef<ServiceWorkerRegistration | null>(null)
+
   const {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW({
     onRegistered(r) {
-      // Check for SW updates every 60 s so rebuilding the binary is noticed quickly
-      r && setInterval(() => r.update(), 60_000)
+      if (r) {
+        swRegistrationRef.current = r
+        // Check for SW updates every 60 s so rebuilding the binary is noticed quickly
+        setInterval(() => r.update(), 60_000)
+      }
     },
   })
 
@@ -73,6 +80,25 @@ export default function App() {
       setProbeKey(k => k + 1)
     })
   }, [])
+
+  // When the SW controller changes (new SW took over via skipWaiting), restart
+  // the probe.  The new SW has no NetworkOnly route for /webui/api, so the
+  // next probe reaches the server directly instead of reading a stale cached 404.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    const onControllerChange = () => setProbeKey(k => k + 1)
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange)
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange)
+  }, [])
+
+  // On the first probe failure, immediately force a SW update check.
+  // If a newer SW is available (one without the stale NetworkOnly route that
+  // strips cache: 'no-store' from API fetches), it installs, skipWaiting
+  // activates it, controllerchange fires above, and the probe retries cleanly.
+  // This collapses the worst-case recovery time from 60 s to ~1 s.
+  useEffect(() => {
+    if (probeAttempts === 1) swRegistrationRef.current?.update().catch(() => {})
+  }, [probeAttempts])
 
   // Probe runs on first mount and again whenever probeKey increments.
   // A stale token in localStorage won't cause an infinite 401 loop because
