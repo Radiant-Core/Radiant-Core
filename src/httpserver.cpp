@@ -560,6 +560,12 @@ static bool HTTPBindAddresses(struct evhttp *http) {
             std::string host;
             SplitHostPort(strRPCBind, port, host);
             endpoints.push_back(std::make_pair(host, port));
+            // When explicitly binding the IPv4 loopback, also try the IPv6
+            // loopback so that 'localhost' (which Windows resolves to ::1 first)
+            // connects without a Happy Eyeballs timeout.
+            if (host == "127.0.0.1") {
+                endpoints.push_back(std::make_pair("::1", port));
+            }
         }
     } else {
         // No specific bind address specified, bind to any.
