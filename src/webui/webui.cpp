@@ -199,7 +199,8 @@ static bool WebUIDispatch(Config &config, HTTPRequest *req, const std::string &)
         if (path.rfind("/webui/api/wallets/", 0) == 0)  return WebUIWalletsRoute(config, req, path);
         if (path.rfind("/webui/api/wallet/",  0) == 0)  return WebUIWalletRoute(config, req, path);
         if (path == "/webui/api/settings")               return HandleWebUISettings(req);
-        req->WriteReply(HTTP_NOT_FOUND, R"({"error":"not found"})");
+        req->WriteHeader("Content-Type", "application/json");
+        req->WriteReply(HTTP_NOT_FOUND, R"({"error":"api route not found"})");
         return false;
     }
 
@@ -241,8 +242,10 @@ void StartWebUI()
     g_webui_notifier = std::make_unique<WebUINotifier>();
     RegisterValidationInterface(g_webui_notifier.get());
 
+    LogPrintf("WebUI: registering HTTP handlers\n");
     RegisterHTTPHandler("/webui/", false, WebUIDispatch);
     RegisterHTTPHandler("/webui",  true,  WebUIRedirect);
+    LogPrintf("WebUI: HTTP handlers registered\n");
 
     const int rpc_port = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
     if (g_webui_use_password) {
