@@ -256,10 +256,32 @@ export default function SeedImport({ walletName, onImported }: Props) {
         padding: '0.5rem 0.75rem',
         fontSize: '0.8rem',
         color: 'var(--text2)',
-        marginBottom: '0.75rem',
+        marginBottom: '0.5rem',
       }}>
         Keys are derived <strong style={{ color: 'var(--text)' }}>locally in your browser</strong>.
         Only the WIF private key is sent to the node via <code>importprivkey</code>.
+      </div>
+
+      <div style={{
+        background: 'rgba(245,158,11,0.08)',
+        border: '1px solid rgba(245,158,11,0.35)',
+        borderRadius: 'var(--radius)',
+        padding: '0.5rem 0.75rem',
+        fontSize: '0.8rem',
+        color: 'var(--text2)',
+        marginBottom: '0.75rem',
+        lineHeight: 1.5,
+      }}>
+        <strong style={{ color: '#f59e0b' }}>⚠ This does not convert the wallet to a BIP-39 wallet.</strong>
+        {' '}The node's internal wallet still generates its own independent keys — any address
+        created via the <em>Receive</em> tab after this import will <strong style={{ color: 'var(--text)' }}>not</strong> be
+        part of your seed phrase. If you ever restore from the mnemonic alone, those
+        internally-generated addresses and their funds will be missing.
+        <br />
+        <span style={{ marginTop: '0.35rem', display: 'block' }}>
+          To keep everything under your seed phrase: use the <em>Consolidate</em> tab to sweep any
+          internally-generated funds into one of the imported addresses, then back up <code>wallet.dat</code> as well.
+        </span>
       </div>
 
       {error && <p className="error-text" style={{ marginBottom: '0.5rem' }}>{error}</p>}
