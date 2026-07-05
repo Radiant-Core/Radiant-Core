@@ -3462,10 +3462,10 @@ export default function WalletsPage({ masked = false, refreshKey = 0 }: { masked
             <p style={{ fontSize: '0.75rem', color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: 0 }}>
               Transactions · {txModal.label || <code style={{ textTransform: 'none' }}>{txModal.address.slice(0, 12)}…</code>}
             </p>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
+            <div style={{ overflowY: 'auto', flex: 1, paddingRight: '0.5rem' }}>
               {(txModal.txids ?? []).length === 0 ? (
                 <p style={{ color: 'var(--text2)', fontSize: '0.85rem', textAlign: 'center', padding: '1rem 0' }}>No transactions</p>
-              ) : (txModal.txids ?? []).map(txid => (
+              ) : ([...new Set(txModal.txids ?? [])]).map(txid => (
                 <div key={txid} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
                   <a
                     href={explorerTxUrl(txid)}
