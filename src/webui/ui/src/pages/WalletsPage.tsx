@@ -2166,11 +2166,11 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
                                 </>)}
 
                                 <span style={{ color: 'var(--text2)' }}>Amount</span>
-                                <span style={{ fontFamily: 'monospace' }}>{amount.toFixed(8)} RXD</span>
+                                <span style={{ fontFamily: 'monospace' }}>{maskAmt(amount.toFixed(8))} RXD</span>
 
                                 {fee !== null && (<>
                                   <span style={{ color: 'var(--text2)' }}>Fee</span>
-                                  <span style={{ fontFamily: 'monospace', color: '#ef4444' }}>{fee.toFixed(8)} RXD</span>
+                                  <span style={{ fontFamily: 'monospace', color: '#ef4444' }}>{maskAmt(fee.toFixed(8))} RXD</span>
                                 </>)}
 
                                 <span style={{ color: 'var(--text2)' }}>Confirmations</span>
