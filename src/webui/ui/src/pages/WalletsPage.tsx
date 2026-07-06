@@ -280,6 +280,9 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
   const [newLabel, setNewLabel] = useState('')
 
   // Send
+  const [primaryAddr, setPrimaryAddr]     = useState('')
+  const primaryAddrRef                    = useRef('')
+
   const [sendAddr, setSendAddr]           = useState('')
   const [sendAmt, setSendAmt]             = useState('')
   const [sendComment, setSendComment]     = useState('')
@@ -425,7 +428,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
       const list = await api.walletAddresses(name)
       const addrs = Array.isArray(list) ? list : []
       setAddresses(addrs)
-      if (addrs.length > 0) setSendChangeAddr(addrs[0].address)
+      if (addrs.length > 0 && !primaryAddrRef.current) setSendChangeAddr(addrs[0].address)
     } catch (e: unknown) { toast(e instanceof Error ? e.message : 'Failed to load addresses', 'error') }
   }, [])
 
@@ -719,6 +722,10 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
       .then(w => {
         if (!w.walletSupportEnabled || w.wallets.length === 0) { setNoWallet(true); return }
         const name = w.wallets[0].name
+        const stored = localStorage.getItem(`radiant_primary_${name}`) ?? ''
+        primaryAddrRef.current = stored
+        setPrimaryAddr(stored)
+        if (stored) { setSendChangeAddr(stored); setPsbtChangeAddr(stored) }
         setWalletName(name)
         loadSummary(name)
         loadAddresses(name)
@@ -837,6 +844,15 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
       setCopied(text); setTimeout(() => setCopied(c => c === text ? null : c), 2000)
     })
   }
+
+  const applyPrimary = useCallback((addr: string, wname: string) => {
+    primaryAddrRef.current = addr
+    setPrimaryAddr(addr)
+    setSendChangeAddr(addr)
+    setPsbtChangeAddr(addr)
+    if (addr) localStorage.setItem(`radiant_primary_${wname}`, addr)
+    else localStorage.removeItem(`radiant_primary_${wname}`)
+  }, [])
 
   const handleSend = async () => {
     if (walletName === null || !sendAddr || !sendAmt) return
@@ -1902,6 +1918,7 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
             <table className="table">
               <thead>
                 <tr>
+                  <th style={{ width: '28px' }} title="Primary address — used as change address when sending">★</th>
                   <th>Address</th>
                   <th>Label <span style={{ color: 'var(--text2)', fontWeight: 400, fontSize: '0.72rem' }}>(click to edit)</span></th>
                   <th style={{ textAlign: 'right' }}>Balance</th>
@@ -1910,8 +1927,24 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
                 </tr>
               </thead>
               <tbody>
-                {filteredAddrs.map(a => (
-                  <tr key={a.address}>
+                {filteredAddrs.map(a => {
+                  const isPrimary = primaryAddr === a.address
+                  return (
+                  <tr key={a.address} style={isPrimary ? { background: 'rgba(0,242,242,0.04)' } : undefined}>
+                    <td style={{ textAlign: 'center' }}>
+                      <button
+                        onClick={() => walletName !== null && applyPrimary(isPrimary ? '' : a.address, walletName)}
+                        title={isPrimary ? 'Primary address — click to unset' : 'Set as primary address (used as change address)'}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
+                          fontSize: '1rem', lineHeight: 1,
+                          color: isPrimary ? 'var(--accent)' : 'var(--text2)',
+                          opacity: isPrimary ? 1 : 0.45,
+                        }}
+                      >
+                        {isPrimary ? '★' : '☆'}
+                      </button>
+                    </td>
                     <td>
                       <a href={explorerAddressUrl(a.address)} target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none' }}>
                         <code style={{ fontSize: '0.77rem', color: 'var(--accent)' }}>{a.address}</code>
@@ -1973,9 +2006,10 @@ export default function WalletsPage({ masked = false, refreshKey = 0, launchInte
                       </button>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
                 {filteredAddrs.length === 0 && (
-                  <tr><td colSpan={5} style={{ color: 'var(--text2)', textAlign: 'center', padding: '1.5rem' }}>
+                  <tr><td colSpan={6} style={{ color: 'var(--text2)', textAlign: 'center', padding: '1.5rem' }}>
                     {addrFilter ? 'No addresses match filter' : 'No addresses yet — generate one above'}
                   </td></tr>
                 )}
