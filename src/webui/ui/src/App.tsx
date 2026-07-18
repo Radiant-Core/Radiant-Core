@@ -7,10 +7,11 @@ import NodePage from './pages/NodePage'
 import WalletsPage from './pages/WalletsPage'
 import PeersPage from './pages/PeersPage'
 import ConsolePage from './pages/ConsolePage'
+import LogsPage from './pages/LogsPage'
 import SettingsPage from './pages/SettingsPage'
 import './App.css'
 
-type Page = 'node' | 'wallets' | 'peers' | 'console' | 'settings'
+type Page = 'node' | 'wallets' | 'peers' | 'console' | 'logs' | 'settings'
 
 export interface LaunchIntent {
   action: 'send' | 'receive'
@@ -212,6 +213,7 @@ export default function App() {
     { id: 'wallets',  label: 'Wallet' },
     { id: 'peers',    label: 'Peers' },
     { id: 'console',  label: 'Console' },
+    { id: 'logs',     label: 'Logs' },
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -320,6 +322,7 @@ export default function App() {
         {page === 'wallets'  && <WalletsPage masked={masked} refreshKey={refreshKey} launchIntent={launchIntent} />}
         {page === 'peers'    && <PeersPage refreshKey={refreshKey} trafficPoints={trafficPoints} trafficTotals={trafficTotals} onResetTraffic={resetTraffic} />}
         {page === 'console'  && <ConsolePage />}
+        {page === 'logs'     && <LogsPage />}
         {page === 'settings' && <SettingsPage />}
       </main>
     </div>

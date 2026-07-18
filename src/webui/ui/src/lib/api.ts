@@ -80,6 +80,12 @@ export const api = {
   nodeStatus:  ()                     => request<NodeStatus>('GET', '/node/status'),
   nodeMining:  ()                     => request<MiningInfo>('GET', '/node/mining'),
   nodeFeatures:()                     => request<Record<string, unknown>>('GET', '/node/features'),
+  nodeLogs:    (opts: { tail?: number; from?: number }) => {
+    const q = opts.from !== undefined
+      ? `?from=${opts.from}`
+      : `?tail=${opts.tail ?? 500}`
+    return request<NodeLogs>('GET', `/node/logs${q}`)
+  },
   nodePeers:   ()                     => request<{ peers: Peer[] }>('GET', '/node/peers'),
   nodeBanned:  ()                     => request<{ banned: BanEntry[] }>('GET', '/node/banned'),
   peerBan:     (address: string, bantime?: number) => request('POST', '/node/peers/ban', { address, bantime }),
@@ -155,6 +161,14 @@ export interface MiningInfo {
   pooledtx: number
   chain: string
   warnings: string
+}
+
+export interface NodeLogs {
+  enabled: boolean
+  path: string
+  data: string
+  next: number   // byte offset to pass back as ?from on the next poll
+  size: number   // current end-of-file offset
 }
 
 export interface NodeStatus {

@@ -11,8 +11,10 @@
 #include <clientversion.h>
 #include <config.h>
 #include <core_io.h>
+#include <fs.h>
 #include <httpserver.h>
 #include <key_io.h>
+#include <logging.h>
 #include <net.h>
 #include <netbase.h>
 #include <psbt.h>
@@ -30,6 +32,8 @@
 
 #include <event2/http.h>
 
+#include <algorithm>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <optional>
@@ -527,6 +531,123 @@ static bool HandleNodeMining(Config &config, HTTPRequest *req)
     return true;
 }
 
+// ---- Debug log tail -----------------------------------------------------
+
+// Reads the tail of debug.log for the WebUI log viewer.
+//   ?tail=N   initial load — return the last N lines (default 500).
+//   ?from=B   follow — return bytes from offset B to EOF.
+// The response's "next" field is the current end-of-file offset; the client
+// passes it back as ?from on the next poll to fetch only what was appended.
+// A single response is capped at MAX_LOG_CHUNK bytes so a long-idle client
+// (or a client with a stale cursor after log rotation) never pulls the whole
+// file at once.
+static bool HandleNodeLogs(HTTPRequest *req)
+{
+    if (req->GetRequestMethod() != HTTPRequest::GET) {
+        req->WriteReply(HTTP_BAD_METHOD, "");
+        return false;
+    }
+    if (!CheckWebUIHost(req)) return false;
+    auto cors = CheckWebUICORS(req);
+    if (!cors) return false;
+    if (!CheckWebUIAuth(req)) return false;
+
+    constexpr int64_t MAX_LOG_CHUNK = 256 * 1024;
+
+    const fs::path log_path = LogInstance().m_file_path;
+
+    UniValue::Object obj;
+
+    // Logging to file disabled (-nodebuglogfile) or file not created yet.
+    std::error_code ec;
+    if (log_path.empty() || !fs::exists(log_path, ec)) {
+        obj.emplace_back("enabled", UniValue(false));
+        obj.emplace_back("path",    UniValue(log_path.empty() ? "" : log_path.string()));
+        obj.emplace_back("data",    UniValue(""));
+        obj.emplace_back("next",    UniValue(static_cast<int64_t>(0)));
+        obj.emplace_back("size",    UniValue(static_cast<int64_t>(0)));
+        SetJSONHeaders(req, *cors);
+        req->WriteReply(HTTP_OK, UniValue::stringify(obj));
+        return true;
+    }
+
+    fs::ifstream file(log_path, std::ios::binary);
+    if (!file.is_open()) {
+        req->WriteReply(HTTP_INTERNAL_SERVER_ERROR, JsonError("unable to open log file"));
+        return false;
+    }
+
+    file.seekg(0, std::ios::end);
+    const int64_t size = static_cast<int64_t>(file.tellg());
+
+    const auto fromParam = req->GetQueryParameter("from");
+    const bool follow    = fromParam.has_value();
+
+    int64_t start;
+    if (follow) {
+        int64_t from = 0;
+        try { from = std::stoll(*fromParam); } catch (...) { from = 0; }
+        // A cursor past EOF means the file was rotated/shrunk (ShrinkDebugFile);
+        // fall back to reading the tail rather than nothing.
+        start = (from < 0 || from > size) ? std::max<int64_t>(0, size - MAX_LOG_CHUNK)
+                                          : from;
+    } else {
+        // Initial load: grab the last chunk, trimmed to `tail` lines below.
+        start = std::max<int64_t>(0, size - MAX_LOG_CHUNK);
+    }
+
+    // Hard cap on bytes returned in one response.
+    if (size - start > MAX_LOG_CHUNK) start = size - MAX_LOG_CHUNK;
+
+    std::string data;
+    if (size > start) {
+        file.seekg(start, std::ios::beg);
+        data.resize(static_cast<size_t>(size - start));
+        file.read(data.data(), static_cast<std::streamsize>(data.size()));
+        data.resize(static_cast<size_t>(file.gcount()));
+    }
+
+    // Initial load only: our start offset is arbitrary (size - MAX_LOG_CHUNK),
+    // so drop the leading partial line to begin on a clean boundary. In follow
+    // mode `start` is a precise cursor and the client reassembles split lines,
+    // so trimming here would drop data.
+    if (!follow && start > 0) {
+        const size_t nl = data.find('\n');
+        if (nl != std::string::npos) data.erase(0, nl + 1);
+    }
+
+    // Initial load: keep only the last `tail` lines (default 500, clamped).
+    if (!follow) {
+        int64_t tailLines = 500;
+        if (const auto tailParam = req->GetQueryParameter("tail")) {
+            try { tailLines = std::stoll(*tailParam); } catch (...) {}
+        }
+        tailLines = std::clamp<int64_t>(tailLines, 1, 10000);
+
+        size_t cut = data.size();
+        int64_t seen = 0;
+        // Ignore a trailing newline so the final line isn't double-counted.
+        size_t scan = (cut > 0 && data[cut - 1] == '\n') ? cut - 1 : cut;
+        while (scan > 0) {
+            const size_t nl = data.rfind('\n', scan - 1);
+            if (nl == std::string::npos) { cut = 0; break; }
+            if (++seen >= tailLines) { cut = nl + 1; break; }
+            scan = nl;
+        }
+        if (cut > 0 && cut <= data.size()) data.erase(0, cut);
+    }
+
+    obj.emplace_back("enabled", UniValue(true));
+    obj.emplace_back("path",    UniValue(log_path.string()));
+    obj.emplace_back("data",    UniValue(data));
+    obj.emplace_back("next",    UniValue(size));
+    obj.emplace_back("size",    UniValue(size));
+
+    SetJSONHeaders(req, *cors);
+    req->WriteReply(HTTP_OK, UniValue::stringify(obj));
+    return true;
+}
+
 // ---- Router -------------------------------------------------------------
 
 bool WebUINodeAPIRoute(Config &config, HTTPRequest *req, const std::string &path)
@@ -534,6 +655,7 @@ bool WebUINodeAPIRoute(Config &config, HTTPRequest *req, const std::string &path
     if (path == "/webui/api/rpc")                    return HandleRPC(config, req);
     if (path == "/webui/api/node/status")            return HandleNodeStatus(req);
     if (path == "/webui/api/node/mining")            return HandleNodeMining(config, req);
+    if (path == "/webui/api/node/logs")              return HandleNodeLogs(req);
     if (path == "/webui/api/node/features")          return HandleNodeFeatures(req);
     if (path == "/webui/api/node/peers")             return HandleNodePeers(req);
     if (path == "/webui/api/node/banned")            return HandleNodeBanned(req);
